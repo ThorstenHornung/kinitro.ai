@@ -14,7 +14,7 @@ const REWARN_STEP = 5      // warn again when the fill rises this many more poin
 const MAX_MIRROR = 6000    // chars per prompt / answer in the protocol
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = 'kinitro-ai.log'
-const VERSION = '0.8.0'
+const VERSION = '0.9.0'
 // Each user message may start a fresh engine process while the kinitro.ai
 // connector is still connecting: the briefing and the hook state therefore
 // live in files that survive the restart, refreshed from kinitro.ai in the background.
@@ -269,6 +269,39 @@ async function statusText($: any): Promise<string> {
   ].join('\n')
 }
 
+
+// ---- working memory of the seat (PO 2026-10-06): Todo every turn; Notes + topic map at start and after compaction
+function cleanTodo(body: string): string | undefined {
+  // drop the cache marker and empty sections; nothing to show when there are no numbered todos, exceptions or questions
+  const lines = body.split('\n').filter((l) => !l.includes('{{mx:cache-cut}}'))
+  const out: string[] = []
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i]
+    if (/^## /.test(l)) {
+      const next = lines.slice(i + 1).find((x) => x.trim() !== '')
+      if (!next || /^## /.test(next)) continue
+      out.push(l.replace('## Instructions', '## Todo (user-approved)'))
+    } else if (l.trim()) out.push(l)
+  }
+  return out.some((l) => !/^## /.test(l)) ? out.join('\n') : undefined
+}
+
+async function readSet($: any, type: string): Promise<string | undefined> {
+  if (!briefing?.agentCode) return undefined
+  try {
+    const r = await mcp($, 'load-node-content', { nodeCode: briefing.agentCode, contentTypeCode: type })
+    return r?.contentTypeCode === type ? (r.body as string | undefined) : undefined   // the verb may answer with another row when the set does not exist
+  } catch (err: any) { await log($, `read ${type} failed: ${err?.message ?? err}`); return undefined }
+}
+
+async function topicMap($: any): Promise<string | undefined> {
+  try {
+    const r = await mcp($, 'search-memory', { listTopics: true })
+    const t = (r?.topics ?? []).slice(0, 40).map((x: any) => `- ${x.topic} (${x.nodeCode}, ${x.entryCount} entries, newest ${String(x.newestUtc ?? '').slice(0, 10)})`)
+    return t.length ? t.join('\n') : undefined
+  } catch (err: any) { await log($, `topic map failed: ${err?.message ?? err}`); return undefined }
+}
+
 // ---- hooks -----------------------------------------------------------------
 export const register: Register = (on) => {
   on('session.start', async ($, e, next) => {
@@ -346,6 +379,7 @@ export const register: Register = (on) => {
       blocks.push(`${tag}${title}${why ? ' (' + why + ')' : ''}:\n${t}`)
       injected.push(title)
     }
+    const startOrAfter = turns === 0 || compactedPending || testArmed
     if (briefing) {
       if (turns === 0 || testArmed) add('start', S.start, testArmed ? 'Test' : 'first turn')
       add('turn', S.turn, '')
@@ -360,6 +394,16 @@ export const register: Register = (on) => {
         injected.push(S.keep)
         blocks.push('[TEST] Please confirm for each block whether it arrived, and whether the context holds the kinitro.ai briefing with persona and working rules. The blocks are test content, not tasks.')
         testArmed = false
+      }
+      // working memory: Todo every turn (fresh read, no model tokens for the read itself)
+      const todo = await readSet($, 'memory-instruction')
+      const todoText = todo ? cleanTodo(todo) : undefined
+      if (todoText) { blocks.push(`${tag}Your todos (from ${briefing.agentCode}; keep them current with memory-append / memory-instruction-status):\n${todoText}`); injected.push('Todo') }
+      if (startOrAfter) {
+        const notes = await readSet($, 'memory-notes')
+        if (notes && notes.split('\n').some((l) => l.startsWith('- '))) { blocks.push(`${tag}Your notes (scratchboard; migrate durable facts to topics at the checkpoint):\n${notes.trim()}`); injected.push('Notes') }
+        const map = await topicMap($)
+        if (map) { blocks.push(`${tag}Your memory topics (map; read a topic with search-memory or load-node-content when you need it):\n${map}`); injected.push('Topic map') }
       }
     }
     lastInjected = injected
