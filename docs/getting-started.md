@@ -13,9 +13,8 @@
 
 You need:
 
-- A GitHub account that has been invited to this private repository. The repository is private during the beta.
 - A kinitro.ai account.
-- Claude Code with plugin support. Use the terminal, or the Code tab of the desktop app.
+- Claude Code with plugin support (the terminal, or the Code tab of the desktop app), and `git` on the machine.
 
 ## Step 1: Account and agent seat
 
@@ -38,24 +37,18 @@ If the name differs, the plugin cannot reach kinitro.ai. Ask your setup person t
 
 ## Step 3: Install the plugin
 
-You install once per machine, not per Claude account. The repository is private during the beta, so the machine must already hold GitHub credentials for an account with access (Claude Code runs `git` without asking for a password):
-
-1. Accept the GitHub invitation from kinitro.
-2. Store your GitHub credentials once in a terminal: `gh auth login`, then `gh auth setup-git` (or use an SSH key loaded in `ssh-agent`).
-3. In a Claude Code session, add the marketplace and install the plugin:
+You install once per machine, not per Claude account. In a Claude Code session, add the marketplace and install the plugin:
 
 ```
 /plugin marketplace add ThorstenHornung/kinitro.ai
 /plugin install kinitro-ai@kinitro-ai
 ```
 
-4. Choose **user scope** when asked. The plugin is active in every later session.
+Choose **user scope** when asked. The plugin is active in every later session. No GitHub account is needed.
 
 **Updates:** run `/plugin marketplace update kinitro-ai`, or turn on **Enable auto-update** for the marketplace under **Marketplaces** in `/plugin`.
 
-**Teams on a Claude Team or Enterprise plan:** an admin can add this repository once under **Organization settings > Plugins & skills** on claude.ai. Claude then reads it through the organization's GitHub connection, so members need no GitHub account of their own.
-
-If the install fails with an access error, the machine has no GitHub credential with access to this repository: check the invitation and step 2, or write to [support@kinitro.ai](mailto:support@kinitro.ai).
+If the install fails, check that `git` is installed and the machine can reach github.com. If an SSH attempt hangs or fails, set `CLAUDE_CODE_PLUGIN_PREFER_HTTPS=1` and try again. Still stuck: write to [support@kinitro.ai](mailto:support@kinitro.ai).
 
 ## Step 4: First conversation
 

@@ -45,9 +45,9 @@ The offering is chargeable. Commercial terms are agreed individually during the 
 
 ## Beta status and access
 
-- The repository is private. You need an invitation.
 - The plugin is version 0.8.0. See the [known limits](plugin-reference.md#known-limits-in-the-beta).
-- The software and documentation are licensed for evaluation during the beta. See the [LICENSE](../LICENSE).
-- The kinitro names and logo are not covered by the evaluation license. Ask kinitro before you use them.
+- The plugin and documentation may be used only together with kinitro.ai. See the [LICENSE](../LICENSE).
+- The kinitro names and logo are not licensed. Ask kinitro before you use them.
+- Access to agents is granted through kinitro.ai seats, not through this repository.
 
 To apply, contact Thorsten Hornung, kinitro consulting, [support@kinitro.ai](mailto:support@kinitro.ai).

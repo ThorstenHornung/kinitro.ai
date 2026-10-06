@@ -2,7 +2,7 @@
 
 <p align="center"><strong>The agentic collaboration and solution platform.</strong></p>
 
-<p align="center">Beta 0.8 · private preview for partners</p>
+<p align="center">Beta 0.8</p>
 
 ---
 
@@ -22,26 +22,23 @@
 |---|---|
 | `plugins/kinitro-ai/` | The Claude Code plugin `kinitro-ai` (version 0.8.0). It briefs your agent from kinitro.ai and mirrors each conversation turn into your domain. |
 | `.claude-plugin/marketplace.json` | The marketplace entry that lets Claude Code install the plugin. |
-| `docs/` | Guides for beta partners and their setup people. |
+| `docs/` | Guides for users, setup people and partners. |
 | `assets/` | The kinitro ai logo. |
 
 ## Quick start
 
-You need four things:
+You need three things:
 
 1. A kinitro.ai account with an **agent seat** (a domain and an agent node, set up by kinitro or a partner).
 2. The **kinitro.ai connector** connected in Claude under the server name `kinitro_ai`.
-3. **Claude Code** with plugin support (terminal, or the Code tab of the desktop app).
-4. **Access to this private repository** for your GitHub account (invitation by kinitro).
+3. **Claude Code** with plugin support (terminal, or the Code tab of the desktop app), and `git` on the machine.
 
-Install the plugin in a Claude Code session (once per machine; the repository is private, so your machine needs GitHub access first: `gh auth login`, then `gh auth setup-git`):
+Install the plugin once per machine, in a Claude Code session:
 
 ```
 /plugin marketplace add ThorstenHornung/kinitro.ai
 /plugin install kinitro-ai@kinitro-ai
 ```
-
-Teams on a Claude Team or Enterprise plan can instead let their admin add this repository under **Organization settings > Plugins & skills** on claude.ai; then nobody needs GitHub access.
 
 The plugin is active at once and in every later session. Check it with:
 

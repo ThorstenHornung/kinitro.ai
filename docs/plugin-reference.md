@@ -126,7 +126,7 @@ At the end of every turn the plugin appends to a document named `Protocol: Claud
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `/kinitro` is not found | Plugin not installed or not active in this session | Run the install command again. Choose user scope. Start a new session. |
-| Install fails with an access error | Your GitHub account has no access to the private repository | Ask kinitro for the invitation. |
+| Install fails | `git` missing, github.com not reachable, or an SSH attempt fails | Install `git`; check the network; set `CLAUDE_CODE_PLUGIN_PREFER_HTTPS=1` and retry. |
 | `briefing: MISSING (... current-seat gave no domain/agent node ...)` | No agent seat, or the connector is not connected | Check the seat with your contact. Check the connector. |
 | `briefing: MISSING (... no briefing found ...)` | No `general-procedures` edge with a `Briefing: kinitro.ai agents in Claude` document, and no agent instructions | Ask your contact to add the edge and document, or the agent instructions. Then run `probe` with `reload`. |
 | `MISSING` with a message about `tool.call` and `mcp.call` | Connector not reachable under the name `kinitro_ai` | Check the connector name and its sign-in. Send a new message. |

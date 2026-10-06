@@ -38,7 +38,7 @@ The connector, your account and your domain are operated on kinitro.ai. Access r
 4. **Keep sensitive content out of prompts** that should not appear in a protocol. If a topic is confidential, check the domain's access rights first.
 5. **Protect the local working directory.** Do not commit the plugin's local files. The repository's `.gitignore` excludes them.
 6. **Review the agent's instructions.** They steer the agent's behaviour. Only the domain owner and trusted editors should be able to change them.
-7. **Revoke when done.** Remove a seat, an invitation or the connector when a person leaves.
+7. **Revoke when done.** Remove a seat or the connector when a person leaves.
 
 ## Report a concern
 

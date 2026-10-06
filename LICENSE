@@ -1,46 +1,45 @@
-<!-- PLACEHOLDER: this license text has not been reviewed by legal counsel and must be reviewed before the beta starts. -->
+<!-- PLACEHOLDER - to be reviewed by legal counsel before relying on it. -->
 
-# kinitro.ai Beta Evaluation License
+kinitro.ai Plugin License (source available)
 
 Copyright (c) 2026 Thorsten Hornung, kinitro consulting. All rights reserved.
+Contact: support@kinitro.ai
 
-This software and its documentation (together the "Software") are proprietary. By installing or using the Software you accept this license.
+1. Scope. This license covers the software and documentation in this
+   repository (the "Materials"). The Materials are published for transparency
+   and for use with the kinitro.ai platform. They are not open source.
 
-## 1. Grant
+2. Permitted use. You may download, install and use the Materials free of
+   charge, solely to run agents on the kinitro.ai platform with a valid
+   kinitro.ai account, and you may make modifications for your own internal use
+   with kinitro.ai.
 
-kinitro grants invited beta partners a non-exclusive, non-transferable, revocable right to install and use the Software and its documentation. The right covers only the evaluation and operation of agents on the kinitro.ai platform during the beta.
+3. Restrictions. You may not (a) use the Materials, or any part or derivative
+   of them, with any platform or service other than kinitro.ai; (b) sell,
+   sublicense, rent or otherwise commercialise the Materials; (c) distribute
+   modified versions; (d) remove or alter this notice. Redistribution of
+   unmodified copies is permitted only together with this LICENSE file.
 
-## 2. Restrictions
+4. Trademarks. No right is granted to use the names "kinitro", "kinitro ai",
+   "kinitro.ai", "kinitro consulting", the signet or the logo, except to
+   identify the origin of the Materials truthfully.
 
-You may not:
+5. Platform terms. Use of the kinitro.ai platform itself is governed by
+   separate terms. Access to the platform and its agents is granted only
+   through kinitro.ai accounts and seats.
 
-1. redistribute the Software, in whole or in part;
-2. sublicense the Software or let third parties use it;
-3. use the Software with platforms other than kinitro.ai;
-4. publish the documentation.
+6. Feedback. kinitro may use any feedback you provide without obligation.
 
-You may modify the Software only for your own internal evaluation. Modified versions are subject to this license.
+7. No warranty. The Materials are provided "as is", without warranty of any
+   kind, including fitness for a particular purpose and non-infringement. They
+   are beta software.
 
-## 3. Trademarks
+8. Limitation of liability. To the extent permitted by law, kinitro is not
+   liable for any damages arising from the use of the Materials. Liability for
+   intent, gross negligence and injury to life, body or health remains
+   unaffected.
 
-"kinitro", "kinitro ai", "kinitro.ai", the signet and the logo are not licensed to you. No right to use them follows from this license.
+9. Termination. This license ends automatically if you breach it. On
+   termination you must stop using and delete the Materials.
 
-## 4. Feedback
-
-kinitro may use any feedback, suggestion or idea you give about the Software without restriction and without payment.
-
-## 5. Disclaimer of warranty
-
-The Software is a beta and is provided "as is", without warranty of any kind, express or implied. This includes, without limitation, warranties of merchantability, fitness for a particular purpose and non-infringement.
-
-## 6. Limitation of liability
-
-To the extent permitted by law, kinitro is not liable for any indirect, incidental, special or consequential damages, or for loss of data or profit, arising from the use of the Software. Liability that cannot be excluded by law remains unaffected.
-
-## 7. Termination
-
-This license ends at once if you breach it, or when the beta ends, unless kinitro states otherwise in writing. kinitro may revoke it at any time. On termination you stop using the Software and delete all copies.
-
-## 8. Governing law
-
-German law applies, excluding its conflict-of-law rules.
+10. Governing law. German law applies, excluding its conflict-of-law rules.

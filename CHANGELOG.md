@@ -8,7 +8,7 @@ First public package, with a marketplace for installation in Claude Code.
 
 ### Added
 - Marketplace entry, so the plugin installs with `/plugin marketplace add ThorstenHornung/kinitro.ai` and `/plugin install kinitro-ai@kinitro-ai`.
-- Documentation for beta partners in `docs/`.
+- Documentation in `docs/`.
 
 ### Changed
 - Domain and agent are resolved from the seat, not hard-wired.
