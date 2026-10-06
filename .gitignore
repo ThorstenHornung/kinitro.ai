@@ -1,0 +1,6 @@
+# engine-generated type stubs and local runtime files
+.claude-plugin/types/
+**/.claude-plugin/types/
+*.log
+.kinitro-ai-*.json
+.DS_Store
