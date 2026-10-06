@@ -38,18 +38,24 @@ If the name differs, the plugin cannot reach kinitro.ai. Ask your setup person t
 
 ## Step 3: Install the plugin
 
-Open a Claude Code session and run:
+You install once per machine, not per Claude account. The repository is private during the beta, so the machine must already hold GitHub credentials for an account with access (Claude Code runs `git` without asking for a password):
+
+1. Accept the GitHub invitation from kinitro.
+2. Store your GitHub credentials once in a terminal: `gh auth login`, then `gh auth setup-git` (or use an SSH key loaded in `ssh-agent`).
+3. In a Claude Code session, add the marketplace and install the plugin:
 
 ```
-/plugin install kinitro-ai --marketplace ThorstenHornung/kinitro.ai
+/plugin marketplace add ThorstenHornung/kinitro.ai
+/plugin install kinitro-ai@kinitro-ai
 ```
 
-Then:
+4. Choose **user scope** when asked. The plugin is active in every later session.
 
-1. Answer `y` when asked whether to add the marketplace.
-2. Choose **user scope**.
+**Updates:** run `/plugin marketplace update kinitro-ai`, or turn on **Enable auto-update** for the marketplace under **Marketplaces** in `/plugin`.
 
-The plugin is active at once. It is also active in every later session. If the install fails with an access error, your GitHub account does not yet have access to this repository. Ask kinitro for the invitation.
+**Teams on a Claude Team or Enterprise plan:** an admin can add this repository once under **Organization settings > Plugins & skills** on claude.ai. Claude then reads it through the organization's GitHub connection, so members need no GitHub account of their own.
+
+If the install fails with an access error, the machine has no GitHub credential with access to this repository: check the invitation and step 2, or write to [support@kinitro.ai](mailto:support@kinitro.ai).
 
 ## Step 4: First conversation
 

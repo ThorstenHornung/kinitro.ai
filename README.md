@@ -34,11 +34,14 @@ You need four things:
 3. **Claude Code** with plugin support (terminal, or the Code tab of the desktop app).
 4. **Access to this private repository** for your GitHub account (invitation by kinitro).
 
-Install the plugin in a Claude Code session. Answer `y` to add the marketplace and choose user scope:
+Install the plugin in a Claude Code session (once per machine; the repository is private, so your machine needs GitHub access first: `gh auth login`, then `gh auth setup-git`):
 
 ```
-/plugin install kinitro-ai --marketplace ThorstenHornung/kinitro.ai
+/plugin marketplace add ThorstenHornung/kinitro.ai
+/plugin install kinitro-ai@kinitro-ai
 ```
+
+Teams on a Claude Team or Enterprise plan can instead let their admin add this repository under **Organization settings > Plugins & skills** on claude.ai; then nobody needs GitHub access.
 
 The plugin is active at once and in every later session. Check it with:
 
