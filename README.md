@@ -20,7 +20,7 @@
 
 | Path | What it is |
 |---|---|
-| `plugins/kinitro-ai/` | The Claude Code plugin `kinitro-ai` (version 0.8.0). It briefs your agent from kinitro.ai and mirrors each conversation turn into your domain. |
+| `plugins/kinitro-ai/` | The Claude Code plugin `kinitro-ai` (version 0.9.0). It briefs your agent from kinitro.ai and mirrors each conversation turn into your domain. |
 | `.claude-plugin/marketplace.json` | The marketplace entry that lets Claude Code install the plugin. |
 | `docs/` | Guides for users, setup people and partners. |
 | `assets/` | The kinitro ai logo. |
@@ -56,7 +56,8 @@ All instruction texts live in kinitro.ai and are edited by the domain owner. The
 |---|---|
 | First message of a conversation, and again after each compaction | Persona and Working rules |
 | First prompt of a session | Session start |
-| Every prompt | A one-line marker and the Every turn section |
+| Every prompt | A one-line marker, the Every turn section and the agent's current todo list |
+| First prompt and after a compaction | The agent's notes and a map of its memory topics |
 | Context window reaches 70 % (and again every 5 points more) | Context nearly full |
 | First prompt after a compaction | After compaction |
 | While Claude compacts the conversation | Compaction instruction (goes to the summarizer) |

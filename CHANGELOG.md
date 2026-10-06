@@ -2,6 +2,11 @@
 
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.0] - 2026-10-06
+
+### Added
+- Working memory in front of the agent: the agent's todo list (user-approved work in progress) is read fresh and shown on every prompt; its notes and a map of its memory topics are shown at session start and after a compaction.
+
 ## [0.8.0] - 2026-10-06
 
 First public package, with a marketplace for installation in Claude Code.
