@@ -42,4 +42,4 @@ The connector, your account and your domain are operated on kinitro.ai. Access r
 
 ## Report a concern
 
-Contact your kinitro contact through the channel you were invited on. Include what you saw and when. Do not include secrets or personal data in the report.
+Write to [support@kinitro.ai](mailto:support@kinitro.ai). Include what you saw and when. Do not include secrets or personal data in the report.

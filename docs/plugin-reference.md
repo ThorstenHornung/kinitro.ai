@@ -136,4 +136,4 @@ At the end of every turn the plugin appends to a document named `Protocol: Claud
 | No protocol document appears | Mirror write failed. `/kinitro` shows `last error`. | Check write access to the domain. Check the `_Work` section. Read `kinitro-ai.log`. |
 | Agent ignores a checkpoint | The agent was not told in time, or the text is unclear | Run `arm-test` and ask the agent to confirm each block. Edit the text in kinitro.ai. |
 
-Still stuck? Send `kinitro-ai.log` and the output of `/kinitro` to your kinitro contact. Check both for confidential content first.
+Still stuck? Send `kinitro-ai.log` and the output of `/kinitro` to [support@kinitro.ai](mailto:support@kinitro.ai). Check both for confidential content first.

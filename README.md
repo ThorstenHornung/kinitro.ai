@@ -66,7 +66,7 @@ Details: [How it works](docs/how-it-works.md) and [Plugin reference](docs/plugin
 
 ## For partners
 
-Partners build specialized agent solutions on kinitro.ai and offer them to customers, at a charge. A solution combines persona, procedures, knowledge, data model, views and documents. Commercial terms are agreed individually during the beta. See [For partners](docs/for-partners.md). To get access, contact Thorsten Hornung at kinitro consulting through the channel you were invited on.
+Partners build specialized agent solutions on kinitro.ai and offer them to customers, at a charge. A solution combines persona, procedures, knowledge, data model, views and documents. Commercial terms are agreed individually during the beta. See [For partners](docs/for-partners.md). To get access, contact Thorsten Hornung, kinitro consulting, [support@kinitro.ai](mailto:support@kinitro.ai).
 
 ## Documentation
 
@@ -76,7 +76,6 @@ Partners build specialized agent solutions on kinitro.ai and offer them to custo
 - [Domain setup](docs/domain-setup.md): the recommended structure of a kinitro.ai domain.
 - [For partners](docs/for-partners.md): building and offering an agent solution.
 - [Security and privacy](docs/security-and-privacy.md): what is sent where, and what to review.
-- [Brand](docs/brand.md): logo, wordmark and colours for presenting solutions on kinitro.ai.
 - [Changelog](CHANGELOG.md)
 
 ## License
@@ -85,4 +84,4 @@ Proprietary beta software. See [LICENSE](LICENSE).
 
 ---
 
-<p align="center">© 2026 kinitro consulting · Thorsten Hornung</p>
+<p align="center">© 2026 kinitro consulting · Thorsten Hornung · <a href="mailto:support@kinitro.ai">support@kinitro.ai</a></p>
