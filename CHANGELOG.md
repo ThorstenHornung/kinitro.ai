@@ -2,6 +2,11 @@
 
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.17.1] - 2026-10-08
+
+### Added
+- Shared-agent warning: at session start and after choosing a domain, the agent learns which other Claude sessions worked with the same agent today. Their todos, notes and memory are shared by design; the agent checks a todo's state before acting on one it did not start, and tells the user once.
+
 ## [0.17.0] - 2026-10-08
 
 Fixes from the instruction and mirroring test (plan 4.2.2.7.15).

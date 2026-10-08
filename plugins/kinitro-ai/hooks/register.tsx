@@ -16,7 +16,7 @@ const REWARN_STEP = 5      // warn again when the fill rises this many more poin
 const MAX_MIRROR = 6000    // chars per prompt / answer in the protocol
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = 'kinitro-ai.log'
-const VERSION = '0.17.0'
+const VERSION = '0.17.1'
 const REFRESH_MS = 24 * 3600 * 1000       // regular operation: instructions change rarely (PO 2026-10-08)
 const TEST_REFRESH_MS = 2 * 60 * 1000     // test mode (/kinitro test)
 const PAGE_TEXT_TOOLS = ['mcp__remote-devices__Claude_Browser__get_page_text', 'mcp__Claude_Browser__get_page_text']
@@ -446,6 +446,17 @@ async function statusText($: any): Promise<string> {
 }
 
 
+// other Claude sessions of this agent today (from the protocol documents): memory is shared by design, so the agent is warned
+async function otherSessionsToday($: any): Promise<string[]> {
+  try {
+    let sid = ''
+    try { sid = String(await $.session.id()).slice(0, 8) } catch { /* ignore */ }
+    const today = new Date().toISOString().slice(0, 10)
+    const r = await mcp($, 'find-nodes', { name: `Protocol: Claude session ${today}`, limit: 25 })
+    return (r?.matches ?? []).map((m: any) => String(m.name).match(/\(([0-9a-f]{8})\)$/)?.[1]).filter((x: any) => x && x !== sid)
+  } catch (err: any) { await log($, `other sessions check failed: ${err?.message ?? err}`); return [] }
+}
+
 // ---- working memory of the seat (PO 2026-10-06): Todo every turn; Notes + topic map at start and after compaction
 function cleanTodo(body: string): string | undefined {
   // drop the cache marker and empty sections; nothing to show when there are no numbered todos, exceptions or questions
@@ -627,6 +638,10 @@ export const register: Register = (on) => {
         await update($, contextKeyA, () => personaKey())
       }
       if (turns === 0 || testArmed || startPack) add('start', S.start, testArmed ? 'Test' : startPack ? 'domain chosen' : 'first turn')
+      if (startPack || turns === 0) {
+        const others = needsDomain ? [] : await otherSessionsToday($)
+        if (others.length) { blocks.push(`Shared agent: ${others.length} other Claude session(s) worked with this agent today (${others.join(', ')}). Todos, notes and memory are shared with them. Before acting on a todo you did not start in this session, check its exception line and the notes; tell the user once that another session is active on this agent.`); injected.push('Other sessions') }
+      }
       if (startPack) await update($, startPackA, () => false)
       add('turn', S.turn, '')
       if (compactedPending || testArmed) { add('after', S.after, testArmed ? 'Test' : 'after compaction'); compactedPending = false }
