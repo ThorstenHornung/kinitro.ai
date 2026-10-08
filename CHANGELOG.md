@@ -2,6 +2,11 @@
 
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.16.1] - 2026-10-08
+
+### Fixed
+- `/kinitro` loads the plugin's tool first (it may be deferred). Before, the agent sometimes took the plugin for inactive and showed a link that opened the external browser. The fallback now also opens the internal browser pane.
+
 ## [0.16.0] - 2026-10-08
 
 ### Changed

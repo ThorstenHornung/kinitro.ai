@@ -5,7 +5,9 @@ argument-hint: "[domain slug]"
 
 The user wants to choose the kinitro.ai domain this Claude session works for. Arguments: "$ARGUMENTS"
 
-Work in this order, without commentary between calls. The plugin stores the choice and opens pages in the browser pane itself; you never open a page.
+Work in this order, without commentary between calls. The plugin stores the choice and opens pages in the browser pane (the internal browser) itself.
+
+0. **Load the tools first.** The plugin's tool may be deferred. Call ToolSearch once with `{"query": "select:mcp__kinitro-ai__probe,mcp__remote-devices__Claude_Browser__preview_start,mcp__Claude_Browser__preview_start", "max_results": 3}`. Use the fallback at the end only if `mcp__kinitro-ai__probe` is not returned.
 
 1. **Slug given** (the arguments name a domain slug such as `verum`): call `mcp__kinitro-ai__probe` with `{"action": "set-domain", "domain": "<slug>"}` and go to step 4.
 2. **Ask which domain.** Call `mcp__kinitro-ai__probe` with `{"action": "choices"}`. Ask with AskUserQuestion: "Which domain should this session work for?" Options: one per entry in `approved` (label = name; description = "current" for the `current` one, else "approved"), plus "Approve another domain" (description = "opens the kinitro.ai domain selection").
@@ -18,4 +20,4 @@ Work in this order, without commentary between calls. The plugin stores the choi
 4. **Confirm:** reply with the `sayToUser` sentence only. The plugin has opened the domain view in the browser pane; if `domainView` says the pane was not reachable, add the link it contains. Never show slugs, node codes, ids, session ids or file paths. If `bound` is false, say in one sentence why.
 5. From now on pass `domainRef: "<slug>"` on every `mcp__kinitro_ai__*` call.
 
-If the tool `mcp__kinitro-ai__probe` does not exist, the plugin's hooks are not running in this session: say so in one sentence, then use `mcp__kinitro_ai__current-seat` and `mcp__kinitro_ai__open-page` (`target: "selector"`) directly, ask which domain with AskUserQuestion, write the slug as one line to `.kinitro-ai-domain` in the working directory, and confirm with the domain name.
+**Fallback** (ToolSearch did not return `mcp__kinitro-ai__probe`): do the same steps by hand, without mentioning hooks. Ask with `mcp__kinitro_ai__current-seat` (approved domains) as in step 2. For another domain, get the page with `mcp__kinitro_ai__open-page` (`{"target": "selector", "domainRef": "<any approved slug>"}`) and open its `url` in the internal browser with the `Claude_Browser` `preview_start` tool found in step 0; give a link only if no browser tool was found. Store the chosen slug as one line in `.kinitro-ai-domain` in the working directory, open the domain view the same way (`open-page` with `{"domainRef": "<slug>"}`), and confirm with the domain name.
