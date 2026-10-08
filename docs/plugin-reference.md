@@ -107,7 +107,7 @@ The cache holds the briefing text. Do not commit these files to a repository. Th
 `/kinitro` is a command file (`commands/kinitro.md`), so it is listed in every Claude surface, the Claude app included.
 
 - `/kinitro <slug>` binds the session to that domain.
-- `/kinitro` alone opens the kinitro.ai domain selection (in the browser pane if there is one, else as a link) and asks once: pick an approved domain directly, or choose another one on the page, press **Switch** and select **Another domain**. The plugin binds it, opens the domain view in the browser pane and the agent confirms the domain and agent by name.
+- `/kinitro` alone asks which domain: pick an approved one and it is bound at once, or pick **Approve another domain**. That opens the kinitro.ai domain selection (in the browser pane if there is one, else as a link); choose there, press **Switch**, then **Confirm my choice** in the chat. Either way the plugin stores the choice, opens the domain view in the browser pane, and the agent confirms the domain by name.
 - Binding writes `.kinitro-ai-domain.<session id>` and `.kinitro-ai-domain` (through `probe` `set-domain`; without the plugin's tool, the folder file only).
 
 The status is shown by `probe` with action `status`:
@@ -125,11 +125,12 @@ The status is shown by `probe` with action `status`:
 
 ## The `probe` tool
 
-The agent can call `probe` with one of eight actions. All return the same status text.
+The agent can call `probe` with one of nine actions. All return the same status text.
 
 | Action | Effect |
 |---|---|
 | `status` (default) | Shows diagnostics. |
+| `choices` | Returns the approved domains and the current one. |
 | `open-domain` | Opens the bound domain's view in the browser pane (done automatically after binding). |
 | `selection-start` | Remembers the approved domains and returns the address of the selection page. |
 | `selection-done` | Binds the domain approved since `selection-start`, or returns the list to ask from. |

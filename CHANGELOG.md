@@ -2,6 +2,12 @@
 
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.16.0] - 2026-10-08
+
+### Changed
+- `/kinitro` asks first: an approved domain is bound at once, without the selection page. Only "Approve another domain" opens the kinitro.ai selection page; a second question asks you to confirm your choice there.
+- The plugin opens the selection page and the domain view in the browser pane itself (new `probe` action `choices`).
+
 ## [0.15.0] - 2026-10-08
 
 ### Changed

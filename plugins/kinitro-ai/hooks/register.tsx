@@ -16,7 +16,7 @@ const REWARN_STEP = 5      // warn again when the fill rises this many more poin
 const MAX_MIRROR = 6000    // chars per prompt / answer in the protocol
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = 'kinitro-ai.log'
-const VERSION = '0.15.0'
+const VERSION = '0.16.0'
 const PAGE_TEXT_TOOLS = ['mcp__remote-devices__Claude_Browser__get_page_text', 'mcp__Claude_Browser__get_page_text']
 const BROWSER_TOOLS = ['mcp__remote-devices__Claude_Browser__preview_start', 'mcp__Claude_Browser__preview_start']   // the Claude app's browser pane (cloud session linked to the computer / desktop session)
 const SNAPSHOT_FILE = '.kinitro-ai-selection.json'   // approved slugs when the selection page was opened (selection-start)
@@ -200,17 +200,21 @@ async function openDomainView($: any): Promise<string> {
   let url: string | undefined
   try { url = (await mcp($, 'open-page', {}))?.url } catch (err: any) { return `open-page failed: ${err?.message ?? err}` }
   if (!url) return 'open-page gave no url'
+  return openInPane($, url)
+}
+
+async function openInPane($: any, url: string): Promise<string> {
   const errs: string[] = []
   for (const tool of BROWSER_TOOLS) {
     try {
       const r: any = await $.tool.call({ tool, url })
       if (r?.deny) { errs.push(`${tool}: denied ${r.deny}`); continue }
       if (r?.isError) { errs.push(`${tool}: ${String(r.text ?? r.result).slice(0, 160)}`); continue }
-      await log($, `domain view opened via ${tool}`)
+      await log($, `pane opened via ${tool}`)
       return `opened in the browser pane (${tool.split('__')[1]})`
     } catch (err: any) { errs.push(`${tool}: ${String(err?.message ?? err).slice(0, 160)}`) }
   }
-  await log($, `domain view not opened: ${errs.join(' | ')}`)
+  await log($, `pane not opened: ${errs.join(' | ')}`)
   return `browser pane not reachable; link: ${url}`
 }
 
@@ -481,7 +485,7 @@ export const register: Register = (on) => {
       await $.tool.register({
         name: 'probe',
         description: 'kinitro-ai harness control. action "status" (default): diagnostics; "selection-start": remember the approved domains and return the selection page address (call before the user chooses on that page); "selection-done": compare with that list and bind the newly approved domain, or return the list to ask from; "set-domain" with domain "<slug>": bind this session to a kinitro.ai domain (slug from list-domains) and reload; "reload": re-read the briefing from kinitro.ai; "arm-test": inject EVERY briefing section, conditional ones included, into the next user prompt, marked [TEST]; "invalidate-context": re-render the first-message context block (persona) on the next request.',
-        inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['status', 'open-domain', 'selection-start', 'selection-done', 'set-domain', 'reload', 'arm-test', 'invalidate-context'] }, domain: { type: 'string', description: 'domain slug for set-domain, e.g. verum' } } },
+        inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['status', 'choices', 'open-domain', 'selection-start', 'selection-done', 'set-domain', 'reload', 'arm-test', 'invalidate-context'] }, domain: { type: 'string', description: 'domain slug for set-domain, e.g. verum' } } },
       })
     } catch (err: any) { await log($, `tool.register failed: ${err?.message ?? err}`) }
     return next(e)
@@ -490,6 +494,12 @@ export const register: Register = (on) => {
   on('tool.call', { tool: 'mcp__kinitro-ai__probe' }, async ($, e: any) => {
     const action = e.action ?? 'status'
     if (action === 'open-domain') return { result: await openDomainView($) }
+    if (action === 'choices') {
+      const seat = await mcp($, 'current-seat', {})
+      const approved: DomainChoice[] = (seat?.approved ?? []).map((d: any) => ({ slug: String(d.slug), name: String(d.name) }))
+      await update($, approvedA, () => approved)
+      return { result: JSON.stringify({ approved, current: domainRef ? (briefing?.domainName ?? domainRef) : null }) }
+    }
     if (action === 'selection-start') {
       const seat = await mcp($, 'current-seat', {})
       const approved: DomainChoice[] = (seat?.approved ?? []).map((d: any) => ({ slug: String(d.slug), name: String(d.name) }))
@@ -498,8 +508,9 @@ export const register: Register = (on) => {
       await $.fs.write(SNAPSHOT_FILE, JSON.stringify({ at: new Date().toISOString(), approved }))
       await update($, approvedA, () => approved)
       if (page?.url) await update($, selectorUrlA, () => String(page.url))
-      await log($, `selection-start: ${approved.map((d) => d.slug).join(',')}`)
-      return { result: JSON.stringify({ selectorUrl: page?.url ?? null, approved, current: domainRef ?? null }) }
+      const opened = page?.url ? await openInPane($, String(page.url)) : 'no selection page address'
+      await log($, `selection-start: ${approved.map((d) => d.slug).join(',')}; ${opened}`)
+      return { result: JSON.stringify({ selectionPage: opened, selectorUrl: opened.startsWith('opened') ? undefined : page?.url ?? null }) }
     }
     if (action === 'selection-done') {
       let before: DomainChoice[] = []
