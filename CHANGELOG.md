@@ -2,6 +2,11 @@
 
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.17.4] - 2026-10-08
+
+### Fixed
+- `/kinitro` on the very first message of a new session: the plugin may still be starting, so the agent binds the domain by hand. The plugin now finishes that binding at the next message (persona, session start, domain view in the browser pane).
+
 ## [0.17.3] - 2026-10-08
 
 ### Fixed

@@ -16,7 +16,8 @@ const REWARN_STEP = 5      // warn again when the fill rises this many more poin
 const MAX_MIRROR = 6000    // chars per prompt / answer in the protocol
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = 'kinitro-ai.log'
-const VERSION = '0.17.3'
+const VERSION = '0.17.4'
+const PENDING_VIEW_FILE = '.kinitro-ai-pending'   // written by the /kinitro fallback when the plugin was not running yet: finish the binding at the next prompt
 const REFRESH_MS = 24 * 3600 * 1000       // regular operation: instructions change rarely (PO 2026-10-08)
 const TEST_REFRESH_MS = 2 * 60 * 1000     // test mode (/kinitro test)
 const PAGE_TEXT_TOOLS = ['mcp__remote-devices__Claude_Browser__get_page_text', 'mcp__Claude_Browser__get_page_text']
@@ -597,6 +598,14 @@ export const register: Register = (on) => {
     if (!briefing) await waitForBriefing($)
     const turns0 = await $.session.turns().catch(() => -1)
     // freshness: a new session always starts from kinitro.ai, later the copy is renewed daily (test mode: every 2 minutes)
+    // the /kinitro fallback bound the domain while the plugin was still starting: finish it now (start package, domain view)
+    try {
+      if (await $.fs.exists(PENDING_VIEW_FILE)) {
+        const slug = String(await $.fs.read(PENDING_VIEW_FILE)).trim()
+        await $.fs.write(PENDING_VIEW_FILE, '')
+        if (slug) { await bindDomain($, slug); await log($, `pending binding finished for ${slug}`) }
+      }
+    } catch (err: any) { await log($, `pending binding failed: ${err?.message ?? err}`) }
     if (briefing && !needsDomain) {
       const age = Date.now() - Date.parse(briefing.loadedAt ?? '1970-01-01')
       const limit = (await read($, testModeA)) ? TEST_REFRESH_MS : REFRESH_MS
