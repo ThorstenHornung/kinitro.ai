@@ -107,7 +107,7 @@ The cache holds the briefing text. Do not commit these files to a repository. Th
 `/kinitro` is a command file (`commands/kinitro.md`), so it is listed in every Claude surface, the Claude app included.
 
 - `/kinitro <slug>` binds the session to that domain.
-- `/kinitro` alone opens the kinitro.ai domain selection (in the browser pane if there is one, else as a link), asks with buttons which approved domain to use and binds it. After "check again", a domain you just approved on the selection page is bound at once.
+- `/kinitro` alone opens the kinitro.ai domain selection (in the browser pane if there is one, else as a link). You choose there and press **Switch**, then **Done** in the chat; the newly approved domain is bound. For a domain that was already approved, pick it directly in the chat. The agent then confirms domain, agent and saved files and opens the domain view.
 - Binding writes `.kinitro-ai-domain.<session id>` and `.kinitro-ai-domain` (through `probe` `set-domain`; without the plugin's tool, the folder file only).
 
 The status is shown by `probe` with action `status`:
@@ -125,11 +125,13 @@ The status is shown by `probe` with action `status`:
 
 ## The `probe` tool
 
-The agent can call `probe` with one of five actions. All return the same status text.
+The agent can call `probe` with one of seven actions. All return the same status text.
 
 | Action | Effect |
 |---|---|
 | `status` (default) | Shows diagnostics. |
+| `selection-start` | Remembers the approved domains and returns the address of the selection page. |
+| `selection-done` | Binds the domain approved since `selection-start`, or returns the list to ask from. |
 | `set-domain` | With `domain: "<slug>"`: binds this session to that domain, stores the slug in `.kinitro-ai-domain` and reloads. |
 | `reload` | Reads the briefing again from kinitro.ai. |
 | `arm-test` | The next prompt receives every section once, marked `[TEST]`, including the ones that normally appear only at certain moments. The Compaction instruction is shown too, although it normally goes only to the summarizer. Use it to verify the setup. |

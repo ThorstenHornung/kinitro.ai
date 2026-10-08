@@ -2,6 +2,12 @@
 
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.13.0] - 2026-10-08
+
+### Changed
+- `/kinitro` runs one step at a time: it opens the kinitro.ai domain selection, waits until you press **Done** in the chat (or pick an already approved domain there), binds the newly approved domain, confirms the domain, agent and saved files, and opens the domain view.
+- New `probe` actions `selection-start` and `selection-done`; `set-domain` returns the bound domain, agent and files.
+
 ## [0.12.0] - 2026-10-08
 
 ### Changed

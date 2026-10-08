@@ -16,7 +16,8 @@ const REWARN_STEP = 5      // warn again when the fill rises this many more poin
 const MAX_MIRROR = 6000    // chars per prompt / answer in the protocol
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = 'kinitro-ai.log'
-const VERSION = '0.12.0'
+const VERSION = '0.13.0'
+const SNAPSHOT_FILE = '.kinitro-ai-selection.json'   // approved slugs when the selection page was opened (selection-start)
 // Domain binding (kinitro.ai 2026-10-08): a connection may serve several domains; every call names its domain
 // with domainRef (the slug). The slug of this session lives in DOMAIN_FILE (set it with probe action 'set-domain').
 const DOMAIN_FILE = '.kinitro-ai-domain'               // folder default: the last domain chosen in this working folder
@@ -131,6 +132,13 @@ async function readDomainFile($: any): Promise<string | undefined> {
   let sid = ''
   try { sid = await $.session.id() } catch { /* ignore */ }
   return (sid ? await readFileTrim($, SESSION_DOMAIN_PREFIX + sid) : undefined) ?? await readFileTrim($, DOMAIN_FILE)
+}
+
+async function domainFiles($: any): Promise<string[]> {
+  let sid = '', cwd = '.'
+  try { sid = await $.session.id() } catch { /* ignore */ }
+  try { cwd = await $.session.cwd() } catch { /* ignore */ }
+  return [sid ? `${cwd}/${SESSION_DOMAIN_PREFIX}${sid}` : '', `${cwd}/${DOMAIN_FILE}`].filter(Boolean)
 }
 
 async function writeDomainFiles($: any, slug: string) {
@@ -419,8 +427,8 @@ export const register: Register = (on) => {
     try {
       await $.tool.register({
         name: 'probe',
-        description: 'kinitro-ai harness control. action "status" (default): diagnostics; "set-domain" with domain "<slug>": bind this session to a kinitro.ai domain (slug from list-domains) and reload; "reload": re-read the briefing from kinitro.ai; "arm-test": inject EVERY briefing section, conditional ones included, into the next user prompt, marked [TEST]; "invalidate-context": re-render the first-message context block (persona) on the next request.',
-        inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['status', 'set-domain', 'reload', 'arm-test', 'invalidate-context'] }, domain: { type: 'string', description: 'domain slug for set-domain, e.g. verum' } } },
+        description: 'kinitro-ai harness control. action "status" (default): diagnostics; "selection-start": remember the approved domains and return the selection page address (call before the user chooses on that page); "selection-done": compare with that list and bind the newly approved domain, or return the list to ask from; "set-domain" with domain "<slug>": bind this session to a kinitro.ai domain (slug from list-domains) and reload; "reload": re-read the briefing from kinitro.ai; "arm-test": inject EVERY briefing section, conditional ones included, into the next user prompt, marked [TEST]; "invalidate-context": re-render the first-message context block (persona) on the next request.',
+        inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['status', 'selection-start', 'selection-done', 'set-domain', 'reload', 'arm-test', 'invalidate-context'] }, domain: { type: 'string', description: 'domain slug for set-domain, e.g. verum' } } },
       })
     } catch (err: any) { await log($, `tool.register failed: ${err?.message ?? err}`) }
     return next(e)
@@ -428,10 +436,36 @@ export const register: Register = (on) => {
 
   on('tool.call', { tool: 'mcp__kinitro-ai__probe' }, async ($, e: any) => {
     const action = e.action ?? 'status'
+    if (action === 'selection-start') {
+      const seat = await mcp($, 'current-seat', {})
+      const approved: DomainChoice[] = (seat?.approved ?? []).map((d: any) => ({ slug: String(d.slug), name: String(d.name) }))
+      const anySlug = domainRef ?? approved[0]?.slug
+      const page = anySlug ? await mcp($, 'open-page', { target: 'selector', domainRef: anySlug }) : undefined
+      await $.fs.write(SNAPSHOT_FILE, JSON.stringify({ at: new Date().toISOString(), approved }))
+      await update($, approvedA, () => approved)
+      if (page?.url) await update($, selectorUrlA, () => String(page.url))
+      await log($, `selection-start: ${approved.map((d) => d.slug).join(',')}`)
+      return { result: JSON.stringify({ selectorUrl: page?.url ?? null, approved, current: domainRef ?? null }) }
+    }
+    if (action === 'selection-done') {
+      let before: DomainChoice[] = []
+      try { before = JSON.parse(await $.fs.read(SNAPSHOT_FILE)).approved ?? [] } catch { /* no snapshot */ }
+      const seat = await mcp($, 'current-seat', {})
+      const approved: DomainChoice[] = (seat?.approved ?? []).map((d: any) => ({ slug: String(d.slug), name: String(d.name) }))
+      await update($, approvedA, () => approved)
+      const fresh = approved.filter((d) => !before.some((b) => b.slug === d.slug))
+      await log($, `selection-done: new ${fresh.map((d) => d.slug).join(',') || '-'}`)
+      if (fresh.length === 1) {
+        const r = await bindDomain($, fresh[0]!.slug)
+        return { result: JSON.stringify({ bound: domainRef === fresh[0]!.slug ? fresh[0] : null, message: r, agent: briefing?.agentCode ?? null, domainCode: briefing?.domainCode ?? null, files: await domainFiles($) }) }
+      }
+      return { result: JSON.stringify({ bound: null, newlyApproved: fresh, approved, message: fresh.length ? 'several domains were approved: ask which one' : 'no newly approved domain: the user chose one that was already approved; ask which one' }) }
+    }
     if (action === 'set-domain') {
       const slug = String(e.domain ?? '').trim()
       if (!slug) return { result: 'set-domain needs domain: "<slug>" (see list-domains)' }
-      await bindDomain($, slug)
+      const r = await bindDomain($, slug)
+      return { result: JSON.stringify({ bound: domainRef === slug ? slug : null, message: r, agent: briefing?.agentCode ?? null, domainCode: briefing?.domainCode ?? null, files: await domainFiles($) }) }
     }
     if (action === 'reload') { needsDomain = undefined; await loadBriefing($) }
     if (action === 'arm-test') { testArmed = true; await writeState($) }
