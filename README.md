@@ -61,7 +61,7 @@ All instruction texts live in kinitro.ai and are edited by the domain owner. The
 | Context window reaches 70 % (and again every 5 points more) | Context nearly full |
 | First prompt after a compaction | After compaction |
 | While Claude compacts the conversation | Compaction instruction (goes to the summarizer) |
-| End of every turn | Your prompt and the agent's answer are appended to a protocol document in your domain |
+| End of every turn | Your prompt and the agent's final answer are written into the agent's chat in kinitro.ai |
 
 Details: [How it works](docs/how-it-works.md) and [Plugin reference](docs/plugin-reference.md).
 

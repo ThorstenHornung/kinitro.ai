@@ -8,3 +8,5 @@
 .kinitro-ai-domain.*
 .kinitro-ai-selection.json
 .kinitro-ai-pending
+.kinitro-ai-outbox.json
+.kinitro-ai-inbox.json

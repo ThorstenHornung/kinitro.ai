@@ -2,6 +2,15 @@
 
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.19.0] - 2026-10-08
+
+### Changed
+- The per-session protocol document is replaced by a chat mirror (kinitro.ai item 3413). At the end of each turn the plugin writes your prompt and the agent's final answer into the agent's chat in kinitro.ai. Tool calls, thinking and injected instruction blocks are not sent. Subagent turns are skipped.
+- Each turn is marked with its session, so several sessions of the same agent share one chat. Turns are written to `.kinitro-ai-outbox.json` first and then sent. A failed send is retried at the next prompt and every 60 seconds. Repeating a turn is safe. The outbox keeps at most 200 entries.
+- Every 60 seconds and at each prompt the plugin fetches new messages from the agent's chat, stores them in `.kinitro-ai-inbox.json` and tells the agent about them at the next prompt.
+- No protocol document is created or appended any more, and there is no compaction line. Protocol documents written by older versions stay where they are. Texts longer than 50,000 characters are cut.
+- The `probe` status shows the chat mirror: turns sent, already present, agent, last error, new inbox messages and last fetch. Turns before a domain is chosen wait in the outbox and are sent after binding.
+
 ## [0.18.0] - 2026-10-08
 
 ### Changed

@@ -37,7 +37,7 @@ kinitro.ai works with several agentic platforms. It starts with Claude. More pla
 4. **Fill the knowledge.** Atomic records with sources and review dates.
 5. **Add data and views** if the job needs them.
 6. **Test with `arm-test`.** Check that every section reaches the agent. See the [plugin reference](plugin-reference.md#the-probe-tool).
-7. **Run a pilot** with one customer user. Read the session protocols and improve the texts.
+7. **Run a pilot** with one customer user. Read the agent's chat and improve the texts.
 
 ## Commercial terms
 

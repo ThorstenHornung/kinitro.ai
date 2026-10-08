@@ -60,7 +60,7 @@ What you will see:
 
 - The agent behaves as its persona describes. It follows the working rules of your domain.
 - Each prompt begins with a short marker line from the plugin: `[kinitro-ai <version>] context ... % · briefing ... · domain <slug>`.
-- After each turn, your question and the answer appear in your kinitro.ai domain. Open the section `Protocols: Claude sessions`. There is one document per session, named `Protocol: Claude session <date> (<session id>)`.
+- After each turn, your question and the answer appear in the agent's chat in kinitro.ai. Open the agent's chat there. Several sessions of the same agent share one chat.
 
 ## Check status at any time
 

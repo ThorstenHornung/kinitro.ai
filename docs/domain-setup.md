@@ -12,11 +12,11 @@
 | `Knowledge` | Findings, methods and sources as small records with review dates | Permanent | Everyone |
 | `Reports` | Dated reports for one occasion | 4 weeks | Everyone |
 | `Dossiers` | Long-term reports | Permanent | Everyone |
-| `_Work` | Scratch, probes, interim results, session protocols | 7 days | Design mode |
+| `_Work` | Scratch, probes, interim results | 7 days | Design mode |
 
 Sections starting with an underscore are technical. Business users do not see them unless Design mode is on.
 
-The plugin writes session protocols to `_Work`, in the section `Protocols: Claude sessions`. They expire after 7 days like all scratch.
+The plugin writes your turns into the agent's chat, not into sections of the domain.
 
 ## What the domain node carries
 

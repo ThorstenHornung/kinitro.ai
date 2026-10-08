@@ -10,13 +10,17 @@ const SERVER = 'kinitro_ai'
 // Everything is resolved from the seat (current-seat): no domain codes are hard-wired.
 const GENERAL_EDGE = 'general-procedures'                 // association edge from the domain node to the general library section
 const GENERAL_BRIEFING_PREFIX = 'Briefing: kinitro.ai agents in Claude'  // Document in that section: layers G + M
-const PROTOCOL_SECTION = 'Protocols: Claude sessions'     // created in the domain's _Work section (or the domain) if missing
 const WARN_PCT = 70        // auto-compaction fires at 80 % in this environment
 const REWARN_STEP = 5      // warn again when the fill rises this many more points
-const MAX_MIRROR = 6000    // chars per prompt / answer in the protocol
+const MIRROR_PLATFORM = 'claude-code'   // chat mirror (item 3413): turns go into the agent's kinitro.ai chat via mirror-messaging
+const OUTBOX_FILE = '.kinitro-ai-outbox.json'   // every turn is written here first, then sent; resending is safe (the verb ignores a repeat)
+const INBOX_FILE = '.kinitro-ai-inbox.json'     // new chat messages from kinitro.ai, told to the agent at its next prompt
+const BOX_MAX = 200
+const FETCH_MS = 60000
+const MAX_TEXT = 50000     // chars per prompt / answer sent to the chat
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = 'kinitro-ai.log'
-const VERSION = '0.18.0'
+const VERSION = '0.19.0'
 const PENDING_VIEW_FILE = '.kinitro-ai-pending'   // written by the /kinitro fallback when the plugin was not running yet: finish the binding at the next prompt
 const REFRESH_MS = 24 * 3600 * 1000       // regular operation: instructions change rarely (PO 2026-10-08)
 const TEST_REFRESH_MS = 2 * 60 * 1000     // test mode (/kinitro test)
@@ -47,14 +51,12 @@ let briefing: Briefing | undefined
 let briefingError: string | undefined
 let lastLoadTry = 0
 let route = '-'
-let protocolCode: string | undefined
 let pendingPrompt = ''
 let warnedAt = 0
 let compactedPending = false
 let testArmed = false
 let lastInjected: string[] = []
 let composeCount = 0
-let mirrored = 0
 let lastMirrorError: string | undefined
 let compactions = 0
 let contextRenders = 0
@@ -145,9 +147,6 @@ function personaKey(): string {
   return `${briefing.domainRef ?? '-'}:${t.length}:${h.toString(36)}`
 }
 
-function trunc(s: string): string {
-  return s.length > MAX_MIRROR ? s.slice(0, MAX_MIRROR) + ' [...truncated]' : s
-}
 
 // Layer A: the agent's own native instruction-* contents on its agent node, appended to the matching section
 const A_TYPES: Record<string, string> = {
@@ -251,7 +250,7 @@ async function openInPane($: any, url: string): Promise<string> {
 // bind this session to a domain: files, module state, briefing, band
 async function bindDomain($: any, slug: string): Promise<string> {
   await writeDomainFiles($, slug)
-  briefing = undefined; protocolCode = undefined; needsDomain = undefined; domainRef = undefined
+  briefing = undefined; needsDomain = undefined; domainRef = undefined
   await writeState($)
   await loadBriefing($)
   const ok = briefing && domainRef === slug
@@ -357,13 +356,13 @@ async function readState($: any) {
     if (!(await $.fs.exists(STATE_FILE))) return
     const st = JSON.parse(await $.fs.read(STATE_FILE))
     testArmed = !!st.testArmed; warnedAt = st.warnedAt ?? 0; compactedPending = !!st.compactedPending
-    protocolCode = st.protocolCode; compactions = st.compactions ?? 0; mirrored = st.mirrored ?? 0; contextRenders = st.contextRenders ?? 0
+    compactions = st.compactions ?? 0; contextRenders = st.contextRenders ?? 0
   } catch (err: any) { await log($, `state read failed: ${err?.message ?? err}`) }
 }
 
 async function writeState($: any) {
   try {
-    await $.fs.write(STATE_FILE, JSON.stringify({ testArmed, warnedAt, compactedPending, protocolCode, compactions, mirrored, contextRenders }))
+    await $.fs.write(STATE_FILE, JSON.stringify({ testArmed, warnedAt, compactedPending, compactions, contextRenders }))
   } catch { /* ignore */ }
 }
 
@@ -385,53 +384,91 @@ async function waitForBriefing($: any) {
   }
 }
 
-async function findInDomain($: any, name: string, prefix: string): Promise<string | undefined> {
-  const r = await mcp($, 'find-nodes', { name, limit: 25 })
-  return (r.matches ?? []).find((m: any) => m.name === name && String(m.code).startsWith(prefix + '.'))?.code
+// ---- chat mirror (item 3413) ------------------------------------------------
+type OutEntry = { sessionId: string; turnId: string; prompt: string; answer: string; eventTs: string; domainRef?: string; sent?: boolean; result?: string }
+type InMsg = { at?: string; from?: string; text: string; raw?: unknown }
+let mirrorSent = 0, mirrorDup = 0, lastMirrorTarget = '-', inboxNew = 0, lastFetch = '-'
+let flushing = false, fetching = false
+
+async function readJson<T>($: any, f: string, empty: T): Promise<T> {
+  try { if (await $.fs.exists(f)) return JSON.parse(await $.fs.read(f)) as T } catch { /* ignore */ }
+  return empty
 }
 
-async function ensureProtocol($: any): Promise<string> {
-  if (protocolCode) return protocolCode
-  const domainCode = briefing?.domainCode
-  if (!domainCode) throw new Error('domain unknown (briefing not loaded)')
-  const sid: string = await $.session.id()
-  let section = await findInDomain($, PROTOCOL_SECTION, domainCode)
-  if (!section) {
-    const kids = await mcp($, 'list-nodes', { parentNodeCode: domainCode, limit: 200 })
-    const work = (kids?.nodes ?? []).find((n: any) => n.name === '_Work')?.code
-    const r = await mcp($, 'create-node', {
-      nodeTypeName: 'Section', name: PROTOCOL_SECTION, parentNodeCode: work ?? domainCode,
-      description: 'One document per Claude session, mirrored turn by turn by the kinitro-ai plugin. Scratch.',
-    })
-    section = r?.node?.code
-    if (!section) throw new Error(`protocol section not created: ${JSON.stringify(r).slice(0, 200)}`)
-  }
-  const name = `Protocol: Claude session ${new Date().toISOString().slice(0, 10)} (${sid.slice(0, 8)})`
-  let code = await findInDomain($, name, section)
-  if (!code) {
-    const r = await mcp($, 'create-node', {
-      nodeTypeName: 'Document', name, parentNodeCode: section,
-      description: `Mirror of Claude session ${sid} (kinitro-ai plugin).`,
-      initialContents: [{ contentTypeCode: 'md', body: `# ${name}\nClaude session \`${sid}\`, mirrored by the kinitro-ai plugin.\n` }],
-    })
-    code = r?.node?.code
-    if (!code) throw new Error(`create-node gave no code: ${JSON.stringify(r).slice(0, 200)}`)
-  }
-  protocolCode = code
-  return code as string
-}
+function cut(t: string): string { return t.length > MAX_TEXT ? t.slice(0, MAX_TEXT) + ' [...truncated]' : t }
 
-async function mirror($: any, text: string) {
+// send every unsent outbox entry; keep at most BOX_MAX entries (oldest sent ones go first)
+async function flushOutbox($: any) {
+  if (flushing) return
+  flushing = true
   try {
-    const code = await ensureProtocol($)
-    await mcp($, 'update-content', { nodeCode: code, contentTypeCode: 'md', append: text, inPlace: true })
-    mirrored++
-    lastMirrorError = undefined
-    await writeState($)
-  } catch (err: any) {
-    lastMirrorError = String(err?.message ?? err)
-    await log($, `mirror FAILED: ${lastMirrorError}`)
-  }
+    const box = await readJson<OutEntry[]>($, OUTBOX_FILE, [])
+    let changed = false
+    for (const o of box) {
+      if (o.sent) continue
+      const ref = o.domainRef ?? domainRef
+      if (!ref && needsDomain) break       // no domain yet: send after binding
+      try {
+        const r = await mcp($, 'mirror-messaging', { action: 'append', platform: MIRROR_PLATFORM, sessionId: o.sessionId, turnId: o.turnId, prompt: o.prompt, answer: o.answer, eventTs: o.eventTs, ...(ref ? { domainRef: ref } : {}) })
+        if (r?.status && r.status !== 'ok') throw new Error(JSON.stringify(r).slice(0, 200))
+        o.sent = true; o.domainRef = ref; changed = true
+        o.result = r?.alreadyPresent ? 'alreadyPresent' : `rows ${(r?.rowIds ?? []).length}`
+        if (r?.alreadyPresent) mirrorDup++; else mirrorSent++
+        lastMirrorTarget = r?.target?.agentNodeId ?? lastMirrorTarget
+        lastMirrorError = undefined
+      } catch (err: any) { lastMirrorError = String(err?.message ?? err).slice(0, 300); await log($, `mirror append failed: ${lastMirrorError}`); break }
+    }
+    if (box.length > BOX_MAX) { const keep = box.filter((o) => !o.sent).concat(box.filter((o) => o.sent).slice(-BOX_MAX)); box.splice(0, box.length, ...keep.slice(-BOX_MAX)); changed = true }
+    if (changed) await $.fs.write(OUTBOX_FILE, JSON.stringify(box))
+  } finally { flushing = false }
+}
+
+async function queueTurn($: any, turnId: string, prompt: string, answer: string) {
+  let sid = ''
+  try { sid = await $.session.id() } catch { /* ignore */ }
+  const box = await readJson<OutEntry[]>($, OUTBOX_FILE, [])
+  if (!box.some((o) => o.sessionId === sid && o.turnId === turnId)) box.push({ sessionId: sid, turnId, prompt: cut(prompt), answer: cut(answer), eventTs: new Date().toISOString(), domainRef })
+  await $.fs.write(OUTBOX_FILE, JSON.stringify(box.slice(-BOX_MAX)))
+  await flushOutbox($)
+}
+
+// new chat messages since the stored cursor (a first fetch without cursor starts from now)
+async function fetchInbox($: any) {
+  if (fetching || !domainRef) return
+  fetching = true
+  try {
+    let sid = ''
+    try { sid = await $.session.id() } catch { /* ignore */ }
+    const inbox = await readJson<{ cursor?: string; messages: (InMsg & { told?: boolean })[] }>($, INBOX_FILE, { messages: [] })
+    let more = true, rounds = 0
+    while (more && rounds++ < 5) {
+      const r = await mcp($, 'mirror-messaging', { action: 'fetch', platform: MIRROR_PLATFORM, sessionId: sid, ...(inbox.cursor ? { cursor: inbox.cursor } : {}), limit: 50 })
+      if (r?.status && r.status !== 'ok') throw new Error(JSON.stringify(r).slice(0, 200))
+      for (const m of (r?.messages ?? []) as any[]) {
+        if (m?.sessionId === sid || m?.platform === MIRROR_PLATFORM && m?.sessionId === sid) continue   // our own mirrored turns
+        const text = String(m?.text ?? m?.body ?? m?.content ?? '').trim()
+        if (!text) continue
+        inbox.messages.push({ at: m?.at ?? m?.createdAt ?? m?.timestamp, from: m?.from ?? m?.sender ?? m?.senderType ?? m?.role, text, raw: undefined })
+        inboxNew++
+      }
+      if (r?.nextCursor) inbox.cursor = r.nextCursor
+      more = !!r?.more
+    }
+    inbox.messages = inbox.messages.slice(-BOX_MAX)
+    await $.fs.write(INBOX_FILE, JSON.stringify(inbox))
+    lastFetch = new Date().toISOString()
+  } catch (err: any) { await log($, `mirror fetch failed: ${String(err?.message ?? err).slice(0, 300)}`) }
+  finally { fetching = false }
+}
+
+// messages not yet told to the agent; marks them as told
+async function takeInbox($: any): Promise<InMsg[]> {
+  const inbox = await readJson<{ cursor?: string; messages: (InMsg & { told?: boolean })[] }>($, INBOX_FILE, { messages: [] })
+  const fresh = inbox.messages.filter((m) => !m.told)
+  if (!fresh.length) return []
+  for (const m of fresh) m.told = true
+  await $.fs.write(INBOX_FILE, JSON.stringify(inbox))
+  return fresh
 }
 
 function briefingBlock(): string {
@@ -457,7 +494,7 @@ async function statusText($: any): Promise<string> {
     `context: ${pct ?? '?'} % (warn at ${WARN_PCT} %, last warned ${warnedAt || '-'})`,
     `last prompt injected: ${lastInjected.join(', ') || '-'}`,
     `test armed: ${testArmed} · compactions seen: ${compactions} · post-compact pending: ${compactedPending}`,
-    `mirror: ${mirrored} writes -> ${protocolCode ?? '-'}${lastMirrorError ? ' · last error: ' + lastMirrorError : ''}`,
+    `chat mirror: ${mirrorSent} turns sent, ${mirrorDup} already present, agent ${lastMirrorTarget}${lastMirrorError ? ' · last error: ' + lastMirrorError : ''} · inbox ${inboxNew} new since start, last fetch ${lastFetch}`,
   ].join('\n')
 }
 
@@ -511,6 +548,7 @@ export const register: Register = (on) => {
     await log($, `session.start ${VERSION} (interactive=${e.isInteractive}, surface=${e.surface})`)
     await readState($)
     await loadCache($)
+    $.clock.every(FETCH_MS, () => { flushOutbox($).then(() => fetchInbox($)) })
     try { await log($, `surfaces: ${JSON.stringify(await $.session.surfaces())}`) } catch (err: any) { await log($, `surfaces failed: ${err?.message ?? err}`) }
     refreshChoices($)
     let tries = 0
@@ -646,6 +684,13 @@ export const register: Register = (on) => {
       ].join('\n'))
       injected.push('Domain missing')
     }
+    if (!needsDomain && domainRef) {
+      await flushOutbox($)
+      await fetchInbox($)
+      const msgs = await takeInbox($)
+      if (msgs.length) { blocks.push(`New messages in your kinitro.ai chat (${msgs.length}), sent there since your last turn - read them and answer in your reply where they concern the work:\n${msgs.map((m) => `- ${m.at ? String(m.at).slice(0, 16).replace('T', ' ') + ' ' : ''}${m.from ? '(' + m.from + ') ' : ''}${m.text.slice(0, 2000)}`).join('\n')}`); injected.push('Chat inbox') }
+    }
+    if (needsDomain) { /* domain block above */ }
     else if (domainRef) blocks[0] += ` · domain ${domainRef} (pass domainRef:'${domainRef}' on every ${await kinitroPrefix($)}* call)`
     const add = (key: string, title: string, why: string) => {
       const t = sec(title)
@@ -710,24 +755,21 @@ export const register: Register = (on) => {
       compactedPending = true
       warnedAt = 0
       await writeState($)
-      await mirror($, `\n\n---\n*Compaction (${e.trigger}): ${r.tokensBefore ?? '?'} -> ${r.tokensAfter ?? '?'} tokens*\n`)
     }
     await log($, `session.compact done skip=${r.skip ?? '-'} before=${r.tokensBefore} after=${r.tokensAfter}`)
     return r
   })
 
-  // END OF TURN: mirror prompt + answer into kinitro.ai (script call, no model tokens)
+  // END OF TURN: prompt and final answer into the agent's kinitro.ai chat (item 3413); outbox first, then send
   on('turn.complete', async ($, e, next) => {
     const r = await next(e)
     if (e.agentId) return r
-    const when = new Date().toISOString().slice(0, 16).replace('T', ' ')
-    const body = `\n\n### ${when} UTC · ${e.reason}\n_Hooks: ${lastInjected.join(', ') || '-'}_\n\n**User:** ${trunc(pendingPrompt)}\n\n**Agent:** ${trunc(e.answer)}\n`
+    const prompt = pendingPrompt
     pendingPrompt = ''
-    await mirror($, body)
-    await log($, `turn.complete reason=${e.reason} mirrored=${mirrored} protocol=${protocolCode}`)
+    if (prompt || e.answer) await queueTurn($, e.turnId, prompt, e.answer ?? '')
+    await log($, `turn.complete reason=${e.reason} mirrorSent=${mirrorSent} dup=${mirrorDup}${lastMirrorError ? ' error=' + lastMirrorError : ''}`)
     return r
   })
-
 
   // DOMAIN BAND above the prompt: which kinitro.ai domain this session works for; choose or change it
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {

@@ -13,7 +13,7 @@
 |---|---|
 | **Domain** | Your workspace in kinitro.ai. It holds the purpose of your solution, its knowledge, documents, data and views. One domain per solution or project. |
 | **Agent node and seat** | The agent node is the place where one agent's own instructions live. The seat ties your account to a domain and an agent node. |
-| **Memory** | What the agent keeps, sorted by how long it should live. Scratch and session protocols are short-lived. Knowledge and designs are permanent. Each fact is kept once, not copied. |
+| **Memory** | What the agent keeps, sorted by how long it should live. Scratch is short-lived. Knowledge and designs are permanent. Each fact is kept once, not copied. |
 | **Knowledge** | Findings, methods and sources, written as small records. Each has a review date, so stale knowledge is found and renewed. |
 | **Procedures** | Step-by-step ways of working, kept in a shared library. The agent reads the procedure for a task type before it acts. |
 | **Register** | The list of work items and open points of a solution, with owner, status and history. |
@@ -69,7 +69,7 @@ The general briefing asks every kinitro.ai agent to work by these principles. Yo
    v
  TURNS                 every prompt
    |                   -> marker line + Every turn
-   |                   end of every turn: prompt + answer appended to the protocol in your domain
+   |                   end of every turn: prompt + answer written into the agent's chat
    v
  CHECKPOINT            context window reaches 70 %, then every +5 points
    |                   -> Context nearly full (your briefing says what to do, for example to secure results)
@@ -84,4 +84,4 @@ The general briefing asks every kinitro.ai agent to work by these principles. Yo
 
 Why this matters: a long conversation outgrows the model's context window. At the checkpoint the agent is told in time, so it can secure what must survive in kinitro.ai. After compaction it gets its persona and rules again, plus the After compaction instructions. Nothing important should depend on the conversation alone.
 
-The protocol document is a mirror for you and your team. It costs no model tokens. Details are in the [plugin reference](plugin-reference.md).
+The chat mirror is for you and your team: your prompts and the agent's answers appear in the agent's chat. It costs no model tokens. Details are in the [plugin reference](plugin-reference.md).

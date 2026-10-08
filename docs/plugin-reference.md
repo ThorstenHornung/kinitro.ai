@@ -1,6 +1,6 @@
 # Plugin reference
 
-**The plugin `kinitro-ai` 0.8.0 reads a briefing from kinitro.ai, injects its sections at fixed moments and mirrors each turn into your domain.** It contains no instruction texts and sends nothing anywhere except to kinitro.ai through your own connector. This page is the technical reference for the setup person.
+**The plugin `kinitro-ai` 0.8.0 reads a briefing from kinitro.ai, injects its sections at fixed moments and mirrors each turn into the agent's chat.** It contains no instruction texts and sends nothing anywhere except to kinitro.ai through your own connector. This page is the technical reference for the setup person.
 
 - [Hooks and events](#hooks-and-events)
 - [How the briefing is looked up](#how-the-briefing-is-looked-up)
@@ -8,6 +8,7 @@
 - [Local files](#local-files)
 - [The `/kinitro` command](#the-kinitro-command)
 - [The `probe` tool](#the-probe-tool)
+- [The chat mirror](#the-chat-mirror)
 - [Known limits](#known-limits-in-the-beta)
 - [Troubleshooting](#troubleshooting)
 
@@ -19,8 +20,8 @@
 | First-message context | Adds a context block with **Persona** and **Working rules**. Rendered once per conversation, and again after every compaction. |
 | System prompt | Adds the same two sections to the system prompt on every request, where the host supports it. If no briefing is loaded yet, it retries the load, at most every 20 seconds. |
 | Every user prompt | Adds a one-line marker `[kinitro-ai 0.8.0] context <n> % · briefing <code>`. Adds **Session start** on the first turn, **Every turn** on every turn, **After compaction** once on the first prompt after a compaction, and **Context nearly full** when the context window reaches 70 % and again every 5 points further. With no cache and no briefing, the first prompt waits up to 6 seconds for the connector. |
-| Compaction | Appends the **Compaction instruction** to the instructions for the summarizer. Afterwards it flags the After compaction section for the next prompt, resets the context warning, and writes a compaction line into the protocol. Skipped for sub-agents. |
-| End of turn | Appends your prompt and the agent's answer to the protocol document. Each text is cut after 6000 characters. Skipped for sub-agents. |
+| Compaction | Appends the **Compaction instruction** to the instructions for the summarizer. Afterwards it flags the After compaction section for the next prompt and resets the context warning. Skipped for sub-agents. |
+| End of turn | Writes your prompt and the agent's final answer into the agent's chat (see [The chat mirror](#the-chat-mirror)). Each text is cut after 50,000 characters. Skipped for sub-agents. |
 | `/kinitro` | A command file of the plugin: opens the domain selection and binds the session (see below). |
 | `probe` tool call | Runs the requested action. |
 
@@ -110,7 +111,9 @@ The plugin uses four files in the working directory of the Claude session.
 | `.kinitro-ai-briefing.json` | Cache of the briefing, so the first message is fast while the connector connects. | Yes. It is rebuilt. |
 | `.kinitro-ai-domain.<session id>` | The slug of this session's domain (one line). | Yes, but the session then needs the domain again. |
 | `.kinitro-ai-domain` | The folder default: the last slug chosen in this folder. | Yes. |
-| `.kinitro-ai-state.json` | Hook state: test flag, last context warning, compaction flag, protocol document code, counters. | Yes. Counters and the protocol link restart. |
+| `.kinitro-ai-state.json` | Hook state: test flag, last context warning, compaction flag, counters. | Yes. Counters restart. |
+| `.kinitro-ai-outbox.json` | Turns not yet confirmed by kinitro.ai (prompt and answer text). At most 200 entries. | Yes, but unsent turns are lost. |
+| `.kinitro-ai-inbox.json` | New messages fetched from the agent's chat, and the fetch cursor. | Yes. |
 
 The cache holds the briefing text. Do not commit these files to a repository. The `.gitignore` of this repository already excludes them.
 
@@ -133,7 +136,7 @@ The status is shown by `probe` with action `status`:
 - context fill and the level of the last warning;
 - what was injected into the last prompt;
 - test flag, compactions seen, post-compaction flag;
-- mirror status: number of writes, protocol document code, last error.
+- chat mirror: turns sent, already present, agent, last error, new inbox messages, last fetch.
 
 ## The `probe` tool
 
@@ -151,14 +154,16 @@ The agent can call `probe` with one of nine actions. All return the same status 
 | `arm-test` | The next prompt receives every section once, marked `[TEST]`, including the ones that normally appear only at certain moments. The Compaction instruction is shown too, although it normally goes only to the summarizer. Use it to verify the setup. |
 | `invalidate-context` | Renders the first-message context block (persona and working rules) again on the next request. |
 
-## The protocol
+## The chat mirror
 
-At the end of every turn the plugin appends to a document named `Protocol: Claude session <date> (<first 8 characters of the session id>)`.
+At the end of every turn the plugin writes your prompt and the agent's final answer into the agent's chat in kinitro.ai. It uses the verb `mirror-messaging` (action `append`, platform `claude-code`, the Claude session id and the turn id).
 
-- The section `Protocols: Claude sessions` is found in your domain. If it is missing, it is created in the domain's `_Work` section (or in the domain itself if there is no `_Work`).
-- The document is created on the first mirror write.
-- Each entry has the time (UTC), the end reason, the hooks injected, your prompt and the agent's answer.
-- Compactions appear as a separate line with tokens before and after.
+- Tool calls, thinking and injected instruction blocks are not sent. Subagent turns are skipped.
+- Each turn is marked with its session. Several sessions of the same agent share one chat.
+- Each turn is written to `.kinitro-ai-outbox.json` first and then sent. A failed send is retried at the next prompt and every 60 seconds. Repeating a turn is safe: kinitro.ai answers `alreadyPresent`. The outbox keeps at most 200 entries.
+- Turns before a domain is chosen wait in the outbox and are sent after binding.
+- Every 60 seconds and at each prompt the plugin fetches new messages from that chat (`mirror-messaging` action `fetch` with a stored cursor). It stores them in `.kinitro-ai-inbox.json` and tells the agent at the next prompt, in the block "New messages in your kinitro.ai chat".
+- No protocol document is created or appended any more, and there is no compaction line. Protocol documents written by older versions stay where they are.
 - Mirroring is a script call and costs no model tokens.
 
 ## Known limits in the beta
@@ -166,8 +171,8 @@ At the end of every turn the plugin appends to a document named `Protocol: Claud
 - Messages sent to the agent inside the kinitro.ai app do not reach an agent running in Claude yet.
 - Section-level expiry rules cannot be configured yet. Agents set the expiry per document.
 - The compaction threshold is assumed to be 80 %. The checkpoint at 70 % is based on that assumption.
-- Texts longer than 6000 characters are cut in the protocol.
-- Mirroring needs the connector. If it is down, that turn is not mirrored.
+- Prompts and answers longer than 50,000 characters are cut in the chat.
+- Mirroring needs the connector. If it is down, the turn waits in the outbox and is sent later.
 
 ## Troubleshooting
 
@@ -183,7 +188,7 @@ At the end of every turn the plugin appends to a document named `Protocol: Claud
 | Briefing source stays `cache` | Connector was not up in time, or loading keeps failing | Run `probe` with `reload`. Read `kinitro-ai.log`. |
 | A section never arrives | Heading missing or misspelled in the briefing document | Use the exact names above. Run `probe` with `arm-test`. |
 | Persona does not change after editing in kinitro.ai | The old briefing is cached | Run `probe` with `reload`, then `invalidate-context`. |
-| No protocol document appears | Mirror write failed. the `probe` status shows `last error`. | Check write access to the domain. Check the `_Work` section. Read `kinitro-ai.log`. |
+| Turns do not appear in the agent's chat | The send failed. The `probe` status shows `last error`. | The outbox resends at the next prompt and every 60 seconds. Check the connector and write access to the domain. Read `kinitro-ai.log`. |
 | Agent ignores a checkpoint | The agent was not told in time, or the text is unclear | Run `arm-test` and ask the agent to confirm each block. Edit the text in kinitro.ai. |
 
 Still stuck? Send `kinitro-ai.log` and the `probe` status to [support@kinitro.ai](mailto:support@kinitro.ai). Check both for confidential content first.
