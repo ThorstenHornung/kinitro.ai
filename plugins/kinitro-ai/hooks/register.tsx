@@ -1,4 +1,6 @@
+import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
+import type { DomainChoice } from '../types'
 
 // kinitro-ai harness for Claude. All instruction TEXTS live in kinitro.ai; this file only decides WHEN
 // each section is injected. Layers G+M: the general briefing behind the domain's general-procedures edge;
@@ -14,10 +16,11 @@ const REWARN_STEP = 5      // warn again when the fill rises this many more poin
 const MAX_MIRROR = 6000    // chars per prompt / answer in the protocol
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = 'kinitro-ai.log'
-const VERSION = '0.10.0'
+const VERSION = '0.11.0'
 // Domain binding (kinitro.ai 2026-10-08): a connection may serve several domains; every call names its domain
 // with domainRef (the slug). The slug of this session lives in DOMAIN_FILE (set it with probe action 'set-domain').
-const DOMAIN_FILE = '.kinitro-ai-domain'
+const DOMAIN_FILE = '.kinitro-ai-domain'               // folder default: the last domain chosen in this working folder
+const SESSION_DOMAIN_PREFIX = '.kinitro-ai-domain.'    // + session id: the domain of exactly this session (wins over the folder default)
 const NO_DOMAIN_ARG = new Set(['current-seat', 'list-domains'])   // verbs that take no arguments
 // Each user message may start a fresh engine process while the kinitro.ai
 // connector is still connecting: the briefing and the hook state therefore
@@ -53,8 +56,17 @@ let personaSource = 'briefing document'
 let refreshing = false
 let refreshDone = false
 let domainRef: string | undefined      // slug passed on every call; undefined = legacy seat-bound connection
+let bandRenders = 0
+let lastBandSurface = '-'
 let needsDomain: string | undefined    // set when the connection serves several domains and no slug is configured
 const logLines: string[] = []
+
+// ---- band state (host-held, survives module reloads) ----------------------
+const approvedA = atom({ plugin: 'kinitro-ai', key: 'approved' } as const, [] as DomainChoice[])
+const currentA = atom({ plugin: 'kinitro-ai', key: 'current' } as const, null as string | null)
+const chooserA = atom({ plugin: 'kinitro-ai', key: 'chooser' } as const, false)
+const selectorUrlA = atom({ plugin: 'kinitro-ai', key: 'selectorUrl' } as const, null as string | null)
+const bandNoteA = atom({ plugin: 'kinitro-ai', key: 'bandNote' } as const, null as string | null)
 
 // ---- helpers: top level, because the engine only lets $ flow into these ----
 async function log($: any, line: string) {
@@ -109,9 +121,53 @@ const A_TYPES: Record<string, string> = {
   [S.turn]: 'instruction-preturn-continue', [S.after]: 'instruction-postcompaction',
 }
 
-async function readDomainFile($: any): Promise<string | undefined> {
-  try { if (await $.fs.exists(DOMAIN_FILE)) { const v = String(await $.fs.read(DOMAIN_FILE)).trim(); return v || undefined } } catch { /* ignore */ }
+async function readFileTrim($: any, f: string): Promise<string | undefined> {
+  try { if (await $.fs.exists(f)) { const v = String(await $.fs.read(f)).trim(); return v || undefined } } catch { /* ignore */ }
   return undefined
+}
+
+// the session's own choice first, then the folder default
+async function readDomainFile($: any): Promise<string | undefined> {
+  let sid = ''
+  try { sid = await $.session.id() } catch { /* ignore */ }
+  return (sid ? await readFileTrim($, SESSION_DOMAIN_PREFIX + sid) : undefined) ?? await readFileTrim($, DOMAIN_FILE)
+}
+
+async function writeDomainFiles($: any, slug: string) {
+  let sid = ''
+  try { sid = await $.session.id() } catch { /* ignore */ }
+  if (sid) await $.fs.write(SESSION_DOMAIN_PREFIX + sid, slug + '\n')
+  await $.fs.write(DOMAIN_FILE, slug + '\n')
+}
+
+// approved domains of the connection, and the address of the seat picker (approve more domains)
+async function refreshChoices($: any) {
+  try {
+    const seat = await mcp($, 'current-seat', {})
+    const approved: DomainChoice[] = (seat?.approved ?? []).map((d: any) => ({ slug: String(d.slug), name: String(d.name) }))
+    if (!approved.length && seat?.domain?.id) approved.push({ slug: '', name: String(seat.domain.name ?? 'seat-bound') })
+    await update($, approvedA, () => approved)
+    const anySlug = domainRef ?? approved.find((d) => d.slug)?.slug
+    if (anySlug) {
+      const r = await mcp($, 'open-page', { target: 'selector', domainRef: anySlug })
+      if (r?.url) await update($, selectorUrlA, () => String(r.url))
+    }
+  } catch (err: any) { await log($, `refreshChoices failed: ${err?.message ?? err}`) }
+}
+
+// bind this session to a domain: files, module state, briefing, band
+async function bindDomain($: any, slug: string): Promise<string> {
+  await writeDomainFiles($, slug)
+  briefing = undefined; protocolCode = undefined; needsDomain = undefined; domainRef = undefined
+  await writeState($)
+  await loadBriefing($)
+  $.ui.invalidate('prompt.context')
+  const ok = briefing && domainRef === slug
+  await update($, currentA, () => (ok ? slug : null))
+  await update($, chooserA, () => !ok)
+  await update($, bandNoteA, () => (ok ? null : `could not bind ${slug}: ${briefingError ?? 'unknown'}`))
+  if (ok) { try { $.ui.toast(`kinitro.ai: this session works for ${slug}`) } catch { /* ignore */ } }
+  return ok ? `bound to ${slug}` : `binding ${slug} failed: ${briefingError}`
 }
 
 async function loadBriefing($: any) {
@@ -126,6 +182,7 @@ async function loadBriefing($: any) {
       const slug = (await readDomainFile($)) ?? (approved.length === 1 ? approved[0].slug : undefined)
       if (!slug) {
         needsDomain = `this connection serves ${approved.length} domains (${approved.map((d: any) => d.slug).join(', ')}); set this session's domain with mcp__kinitro-ai__probe action "set-domain", domain "<slug>"`
+        try { await update($, approvedA, () => approved.map((x: any) => ({ slug: String(x.slug), name: String(x.name) }))); await update($, chooserA, () => true); await update($, currentA, () => null) } catch { /* ignore */ }
         throw new Error(needsDomain)
       }
       const doms = await mcp($, 'list-domains', {})
@@ -171,6 +228,7 @@ async function loadBriefing($: any) {
     const raw = Object.entries(sections).map(([k, v]) => `## ${k}\n${v}`).join('\n\n')
     briefing = { raw, sections, code: gCode ?? agentCode, loadedAt: new Date().toISOString(), source: 'kinitro.ai', domainCode, agentCode, domainRef, layers: layers.join(', ') }
     briefingError = undefined
+    try { await update($, currentA, () => domainRef ?? '') } catch { /* ignore */ }
     try { await $.fs.write(CACHE_FILE, JSON.stringify(briefing)) } catch { /* ignore */ }
     await log($, `briefing loaded for domain ${domainCode} / agent ${agentCode} via ${route}: ${raw.length} chars, layers ${briefing.layers}`)
   } catch (err: any) {
@@ -295,6 +353,7 @@ async function statusText($: any): Promise<string> {
     `kinitro-ai ${VERSION}`,
     `briefing: ${briefing ? `domain ${briefing.domainCode ?? '?'} / agent ${briefing.agentCode ?? '?'} (${briefing.raw.length} chars, source ${briefing.source}, loaded ${briefing.loadedAt}, route ${route})` : `MISSING (${briefingError})`}`,
     `domain: ${domainRef ?? (needsDomain ? 'NOT SET - ' + needsDomain : 'seat-bound connection')}`,
+    `band: rendered ${bandRenders}x, last surface ${lastBandSurface}`,
     `layers: ${briefing?.layers ?? '-'}`,
     `sections: ${briefing ? Object.keys(briefing.sections).join(' | ') : '-'} · persona from ${personaSource}`,
     `system prompt section injected in ${composeCount} renders (prompt.compose) · first-message context block rendered ${contextRenders}x (prompt.context)`,
@@ -312,7 +371,7 @@ function cleanTodo(body: string): string | undefined {
   const lines = body.split('\n').filter((l) => !l.includes('{{mx:cache-cut}}'))
   const out: string[] = []
   for (let i = 0; i < lines.length; i++) {
-    const l = lines[i]
+    const l = lines[i] ?? ''
     if (/^## /.test(l)) {
       const next = lines.slice(i + 1).find((x) => x.trim() !== '')
       if (!next || /^## /.test(next)) continue
@@ -344,6 +403,8 @@ export const register: Register = (on) => {
     await log($, `session.start ${VERSION} (interactive=${e.isInteractive}, surface=${e.surface})`)
     await readState($)
     await loadCache($)
+    try { await log($, `surfaces: ${JSON.stringify(await $.session.surfaces())}`) } catch (err: any) { await log($, `surfaces failed: ${err?.message ?? err}`) }
+    refreshChoices($)
     let tries = 0
     const timer = $.clock.every(3000, () => {
       if (refreshing || refreshDone) return
@@ -372,11 +433,7 @@ export const register: Register = (on) => {
     if (action === 'set-domain') {
       const slug = String(e.domain ?? '').trim()
       if (!slug) return { result: 'set-domain needs domain: "<slug>" (see list-domains)' }
-      await $.fs.write(DOMAIN_FILE, slug + '\n')
-      briefing = undefined; protocolCode = undefined; needsDomain = undefined; domainRef = undefined
-      await writeState($)
-      await loadBriefing($)
-      $.ui.invalidate('prompt.context')
+      await bindDomain($, slug)
     }
     if (action === 'reload') { needsDomain = undefined; await loadBriefing($) }
     if (action === 'arm-test') { testArmed = true; await writeState($) }
@@ -418,7 +475,18 @@ export const register: Register = (on) => {
     const tag = testArmed ? '[TEST] ' : ''
     const blocks: string[] = [`[kinitro-ai ${VERSION}] context ${pct ?? '?'} % · briefing ${briefing ? briefing.code : 'MISSING (' + briefingError + ')'}`]
     const injected: string[] = ['marker']
-    if (needsDomain) { blocks.push(`kinitro.ai domain not set: ${needsDomain}. Until then pass domainRef on every mcp__kinitro_ai__* call.`); injected.push('Domain missing') }
+    if (needsDomain) {
+      const approved = await read($, approvedA)
+      const url = await read($, selectorUrlA)
+      blocks.push([
+        'kinitro.ai domain not set for this session. Before any other work:',
+        `1. Ask the user which domain this session works for, with AskUserQuestion (one option per approved domain: ${approved.map((d) => `${d.name} = ${d.slug}`).join('; ') || 'none listed'}).`,
+        url ? `2. If their domain is missing, give them this link to approve it, then ask again: ${url}` : '2. If their domain is missing, ask them to approve it for this connection in kinitro.ai.',
+        '3. Bind the session: call mcp__kinitro-ai__probe with action "set-domain" and domain "<slug>". Confirm the domain in one line.',
+        `Detail: ${needsDomain}.`,
+      ].join('\n'))
+      injected.push('Domain missing')
+    }
     else if (domainRef) blocks[0] += ` · domain ${domainRef} (pass domainRef:'${domainRef}' on every mcp__kinitro_ai__* call)`
     const add = (key: string, title: string, why: string) => {
       const t = sec(title)
@@ -489,4 +557,39 @@ export const register: Register = (on) => {
   })
 
   on('command.run', { command: 'kinitro' }, async ($) => ({ text: await statusText($) }))
+
+  // DOMAIN BAND above the prompt: which kinitro.ai domain this session works for; choose or change it
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if ((e as any).props?.hasSurvey) return next(e)
+    const { Box, Text, Button, Link } = $.ui.resolve(e) as any
+    bandRenders++; lastBandSurface = String((e as any).surface)
+    const approved = await read($, approvedA)
+    const current = await read($, currentA)
+    const chooser = await read($, chooserA)
+    const url = await read($, selectorUrlA)
+    const note = await read($, bandNoteA)
+    const name = (slug: string | null) => approved.find((d) => d.slug === slug)?.name ?? slug
+    if (!chooser && current) {
+      return (
+        <Box>
+          <Text dimColor>kinitro.ai · {name(current)} ({current}) </Text>
+          <Button key="kin-change" label="Change domain" dimColor onPress={() => { update($, chooserA, () => true); refreshChoices($) }} />
+        </Box>
+      )
+    }
+    return (
+      <Box flexDirection="column">
+        <Text>{current ? `kinitro.ai · this session works for ${name(current)}. Switch to:` : 'kinitro.ai · choose the domain for this session:'}</Text>
+        <Box>
+          {approved.filter((d) => d.slug && d.slug !== current).map((d) => (
+            <Button key={'kin-' + d.slug} label={d.name} variant={approved.length === 1 ? 'primary' : undefined} onPress={() => { bindDomain($, d.slug) }} />
+          ))}
+          <Button key="kin-refresh" label="Refresh list" dimColor onPress={() => { refreshChoices($) }} />
+          {current ? <Button key="kin-close" label="Close" role="dismiss" onPress={() => { update($, chooserA, () => false) }} /> : null}
+        </Box>
+        {url ? <Text dimColor>Domain missing? <Link href={url} label="Open the kinitro.ai domain selection" />, approve it there, then Refresh list.</Text> : null}
+        {note ? <Text dimColor>{note}</Text> : null}
+      </Box>
+    )
+  })
 }

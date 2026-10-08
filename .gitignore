@@ -5,3 +5,4 @@
 .kinitro-ai-*.json
 .DS_Store
 .kinitro-ai-domain
+.kinitro-ai-domain.*

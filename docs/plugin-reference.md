@@ -48,10 +48,17 @@ One kinitro.ai connection can serve several domains, for example two agents of t
 | Situation | What the plugin does |
 |---|---|
 | The connection serves one approved domain | Uses it. Nothing to set. |
-| Several approved domains, file `.kinitro-ai-domain` present | Uses the slug in that file. |
-| Several approved domains, no file | Stops retrying, shows `domain: NOT SET` in `/kinitro` and tells the agent in every prompt to set the domain. |
+| Several approved domains, session file `.kinitro-ai-domain.<session id>` present | Uses that slug. |
+| Several approved domains, folder default `.kinitro-ai-domain` present | Uses that slug (the last domain chosen in this folder). |
+| Several approved domains, no file | Stops retrying, shows `domain: NOT SET` in `/kinitro` and asks you to choose (below). |
 
-To set the domain, ask the agent to call `probe` with action `set-domain` and the slug, or write the slug into `.kinitro-ai-domain` in the working directory and run `probe` with `reload`. The agent must pass `domainRef` on its own kinitro.ai calls too; the plugin reminds it in the marker line of every prompt.
+How you choose:
+
+- **Row above the prompt** (Claude Code in the terminal and the desktop Code tab): one button per approved domain, **Refresh list**, and a link to the kinitro.ai domain selection page where you approve another domain. With a domain set, the row shows it with **Change domain**.
+- **In the chat** (where no row can be drawn, for example a cloud session in the Claude app): the agent asks you with selection buttons, gives you the selection link if your domain is missing, and binds the session.
+- **By hand:** ask the agent to call `probe` with action `set-domain` and the slug.
+
+Choosing writes both files. The agent must pass `domainRef` on its own kinitro.ai calls too; the plugin reminds it in the marker line of every prompt.
 
 Run two agents at the same time in two Claude sessions, each with its own working directory and its own `.kinitro-ai-domain`.
 
@@ -89,7 +96,8 @@ The plugin uses four files in the working directory of the Claude session.
 |---|---|---|
 | `kinitro-ai.log` | Log of the hooks: loads, injections, mirror writes, errors. | Yes |
 | `.kinitro-ai-briefing.json` | Cache of the briefing, so the first message is fast while the connector connects. | Yes. It is rebuilt. |
-| `.kinitro-ai-domain` | The slug of this session's domain (one line), written by `probe` `set-domain`. | Yes, but the agent then needs the domain again. |
+| `.kinitro-ai-domain.<session id>` | The slug of this session's domain (one line). | Yes, but the session then needs the domain again. |
+| `.kinitro-ai-domain` | The folder default: the last slug chosen in this folder. | Yes. |
 | `.kinitro-ai-state.json` | Hook state: test flag, last context warning, compaction flag, protocol document code, counters. | Yes. Counters and the protocol link restart. |
 
 The cache holds the briefing text. Do not commit these files to a repository. The `.gitignore` of this repository already excludes them.

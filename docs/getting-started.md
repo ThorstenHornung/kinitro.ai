@@ -55,13 +55,13 @@ If the install fails, check that `git` is installed and the machine can reach gi
 Open Claude Code in any working directory and type `/kinitro`. You should see lines like these:
 
 ```
-kinitro-ai 0.10.0
+kinitro-ai 0.11.0
 briefing: domain ... / agent ... (... chars, source kinitro.ai, ...)
 layers: G+M ..., A ...
 sections: Persona | Working rules | ...
 ```
 
-If `/kinitro` shows `domain: NOT SET`, your connection serves several domains. Tell the agent which one, for example "work in domain verum"; it binds the session with `probe` `set-domain`. Use a separate working directory for each agent you run in parallel.
+If your connection serves several domains, you choose the domain once per session: with the buttons in the row above the prompt, or, in the Claude app, with the selection buttons the agent shows you in the chat. If your domain is missing, use the link to the kinitro.ai domain selection page, approve it there and choose again. Use a separate working directory for each agent you run in parallel.
 
 Then write your first message. Write in your own language. The agent answers in the language you use.
 

@@ -2,6 +2,13 @@
 
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.11.0] - 2026-10-08
+
+### Added
+- Domain row above the prompt (terminal and desktop Code tab): shows the session's domain with **Change domain**; without a domain it offers one button per approved domain, **Refresh list** and a link to the kinitro.ai domain selection page.
+- Without a drawing surface (for example a cloud session in the Claude app), the agent asks for the domain in the chat with selection buttons and binds the session itself.
+- The slug is stored per session (`.kinitro-ai-domain.<session id>`) and as the folder default (`.kinitro-ai-domain`), so parallel sessions in one folder keep their own domain.
+
 ## [0.10.0] - 2026-10-08
 
 ### Added
