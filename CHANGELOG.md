@@ -2,6 +2,19 @@
 
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.17.0] - 2026-10-08
+
+Fixes from the instruction and mirroring test (plan 4.2.2.7.15).
+
+### Fixed
+- After choosing a domain, the next prompt carries the full start package: persona, working rules, session start, notes and memory topics. Before, they arrived only at the next compaction.
+- Persona and working rules are injected whenever the agent does not hold the current ones (domain switch, changed instructions, an outdated start block).
+- A missing instruction type no longer pulls in another instruction: the plugin checks the content type of every row it reads.
+
+### Added
+- Instructions refresh from kinitro.ai at session start and then daily. `/kinitro refresh` refreshes on request; `/kinitro test` refreshes every 2 minutes for testing, `/kinitro test off` returns to daily.
+- `/kinitro status`.
+
 ## [0.16.2] - 2026-10-08
 
 ### Changed

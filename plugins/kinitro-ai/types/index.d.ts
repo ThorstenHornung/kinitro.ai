@@ -9,6 +9,9 @@ declare module 'claude-code' {
       selectorUrl: string | null
       bandNote: string | null
       bound: string | null
+      testMode: boolean
+      startPack: boolean
+      contextKey: string
     }
   }
 }

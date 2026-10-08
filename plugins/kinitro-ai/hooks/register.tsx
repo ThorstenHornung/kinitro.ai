@@ -16,7 +16,9 @@ const REWARN_STEP = 5      // warn again when the fill rises this many more poin
 const MAX_MIRROR = 6000    // chars per prompt / answer in the protocol
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = 'kinitro-ai.log'
-const VERSION = '0.16.2'
+const VERSION = '0.17.0'
+const REFRESH_MS = 24 * 3600 * 1000       // regular operation: instructions change rarely (PO 2026-10-08)
+const TEST_REFRESH_MS = 2 * 60 * 1000     // test mode (/kinitro test)
 const PAGE_TEXT_TOOLS = ['mcp__remote-devices__Claude_Browser__get_page_text', 'mcp__Claude_Browser__get_page_text']
 const BROWSER_TOOLS = ['mcp__remote-devices__Claude_Browser__preview_start', 'mcp__Claude_Browser__preview_start']   // the Claude app's browser pane (cloud session linked to the computer / desktop session)
 const SNAPSHOT_FILE = '.kinitro-ai-selection.json'   // approved slugs when the selection page was opened (selection-start)
@@ -70,6 +72,9 @@ const currentA = atom({ plugin: 'kinitro-ai', key: 'current' } as const, null as
 const chooserA = atom({ plugin: 'kinitro-ai', key: 'chooser' } as const, false)
 const selectorUrlA = atom({ plugin: 'kinitro-ai', key: 'selectorUrl' } as const, null as string | null)
 const bandNoteA = atom({ plugin: 'kinitro-ai', key: 'bandNote' } as const, null as string | null)
+const testModeA = atom({ plugin: 'kinitro-ai', key: 'testMode' } as const, false)
+const startPackA = atom({ plugin: 'kinitro-ai', key: 'startPack' } as const, false)          // inject the session-start package on the next prompt (after binding a domain)
+const contextKeyA = atom({ plugin: 'kinitro-ai', key: 'contextKey' } as const, '')            // domain + hash of persona/rules the agent last received
 const boundA = atom({ plugin: 'kinitro-ai', key: 'bound' } as const, null as string | null)   // this session's slug, held by the host: survives reloads and a changed working folder
 
 // ---- helpers: top level, because the engine only lets $ flow into these ----
@@ -113,6 +118,15 @@ function parseSections(body: string): Record<string, string> {
 
 function sec(name: string): string {
   return briefing?.sections[name] ?? ''
+}
+
+// identifies the persona and working rules the agent should hold: domain + content hash
+function personaKey(): string {
+  if (!briefing) return ''
+  const t = `${sec(S.persona)}\n${sec(S.rules)}`
+  let h = 5381
+  for (let i = 0; i < t.length; i++) h = ((h * 33) ^ t.charCodeAt(i)) >>> 0
+  return `${briefing.domainRef ?? '-'}:${t.length}:${h.toString(36)}`
 }
 
 function trunc(s: string): string {
@@ -230,6 +244,7 @@ async function bindDomain($: any, slug: string): Promise<string> {
   await update($, chooserA, () => !ok)
   await update($, bandNoteA, () => (ok ? null : `could not bind ${slug}: ${briefingError ?? 'unknown'}`))
   if (!ok) return `binding ${slug} failed: ${briefingError}`
+  await update($, startPackA, () => true)
   try { $.ui.toast(`kinitro.ai: this session works for ${slug}`) } catch { /* ignore */ }
   const view = await openDomainView($)
   return `bound to ${slug}; domain view: ${view}`
@@ -273,13 +288,14 @@ async function loadBriefing($: any) {
         const doc = (kids?.nodes ?? []).find((n: any) => String(n.name).startsWith(GENERAL_BRIEFING_PREFIX))
         if (doc) {
           const g = await mcp($, 'load-node-content', { nodeCode: doc.code, contentTypeCode: 'md' })
-          if (g?.body) { Object.assign(sections, parseSections(g.body)); gCode = doc.code; layers.push(`G+M ${doc.code}`) }
+          if (g?.body && g?.contentTypeCode === 'md') { Object.assign(sections, parseSections(g.body)); gCode = doc.code; layers.push(`G+M ${doc.code}`) }
         }
       }
     } catch (err: any) { await log($, `general briefing failed: ${err?.message ?? err}`) }
     // Layer A: agent node
     const aRes = await Promise.all(Object.entries(A_TYPES).map(async ([title, type]) => {
-      try { const r = await mcp($, 'load-node-content', { nodeCode: agentCode, contentTypeCode: type }); return [title, r?.body as string | undefined] as const }
+      // the verb answers with ANOTHER row when the asked type is missing (platform G7): take the body only when the type matches
+      try { const r = await mcp($, 'load-node-content', { nodeCode: agentCode, contentTypeCode: type }); return [title, (r?.contentTypeCode === type ? r?.body : undefined) as string | undefined] as const }
       catch { return [title, undefined] as const }
     }))
     for (const [title, body] of aRes) {
@@ -418,7 +434,7 @@ async function statusText($: any): Promise<string> {
     `kinitro-ai ${VERSION}`,
     `briefing: ${briefing ? `domain ${briefing.domainCode ?? '?'} / agent ${briefing.agentCode ?? '?'} (${briefing.raw.length} chars, source ${briefing.source}, loaded ${briefing.loadedAt}, route ${route})` : `MISSING (${briefingError})`}`,
     `domain: ${domainRef ?? (needsDomain ? 'NOT SET - ' + needsDomain : 'seat-bound connection')}`,
-    `band: rendered ${bandRenders}x, last surface ${lastBandSurface}`,
+    `refresh: ${(await read($, testModeA)) ? 'test mode, every 2 min' : 'daily'} · instructions loaded ${briefing?.loadedAt ?? '-'}`,
     `layers: ${briefing?.layers ?? '-'}`,
     `sections: ${briefing ? Object.keys(briefing.sections).join(' | ') : '-'} · persona from ${personaSource}`,
     `system prompt section injected in ${composeCount} renders (prompt.compose) · first-message context block rendered ${contextRenders}x (prompt.context)`,
@@ -484,8 +500,8 @@ export const register: Register = (on) => {
     try {
       await $.tool.register({
         name: 'probe',
-        description: 'kinitro-ai harness control. action "status" (default): diagnostics; "selection-start": remember the approved domains and return the selection page address (call before the user chooses on that page); "selection-done": compare with that list and bind the newly approved domain, or return the list to ask from; "set-domain" with domain "<slug>": bind this session to a kinitro.ai domain (slug from list-domains) and reload; "reload": re-read the briefing from kinitro.ai; "arm-test": inject EVERY briefing section, conditional ones included, into the next user prompt, marked [TEST]; "invalidate-context": re-render the first-message context block (persona) on the next request.',
-        inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['status', 'choices', 'open-domain', 'selection-start', 'selection-done', 'set-domain', 'reload', 'arm-test', 'invalidate-context'] }, domain: { type: 'string', description: 'domain slug for set-domain, e.g. verum' } } },
+        description: 'kinitro-ai harness control. action "status" (default): diagnostics; "test-mode" with value on|off: refresh the instructions every 2 minutes instead of daily; "selection-start": remember the approved domains and return the selection page address (call before the user chooses on that page); "selection-done": compare with that list and bind the newly approved domain, or return the list to ask from; "set-domain" with domain "<slug>": bind this session to a kinitro.ai domain (slug from list-domains) and reload; "reload": re-read the briefing from kinitro.ai; "arm-test": inject EVERY briefing section, conditional ones included, into the next user prompt, marked [TEST]; "invalidate-context": re-render the first-message context block (persona) on the next request.',
+        inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['status', 'test-mode', 'choices', 'open-domain', 'selection-start', 'selection-done', 'set-domain', 'reload', 'arm-test', 'invalidate-context'] }, domain: { type: 'string', description: 'domain slug for set-domain, e.g. verum' }, value: { type: 'string', enum: ['on', 'off'], description: 'for test-mode' } } },
       })
     } catch (err: any) { await log($, `tool.register failed: ${err?.message ?? err}`) }
     return next(e)
@@ -534,6 +550,7 @@ export const register: Register = (on) => {
       return { result: JSON.stringify(confirmation(slug, r)) }
     }
     if (action === 'reload') { needsDomain = undefined; await loadBriefing($) }
+    if (action === 'test-mode') { const enable = String(e.value ?? 'on') !== 'off'; await update($, testModeA, () => enable); await log($, `test mode ${enable ? 'on' : 'off'}`) }
     if (action === 'arm-test') { testArmed = true; await writeState($) }
     if (action === 'invalidate-context') $.ui.invalidate('prompt.context')
     const res = `action: ${action}\n${await statusText($)}`
@@ -549,6 +566,7 @@ export const register: Register = (on) => {
     const text = briefingBlock()
     if (!text) return r
     contextRenders++
+    await update($, contextKeyA, () => personaKey())
     await writeState($)
     await log($, `prompt.context: kinitroBriefing block added (${text.length} chars), render #${contextRenders}`)
     return { ...r, blocks: [...r.blocks.filter((b: any) => b.name !== 'kinitroBriefing'), { name: 'kinitroBriefing', text }] }
@@ -567,6 +585,13 @@ export const register: Register = (on) => {
   // EVERY USER PROMPT: marker, start (first prompt), per-turn, 70 %, post-compaction
   on('prompt.submit', async ($, e, next) => {
     if (!briefing) await waitForBriefing($)
+    const turns0 = await $.session.turns().catch(() => -1)
+    // freshness: a new session always starts from kinitro.ai, later the copy is renewed daily (test mode: every 2 minutes)
+    if (briefing && !needsDomain) {
+      const age = Date.now() - Date.parse(briefing.loadedAt ?? '1970-01-01')
+      const limit = (await read($, testModeA)) ? TEST_REFRESH_MS : REFRESH_MS
+      if (turns0 === 0 ? briefing.source !== 'kinitro.ai' : age > limit) { const kept = briefing; await loadBriefing($); if (!briefing) briefing = kept }
+    }
     pendingPrompt = e.text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>\s*/g, '').trim()
     const pct = await contextPercent($)
     const turns = await $.session.turns().catch(() => -1)
@@ -592,9 +617,17 @@ export const register: Register = (on) => {
       blocks.push(`${tag}${title}${why ? ' (' + why + ')' : ''}:\n${t}`)
       injected.push(title)
     }
-    const startOrAfter = turns === 0 || compactedPending || testArmed
+    const startPack = !needsDomain && (await read($, startPackA))
+    const startOrAfter = turns === 0 || compactedPending || testArmed || startPack
     if (briefing) {
-      if (turns === 0 || testArmed) add('start', S.start, testArmed ? 'Test' : 'first turn')
+      // persona and working rules: when the agent does not hold the current ones (domain switch, refresh with changes, stale start block)
+      if (!needsDomain && (await read($, contextKeyA)) !== personaKey()) {
+        add('persona', S.persona, startPack ? `domain ${briefing.domainName ?? domainRef}` : 'updated')
+        add('rules', S.rules, '')
+        await update($, contextKeyA, () => personaKey())
+      }
+      if (turns === 0 || testArmed || startPack) add('start', S.start, testArmed ? 'Test' : startPack ? 'domain chosen' : 'first turn')
+      if (startPack) await update($, startPackA, () => false)
       add('turn', S.turn, '')
       if (compactedPending || testArmed) { add('after', S.after, testArmed ? 'Test' : 'after compaction'); compactedPending = false }
       const full = pct !== undefined && pct >= WARN_PCT && pct >= warnedAt + REWARN_STEP

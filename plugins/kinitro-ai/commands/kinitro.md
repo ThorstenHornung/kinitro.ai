@@ -1,6 +1,6 @@
 ---
 description: Choose the kinitro.ai domain this session works in
-argument-hint: "[domain]"
+argument-hint: "[domain | refresh | test | test off | status]"
 ---
 
 The user wants to choose the kinitro.ai domain this Claude session works for. Arguments: "$ARGUMENTS"
@@ -10,6 +10,8 @@ Talk to the user in their language and call it "domain" (German: "Arbeitsbereich
 Work in this order, without commentary between calls. The plugin stores the choice and opens pages in the browser pane (the internal browser) itself.
 
 0. **Load the tools first.** The plugin's tool may be deferred. Call ToolSearch once with `{"query": "select:mcp__kinitro-ai__probe,mcp__remote-devices__Claude_Browser__preview_start,mcp__Claude_Browser__preview_start", "max_results": 3}`. Use the fallback at the end only if `mcp__kinitro-ai__probe` is not returned.
+
+**Other arguments first:** `refresh` → call `mcp__kinitro-ai__probe` with `{"action": "reload"}` and answer "Instructions refreshed from kinitro.ai." · `test` → `{"action": "test-mode", "value": "on"}`, answer "Test mode on: instructions refresh every 2 minutes." · `test off` → `{"action": "test-mode", "value": "off"}`, answer "Test mode off: instructions refresh daily." · `status` → `{"action": "status"}`, summarise in three lines (domain, instructions loaded at, refresh mode) without codes or ids. Then stop.
 
 1. **Domain given** (the arguments name a domain, by slug such as `verum` or by name; match it against `choices` if it is a name): call `mcp__kinitro-ai__probe` with `{"action": "set-domain", "domain": "<slug>"}` and go to step 4.
 2. **Ask which domain.** Call `mcp__kinitro-ai__probe` with `{"action": "choices"}`. Ask with AskUserQuestion: "Which domain should this session work for?" Options: one per entry in `approved` (label = name; description = "current" for the `current` one, else "approved"), plus "Approve another domain" (description = "opens the kinitro.ai domain selection").

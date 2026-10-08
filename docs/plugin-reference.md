@@ -62,6 +62,18 @@ Choosing writes both files. The agent must pass `domainRef` on its own kinitro.a
 
 Run two agents at the same time in two Claude sessions, each with its own working directory and its own `.kinitro-ai-domain`.
 
+## When instructions are refreshed
+
+| Moment | What happens |
+|---|---|
+| First prompt of a session | The instructions are loaded fresh from kinitro.ai (never from the local copy alone). |
+| Daily | Before a prompt, a copy older than 24 hours is renewed. |
+| `/kinitro refresh` | Renewed on request, for example after editing instructions in kinitro.ai. |
+| `/kinitro test` / `/kinitro test off` | Test mode renews every 2 minutes; off returns to daily. |
+| Domain chosen | Loaded fresh for the new domain; the next prompt carries persona, working rules, session start, notes and memory topics. |
+
+When the persona or working rules changed, the next prompt carries them again.
+
 ## What must be configured in kinitro.ai
 
 | Item | Requirement |
