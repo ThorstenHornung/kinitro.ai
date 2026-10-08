@@ -2,6 +2,11 @@
 
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.16.2] - 2026-10-08
+
+### Changed
+- `/kinitro` speaks of the "domain" (German: "Arbeitsbereich"), never of a slug; `/kinitro <domain>` also accepts the domain's name.
+
 ## [0.16.1] - 2026-10-08
 
 ### Fixed
