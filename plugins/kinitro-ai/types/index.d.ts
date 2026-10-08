@@ -8,6 +8,7 @@ declare module 'claude-code' {
       chooser: boolean
       selectorUrl: string | null
       bandNote: string | null
+      bound: string | null
     }
   }
 }

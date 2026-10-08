@@ -2,6 +2,14 @@
 
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.15.0] - 2026-10-08
+
+### Changed
+- `/kinitro` asks once: an approved domain directly, or "Another domain" after choosing it on the kinitro.ai page. The domain you switched to on the page is read from the page, so you are not asked again.
+- The plugin opens the domain view in the browser pane itself after binding (new `probe` action `open-domain`).
+- The confirmation names the domain and the agent only: no codes, ids or paths.
+- The session's domain is also held by the host, so it survives a changed working folder.
+
 ## [0.13.0] - 2026-10-08
 
 ### Changed

@@ -16,7 +16,9 @@ const REWARN_STEP = 5      // warn again when the fill rises this many more poin
 const MAX_MIRROR = 6000    // chars per prompt / answer in the protocol
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = 'kinitro-ai.log'
-const VERSION = '0.13.0'
+const VERSION = '0.15.0'
+const PAGE_TEXT_TOOLS = ['mcp__remote-devices__Claude_Browser__get_page_text', 'mcp__Claude_Browser__get_page_text']
+const BROWSER_TOOLS = ['mcp__remote-devices__Claude_Browser__preview_start', 'mcp__Claude_Browser__preview_start']   // the Claude app's browser pane (cloud session linked to the computer / desktop session)
 const SNAPSHOT_FILE = '.kinitro-ai-selection.json'   // approved slugs when the selection page was opened (selection-start)
 // Domain binding (kinitro.ai 2026-10-08): a connection may serve several domains; every call names its domain
 // with domainRef (the slug). The slug of this session lives in DOMAIN_FILE (set it with probe action 'set-domain').
@@ -37,7 +39,7 @@ const S = {
 } as const
 
 // ---- module state (resets on reload; session.start re-fills it) -----------
-type Briefing = { raw: string; sections: Record<string, string>; code: string; loadedAt: string; source: string; domainCode?: string; agentCode?: string; domainRef?: string; layers?: string }
+type Briefing = { raw: string; sections: Record<string, string>; code: string; loadedAt: string; source: string; domainCode?: string; agentCode?: string; domainRef?: string; domainName?: string; agentName?: string; layers?: string }
 let briefing: Briefing | undefined
 let briefingError: string | undefined
 let lastLoadTry = 0
@@ -68,6 +70,7 @@ const currentA = atom({ plugin: 'kinitro-ai', key: 'current' } as const, null as
 const chooserA = atom({ plugin: 'kinitro-ai', key: 'chooser' } as const, false)
 const selectorUrlA = atom({ plugin: 'kinitro-ai', key: 'selectorUrl' } as const, null as string | null)
 const bandNoteA = atom({ plugin: 'kinitro-ai', key: 'bandNote' } as const, null as string | null)
+const boundA = atom({ plugin: 'kinitro-ai', key: 'bound' } as const, null as string | null)   // this session's slug, held by the host: survives reloads and a changed working folder
 
 // ---- helpers: top level, because the engine only lets $ flow into these ----
 async function log($: any, line: string) {
@@ -131,7 +134,17 @@ async function readFileTrim($: any, f: string): Promise<string | undefined> {
 async function readDomainFile($: any): Promise<string | undefined> {
   let sid = ''
   try { sid = await $.session.id() } catch { /* ignore */ }
-  return (sid ? await readFileTrim($, SESSION_DOMAIN_PREFIX + sid) : undefined) ?? await readFileTrim($, DOMAIN_FILE)
+  let held: string | null = null
+  try { held = await read($, boundA) } catch { /* ignore */ }
+  return held ?? (sid ? await readFileTrim($, SESSION_DOMAIN_PREFIX + sid) : undefined) ?? await readFileTrim($, DOMAIN_FILE)
+}
+
+// what the agent tells the user: names only, no codes, ids or paths
+function confirmation(slug: string, message: string) {
+  const ok = domainRef === slug && !!briefing
+  return ok
+    ? { bound: true, domain: briefing?.domainName ?? slug, agent: briefing?.agentName ?? null, domainView: message.split('domain view: ')[1] ?? null, sayToUser: `This session now works for ${briefing?.domainName ?? slug}${briefing?.agentName && briefing.agentName !== briefing.domainName ? ` with the agent ${briefing.agentName}` : ''}.` }
+    : { bound: false, reason: message }
 }
 
 async function domainFiles($: any): Promise<string[]> {
@@ -144,6 +157,7 @@ async function domainFiles($: any): Promise<string[]> {
 async function writeDomainFiles($: any, slug: string) {
   let sid = ''
   try { sid = await $.session.id() } catch { /* ignore */ }
+  try { await update($, boundA, () => slug) } catch { /* ignore */ }
   if (sid) await $.fs.write(SESSION_DOMAIN_PREFIX + sid, slug + '\n')
   await $.fs.write(DOMAIN_FILE, slug + '\n')
 }
@@ -163,6 +177,43 @@ async function refreshChoices($: any) {
   } catch (err: any) { await log($, `refreshChoices failed: ${err?.message ?? err}`) }
 }
 
+// what the user switched to on the selection page, read from the browser pane ("This connection may now work in <Domain> as <Agent>")
+async function switchedOnPage($: any, approved: DomainChoice[]): Promise<DomainChoice | undefined> {
+  for (const tool of PAGE_TEXT_TOOLS) {
+    try {
+      const r: any = await $.tool.call({ tool })
+      if (r?.deny || r?.isError) continue
+      const text = String(r?.text ?? (typeof r?.result === 'string' ? r.result : JSON.stringify(r?.result ?? '')))
+      const m = text.match(/may now work in (.+?) as /)
+      if (!m) return undefined
+      const hit = approved.find((d) => d.name === m[1]!.trim())
+      await log($, `page says switched to '${m[1]}' -> ${hit?.slug ?? 'no approved match'}`)
+      return hit
+    } catch { /* try the next tool */ }
+  }
+  return undefined
+}
+
+// open the domain view of the bound domain in the browser pane, straight from the plugin (no model turn)
+async function openDomainView($: any): Promise<string> {
+  if (!domainRef) return 'no domain bound'
+  let url: string | undefined
+  try { url = (await mcp($, 'open-page', {}))?.url } catch (err: any) { return `open-page failed: ${err?.message ?? err}` }
+  if (!url) return 'open-page gave no url'
+  const errs: string[] = []
+  for (const tool of BROWSER_TOOLS) {
+    try {
+      const r: any = await $.tool.call({ tool, url })
+      if (r?.deny) { errs.push(`${tool}: denied ${r.deny}`); continue }
+      if (r?.isError) { errs.push(`${tool}: ${String(r.text ?? r.result).slice(0, 160)}`); continue }
+      await log($, `domain view opened via ${tool}`)
+      return `opened in the browser pane (${tool.split('__')[1]})`
+    } catch (err: any) { errs.push(`${tool}: ${String(err?.message ?? err).slice(0, 160)}`) }
+  }
+  await log($, `domain view not opened: ${errs.join(' | ')}`)
+  return `browser pane not reachable; link: ${url}`
+}
+
 // bind this session to a domain: files, module state, briefing, band
 async function bindDomain($: any, slug: string): Promise<string> {
   await writeDomainFiles($, slug)
@@ -174,8 +225,10 @@ async function bindDomain($: any, slug: string): Promise<string> {
   await update($, currentA, () => (ok ? slug : null))
   await update($, chooserA, () => !ok)
   await update($, bandNoteA, () => (ok ? null : `could not bind ${slug}: ${briefingError ?? 'unknown'}`))
-  if (ok) { try { $.ui.toast(`kinitro.ai: this session works for ${slug}`) } catch { /* ignore */ } }
-  return ok ? `bound to ${slug}` : `binding ${slug} failed: ${briefingError}`
+  if (!ok) return `binding ${slug} failed: ${briefingError}`
+  try { $.ui.toast(`kinitro.ai: this session works for ${slug}`) } catch { /* ignore */ }
+  const view = await openDomainView($)
+  return `bound to ${slug}; domain view: ${view}`
 }
 
 async function loadBriefing($: any) {
@@ -234,7 +287,7 @@ async function loadBriefing($: any) {
     personaSource = sections[S.persona] ? `${agentCode} instruction-persona` : 'none'
     if (!Object.keys(sections).length) throw new Error(`no briefing found: no '${GENERAL_EDGE}' edge with a '${GENERAL_BRIEFING_PREFIX}' document on ${domainCode}, and no instruction-* on ${agentCode}`)
     const raw = Object.entries(sections).map(([k, v]) => `## ${k}\n${v}`).join('\n\n')
-    briefing = { raw, sections, code: gCode ?? agentCode, loadedAt: new Date().toISOString(), source: 'kinitro.ai', domainCode, agentCode, domainRef, layers: layers.join(', ') }
+    briefing = { raw, sections, code: gCode ?? agentCode, loadedAt: new Date().toISOString(), source: 'kinitro.ai', domainCode, agentCode, domainRef, domainName: dom?.name, agentName: agent?.name, layers: layers.join(', ') }
     briefingError = undefined
     try { await update($, currentA, () => domainRef ?? '') } catch { /* ignore */ }
     try { await $.fs.write(CACHE_FILE, JSON.stringify(briefing)) } catch { /* ignore */ }
@@ -428,7 +481,7 @@ export const register: Register = (on) => {
       await $.tool.register({
         name: 'probe',
         description: 'kinitro-ai harness control. action "status" (default): diagnostics; "selection-start": remember the approved domains and return the selection page address (call before the user chooses on that page); "selection-done": compare with that list and bind the newly approved domain, or return the list to ask from; "set-domain" with domain "<slug>": bind this session to a kinitro.ai domain (slug from list-domains) and reload; "reload": re-read the briefing from kinitro.ai; "arm-test": inject EVERY briefing section, conditional ones included, into the next user prompt, marked [TEST]; "invalidate-context": re-render the first-message context block (persona) on the next request.',
-        inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['status', 'selection-start', 'selection-done', 'set-domain', 'reload', 'arm-test', 'invalidate-context'] }, domain: { type: 'string', description: 'domain slug for set-domain, e.g. verum' } } },
+        inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['status', 'open-domain', 'selection-start', 'selection-done', 'set-domain', 'reload', 'arm-test', 'invalidate-context'] }, domain: { type: 'string', description: 'domain slug for set-domain, e.g. verum' } } },
       })
     } catch (err: any) { await log($, `tool.register failed: ${err?.message ?? err}`) }
     return next(e)
@@ -436,6 +489,7 @@ export const register: Register = (on) => {
 
   on('tool.call', { tool: 'mcp__kinitro-ai__probe' }, async ($, e: any) => {
     const action = e.action ?? 'status'
+    if (action === 'open-domain') return { result: await openDomainView($) }
     if (action === 'selection-start') {
       const seat = await mcp($, 'current-seat', {})
       const approved: DomainChoice[] = (seat?.approved ?? []).map((d: any) => ({ slug: String(d.slug), name: String(d.name) }))
@@ -455,9 +509,10 @@ export const register: Register = (on) => {
       await update($, approvedA, () => approved)
       const fresh = approved.filter((d) => !before.some((b) => b.slug === d.slug))
       await log($, `selection-done: new ${fresh.map((d) => d.slug).join(',') || '-'}`)
-      if (fresh.length === 1) {
-        const r = await bindDomain($, fresh[0]!.slug)
-        return { result: JSON.stringify({ bound: domainRef === fresh[0]!.slug ? fresh[0] : null, message: r, agent: briefing?.agentCode ?? null, domainCode: briefing?.domainCode ?? null, files: await domainFiles($) }) }
+      const pick = fresh.length === 1 ? fresh[0] : await switchedOnPage($, approved)
+      if (pick) {
+        const r = await bindDomain($, pick.slug)
+        return { result: JSON.stringify(confirmation(pick.slug, r)) }
       }
       return { result: JSON.stringify({ bound: null, newlyApproved: fresh, approved, message: fresh.length ? 'several domains were approved: ask which one' : 'no newly approved domain: the user chose one that was already approved; ask which one' }) }
     }
@@ -465,7 +520,7 @@ export const register: Register = (on) => {
       const slug = String(e.domain ?? '').trim()
       if (!slug) return { result: 'set-domain needs domain: "<slug>" (see list-domains)' }
       const r = await bindDomain($, slug)
-      return { result: JSON.stringify({ bound: domainRef === slug ? slug : null, message: r, agent: briefing?.agentCode ?? null, domainCode: briefing?.domainCode ?? null, files: await domainFiles($) }) }
+      return { result: JSON.stringify(confirmation(slug, r)) }
     }
     if (action === 'reload') { needsDomain = undefined; await loadBriefing($) }
     if (action === 'arm-test') { testArmed = true; await writeState($) }
