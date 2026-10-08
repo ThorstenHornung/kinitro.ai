@@ -2,6 +2,15 @@
 
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.10.0] - 2026-10-08
+
+### Added
+- Multi-domain connections: one kinitro.ai connection can serve several domains. Each session names its domain by slug (`probe` action `set-domain`, stored in `.kinitro-ai-domain`), and every kinitro.ai call of the plugin passes `domainRef`.
+- `/kinitro` shows the domain slug; the marker line reminds the agent to pass `domainRef`.
+
+### Fixed
+- When no domain is set, the plugin stops retrying instead of calling kinitro.ai every 3 seconds.
+
 ## [0.9.0] - 2026-10-06
 
 ### Added

@@ -4,3 +4,4 @@
 *.log
 .kinitro-ai-*.json
 .DS_Store
+.kinitro-ai-domain

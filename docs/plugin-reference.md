@@ -28,10 +28,11 @@ The marker line and every injected block start from the sections of the briefing
 
 ## How the briefing is looked up
 
-The plugin hard-wires no domain. It resolves everything from your seat:
+The plugin hard-wires no domain. It resolves the domain and agent node from your connection:
 
-1. `current-seat` returns your domain and agent node.
-2. The plugin reads both nodes to get their codes.
+1. `current-seat` is called first. If the connection is bound to one seat, it returns the domain and agent node directly.
+2. If the connection serves several domains, `current-seat` lists the approved domains instead. The plugin then takes this session's **domain slug** (see "Choosing the domain" below), looks it up with `list-domains` and uses that domain and its default agent node. From then on, every kinitro.ai call of the plugin carries `domainRef: <slug>`.
+3. The plugin reads both nodes to get their codes.
 3. **General layers.** It follows the association edge `general-procedures` from the domain node (outgoing, first edge). In the linked section it takes the first Document whose name starts with `Briefing: kinitro.ai agents in Claude` and loads its markdown content. The document is split into sections at each `## ` heading.
 4. **Agent layer.** It reads the agent node's instruction contents (table below) and merges them into the matching sections.
 5. It writes the result to the local cache and logs what was loaded.
@@ -40,11 +41,25 @@ If neither the general briefing nor any agent instruction is found, the load fai
 
 A failed general briefing does not stop the load. The agent's own instructions are used alone.
 
+## Choosing the domain
+
+One kinitro.ai connection can serve several domains, for example two agents of the same person. Each Claude session works for exactly one domain, named by its slug (`list-domains` shows the slugs, for example `verum`).
+
+| Situation | What the plugin does |
+|---|---|
+| The connection serves one approved domain | Uses it. Nothing to set. |
+| Several approved domains, file `.kinitro-ai-domain` present | Uses the slug in that file. |
+| Several approved domains, no file | Stops retrying, shows `domain: NOT SET` in `/kinitro` and tells the agent in every prompt to set the domain. |
+
+To set the domain, ask the agent to call `probe` with action `set-domain` and the slug, or write the slug into `.kinitro-ai-domain` in the working directory and run `probe` with `reload`. The agent must pass `domainRef` on its own kinitro.ai calls too; the plugin reminds it in the marker line of every prompt.
+
+Run two agents at the same time in two Claude sessions, each with its own working directory and its own `.kinitro-ai-domain`.
+
 ## What must be configured in kinitro.ai
 
 | Item | Requirement |
 |---|---|
-| Seat | Your account has an agent seat: a domain and an agent node. |
+| Seat | Your account has an agent seat: a domain and an agent node. On a multi-domain connection the domain must be approved for the connection and have a default agent node. |
 | Edge | The domain node has an association edge with the relation name `general-procedures` to the section that holds the general library. |
 | Briefing document | That section holds a Document whose name **starts with** `Briefing: kinitro.ai agents in Claude`. Its markdown content has one `## ` heading per section (names below). |
 | Agent instructions | Optional, but something must exist: either the briefing or at least one agent instruction. |
@@ -68,12 +83,13 @@ An agent instruction is appended below the general text under the heading **Agen
 
 ## Local files
 
-The plugin writes three files into the working directory of the Claude session.
+The plugin uses four files in the working directory of the Claude session.
 
 | File | Content | Safe to delete? |
 |---|---|---|
 | `kinitro-ai.log` | Log of the hooks: loads, injections, mirror writes, errors. | Yes |
 | `.kinitro-ai-briefing.json` | Cache of the briefing, so the first message is fast while the connector connects. | Yes. It is rebuilt. |
+| `.kinitro-ai-domain` | The slug of this session's domain (one line), written by `probe` `set-domain`. | Yes, but the agent then needs the domain again. |
 | `.kinitro-ai-state.json` | Hook state: test flag, last context warning, compaction flag, protocol document code, counters. | Yes. Counters and the protocol link restart. |
 
 The cache holds the briefing text. Do not commit these files to a repository. The `.gitignore` of this repository already excludes them.
@@ -83,6 +99,7 @@ The cache holds the briefing text. Do not commit these files to a repository. Th
 `/kinitro` prints:
 
 - plugin version;
+- the domain slug, or `NOT SET` with the approved slugs, or `seat-bound connection`;
 - briefing status: domain, agent, size, source (`kinitro.ai` or `cache`), load time, route used to reach kinitro.ai;
 - layers loaded (for example the general document and each agent instruction);
 - section names and where the persona comes from;
@@ -94,11 +111,12 @@ The cache holds the briefing text. Do not commit these files to a repository. Th
 
 ## The `probe` tool
 
-The agent can call `probe` with one of four actions. All four return the same status text.
+The agent can call `probe` with one of five actions. All return the same status text.
 
 | Action | Effect |
 |---|---|
 | `status` (default) | Shows diagnostics. |
+| `set-domain` | With `domain: "<slug>"`: binds this session to that domain, stores the slug in `.kinitro-ai-domain` and reloads. |
 | `reload` | Reads the briefing again from kinitro.ai. |
 | `arm-test` | The next prompt receives every section once, marked `[TEST]`, including the ones that normally appear only at certain moments. The Compaction instruction is shown too, although it normally goes only to the summarizer. Use it to verify the setup. |
 | `invalidate-context` | Renders the first-message context block (persona and working rules) again on the next request. |
@@ -127,7 +145,9 @@ At the end of every turn the plugin appends to a document named `Protocol: Claud
 |---|---|---|
 | `/kinitro` is not found | Plugin not installed or not active in this session | Run the install command again. Choose user scope. Start a new session. |
 | Install fails | `git` missing, github.com not reachable, or an SSH attempt fails | Install `git`; check the network; set `CLAUDE_CODE_PLUGIN_PREFER_HTTPS=1` and retry. |
-| `briefing: MISSING (... current-seat gave no domain/agent node ...)` | No agent seat, or the connector is not connected | Check the seat with your contact. Check the connector. |
+| `domain: NOT SET` | The connection serves several domains and this session has no slug | Run `probe` with `set-domain` and the slug from `list-domains`. |
+| `domain_ref_required` in the log or in agent calls | A call without `domainRef` on a multi-domain connection | Update the plugin to 0.10.0 or later. Remind the agent to pass `domainRef`. |
+| `briefing: MISSING (... not approved ...)` | The slug is not approved for this connection | Approve the domain for the connector in kinitro.ai, or choose another slug. |
 | `briefing: MISSING (... no briefing found ...)` | No `general-procedures` edge with a `Briefing: kinitro.ai agents in Claude` document, and no agent instructions | Ask your contact to add the edge and document, or the agent instructions. Then run `probe` with `reload`. |
 | `MISSING` with a message about `tool.call` and `mcp.call` | Connector not reachable under the name `kinitro_ai` | Check the connector name and its sign-in. Send a new message. |
 | Briefing source stays `cache` | Connector was not up in time, or loading keeps failing | Run `probe` with `reload`. Read `kinitro-ai.log`. |

@@ -14,7 +14,11 @@ const REWARN_STEP = 5      // warn again when the fill rises this many more poin
 const MAX_MIRROR = 6000    // chars per prompt / answer in the protocol
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = 'kinitro-ai.log'
-const VERSION = '0.9.0'
+const VERSION = '0.10.0'
+// Domain binding (kinitro.ai 2026-10-08): a connection may serve several domains; every call names its domain
+// with domainRef (the slug). The slug of this session lives in DOMAIN_FILE (set it with probe action 'set-domain').
+const DOMAIN_FILE = '.kinitro-ai-domain'
+const NO_DOMAIN_ARG = new Set(['current-seat', 'list-domains'])   // verbs that take no arguments
 // Each user message may start a fresh engine process while the kinitro.ai
 // connector is still connecting: the briefing and the hook state therefore
 // live in files that survive the restart, refreshed from kinitro.ai in the background.
@@ -29,7 +33,7 @@ const S = {
 } as const
 
 // ---- module state (resets on reload; session.start re-fills it) -----------
-type Briefing = { raw: string; sections: Record<string, string>; code: string; loadedAt: string; source: string; domainCode?: string; agentCode?: string; layers?: string }
+type Briefing = { raw: string; sections: Record<string, string>; code: string; loadedAt: string; source: string; domainCode?: string; agentCode?: string; domainRef?: string; layers?: string }
 let briefing: Briefing | undefined
 let briefingError: string | undefined
 let lastLoadTry = 0
@@ -48,6 +52,8 @@ let contextRenders = 0
 let personaSource = 'briefing document'
 let refreshing = false
 let refreshDone = false
+let domainRef: string | undefined      // slug passed on every call; undefined = legacy seat-bound connection
+let needsDomain: string | undefined    // set when the connection serves several domains and no slug is configured
 const logLines: string[] = []
 
 // ---- helpers: top level, because the engine only lets $ flow into these ----
@@ -58,7 +64,8 @@ async function log($: any, line: string) {
 
 // kinitro.ai call through the engine's tool path (same route as the model's own
 // mcp__kinitro_ai__* calls), falling back to the direct MCP route.
-async function mcp($: any, tool: string, args: Record<string, unknown>) {
+async function mcp($: any, tool: string, args0: Record<string, unknown>) {
+  const args = domainRef && !NO_DOMAIN_ARG.has(tool) && args0.domainRef === undefined ? { ...args0, domainRef } : args0
   let text: string
   try {
     const r: any = await $.tool.call({ tool: `mcp__${SERVER}__${tool}`, ...args })
@@ -102,12 +109,34 @@ const A_TYPES: Record<string, string> = {
   [S.turn]: 'instruction-preturn-continue', [S.after]: 'instruction-postcompaction',
 }
 
+async function readDomainFile($: any): Promise<string | undefined> {
+  try { if (await $.fs.exists(DOMAIN_FILE)) { const v = String(await $.fs.read(DOMAIN_FILE)).trim(); return v || undefined } } catch { /* ignore */ }
+  return undefined
+}
+
 async function loadBriefing($: any) {
   lastLoadTry = Date.now()
   try {
     const seat = await mcp($, 'current-seat', {})
-    if (!seat?.domain?.id || !seat?.agentNode?.id) throw new Error(`current-seat gave no domain/agent node: ${JSON.stringify(seat).slice(0, 200)}`)
-    const [dom, agent] = await Promise.all([mcp($, 'get-node', { nodeId: seat.domain.id }), mcp($, 'get-node', { nodeId: seat.agentNode.id })])
+    let domainId: string | undefined = seat?.domain?.id, agentId: string | undefined = seat?.agentNode?.id
+    if (domainId && agentId) domainRef = undefined   // legacy: the connection is bound to one seat
+    else {
+      // multi-domain connection: the session names its domain by slug
+      const approved: any[] = seat?.approved ?? []
+      const slug = (await readDomainFile($)) ?? (approved.length === 1 ? approved[0].slug : undefined)
+      if (!slug) {
+        needsDomain = `this connection serves ${approved.length} domains (${approved.map((d: any) => d.slug).join(', ')}); set this session's domain with mcp__kinitro-ai__probe action "set-domain", domain "<slug>"`
+        throw new Error(needsDomain)
+      }
+      const doms = await mcp($, 'list-domains', {})
+      const d = (doms?.domains ?? []).find((x: any) => x.slug === slug)
+      if (!d) throw new Error(`domain slug '${slug}' not found in list-domains`)
+      if (!d.approved) throw new Error(`domain '${slug}' is not approved for this connection`)
+      domainRef = slug; needsDomain = undefined
+      domainId = d.id; agentId = d.defaultAgentNodeId
+      if (!agentId) throw new Error(`domain '${slug}' has no default agent node`)
+    }
+    const [dom, agent] = await Promise.all([mcp($, 'get-node', { nodeId: domainId }), mcp($, 'get-node', { nodeId: agentId })])
     const domainCode: string = dom?.code, agentCode: string = agent?.code
     if (!domainCode || !agentCode) throw new Error('domain or agent node code not resolvable')
     const sections: Record<string, string> = {}
@@ -140,7 +169,7 @@ async function loadBriefing($: any) {
     personaSource = sections[S.persona] ? `${agentCode} instruction-persona` : 'none'
     if (!Object.keys(sections).length) throw new Error(`no briefing found: no '${GENERAL_EDGE}' edge with a '${GENERAL_BRIEFING_PREFIX}' document on ${domainCode}, and no instruction-* on ${agentCode}`)
     const raw = Object.entries(sections).map(([k, v]) => `## ${k}\n${v}`).join('\n\n')
-    briefing = { raw, sections, code: gCode ?? agentCode, loadedAt: new Date().toISOString(), source: 'kinitro.ai', domainCode, agentCode, layers: layers.join(', ') }
+    briefing = { raw, sections, code: gCode ?? agentCode, loadedAt: new Date().toISOString(), source: 'kinitro.ai', domainCode, agentCode, domainRef, layers: layers.join(', ') }
     briefingError = undefined
     try { await $.fs.write(CACHE_FILE, JSON.stringify(briefing)) } catch { /* ignore */ }
     await log($, `briefing loaded for domain ${domainCode} / agent ${agentCode} via ${route}: ${raw.length} chars, layers ${briefing.layers}`)
@@ -152,14 +181,20 @@ async function loadBriefing($: any) {
 
 // the connector may not be up yet at session start: retry lazily
 async function ensureBriefing($: any) {
-  if (!briefing && Date.now() - lastLoadTry > RETRY_MS) await loadBriefing($)
+  if (!briefing && !needsDomain && Date.now() - lastLoadTry > RETRY_MS) await loadBriefing($)
 }
 
 async function loadCache($: any) {
   try {
     if (!(await $.fs.exists(CACHE_FILE))) return
     const c = JSON.parse(await $.fs.read(CACHE_FILE))
-    if (c?.raw) { briefing = { ...c, sections: c.sections ?? parseSections(c.raw), source: 'cache' }; await log($, `briefing from cache (${c.code}, loaded ${c.loadedAt})`) }
+    if (c?.raw) {
+      const want = await readDomainFile($)
+      if (want && c.domainRef && want !== c.domainRef) { await log($, `cache is for ${c.domainRef}, session domain is ${want}: ignored`); return }
+      briefing = { ...c, sections: c.sections ?? parseSections(c.raw), source: 'cache' }
+      if (c.domainRef) domainRef = c.domainRef
+      await log($, `briefing from cache (${c.code}, domain ${c.domainRef ?? 'seat-bound'}, loaded ${c.loadedAt})`)
+    }
   } catch (err: any) { await log($, `cache read failed: ${err?.message ?? err}`) }
 }
 
@@ -190,7 +225,7 @@ async function refreshTick($: any) {
 // first message of a brand-new container: nothing cached, wait for the connector
 async function waitForBriefing($: any) {
   const until = Date.now() + WAIT_FIRST_MS
-  while (!briefing && Date.now() < until) {
+  while (!briefing && !needsDomain && Date.now() < until) {
     await loadBriefing($)
     if (!briefing) await $.clock.sleep(1000)
   }
@@ -259,6 +294,7 @@ async function statusText($: any): Promise<string> {
   return [
     `kinitro-ai ${VERSION}`,
     `briefing: ${briefing ? `domain ${briefing.domainCode ?? '?'} / agent ${briefing.agentCode ?? '?'} (${briefing.raw.length} chars, source ${briefing.source}, loaded ${briefing.loadedAt}, route ${route})` : `MISSING (${briefingError})`}`,
+    `domain: ${domainRef ?? (needsDomain ? 'NOT SET - ' + needsDomain : 'seat-bound connection')}`,
     `layers: ${briefing?.layers ?? '-'}`,
     `sections: ${briefing ? Object.keys(briefing.sections).join(' | ') : '-'} · persona from ${personaSource}`,
     `system prompt section injected in ${composeCount} renders (prompt.compose) · first-message context block rendered ${contextRenders}x (prompt.context)`,
@@ -315,7 +351,7 @@ export const register: Register = (on) => {
       tries++
       refreshTick($).then((done) => {
         refreshing = false
-        if (done || tries > 40) { refreshDone = true; timer.cancel(); log($, `refresh ${done ? 'done' : 'gave up'} after ${tries} tries`) }
+        if (done || tries > 40 || needsDomain) { refreshDone = true; timer.cancel(); log($, `refresh ${done ? 'done' : 'gave up'} after ${tries} tries`) }
       })
     })
     try {
@@ -324,8 +360,8 @@ export const register: Register = (on) => {
     try {
       await $.tool.register({
         name: 'probe',
-        description: 'kinitro-ai harness control. action "status" (default): diagnostics; "reload": re-read the briefing from kinitro.ai; "arm-test": inject EVERY briefing section, conditional ones included, into the next user prompt, marked [TEST]; "invalidate-context": re-render the first-message context block (persona) on the next request.',
-        inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['status', 'reload', 'arm-test', 'invalidate-context'] } } },
+        description: 'kinitro-ai harness control. action "status" (default): diagnostics; "set-domain" with domain "<slug>": bind this session to a kinitro.ai domain (slug from list-domains) and reload; "reload": re-read the briefing from kinitro.ai; "arm-test": inject EVERY briefing section, conditional ones included, into the next user prompt, marked [TEST]; "invalidate-context": re-render the first-message context block (persona) on the next request.',
+        inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['status', 'set-domain', 'reload', 'arm-test', 'invalidate-context'] }, domain: { type: 'string', description: 'domain slug for set-domain, e.g. verum' } } },
       })
     } catch (err: any) { await log($, `tool.register failed: ${err?.message ?? err}`) }
     return next(e)
@@ -333,7 +369,16 @@ export const register: Register = (on) => {
 
   on('tool.call', { tool: 'mcp__kinitro-ai__probe' }, async ($, e: any) => {
     const action = e.action ?? 'status'
-    if (action === 'reload') await loadBriefing($)
+    if (action === 'set-domain') {
+      const slug = String(e.domain ?? '').trim()
+      if (!slug) return { result: 'set-domain needs domain: "<slug>" (see list-domains)' }
+      await $.fs.write(DOMAIN_FILE, slug + '\n')
+      briefing = undefined; protocolCode = undefined; needsDomain = undefined; domainRef = undefined
+      await writeState($)
+      await loadBriefing($)
+      $.ui.invalidate('prompt.context')
+    }
+    if (action === 'reload') { needsDomain = undefined; await loadBriefing($) }
     if (action === 'arm-test') { testArmed = true; await writeState($) }
     if (action === 'invalidate-context') $.ui.invalidate('prompt.context')
     const res = `action: ${action}\n${await statusText($)}`
@@ -373,6 +418,8 @@ export const register: Register = (on) => {
     const tag = testArmed ? '[TEST] ' : ''
     const blocks: string[] = [`[kinitro-ai ${VERSION}] context ${pct ?? '?'} % · briefing ${briefing ? briefing.code : 'MISSING (' + briefingError + ')'}`]
     const injected: string[] = ['marker']
+    if (needsDomain) { blocks.push(`kinitro.ai domain not set: ${needsDomain}. Until then pass domainRef on every mcp__kinitro_ai__* call.`); injected.push('Domain missing') }
+    else if (domainRef) blocks[0] += ` · domain ${domainRef} (pass domainRef:'${domainRef}' on every mcp__kinitro_ai__* call)`
     const add = (key: string, title: string, why: string) => {
       const t = sec(title)
       if (!t) return
