@@ -52,36 +52,28 @@ If the install fails, check that `git` is installed and the machine can reach gi
 
 ## Step 4: First conversation
 
-Open Claude Code in any working directory and type `/kinitro`. You should see lines like these:
-
-```
-kinitro-ai 0.11.0
-briefing: domain ... / agent ... (... chars, source kinitro.ai, ...)
-layers: G+M ..., A ...
-sections: Persona | Working rules | ...
-```
-
-If your connection serves several domains, you choose the domain once per session: with the buttons in the row above the prompt, or, in the Claude app, with the selection buttons the agent shows you in the chat. If your domain is missing, use the link to the kinitro.ai domain selection page, approve it there and choose again. Use a separate working directory for each agent you run in parallel.
+Start a session and type `/kinitro`. The agent opens the kinitro.ai domain selection, shows your approved domains as buttons and binds the session to the one you choose. If your domain is missing, approve it on the selection page and choose "check again": the newly approved domain is taken at once. `/kinitro <slug>` (for example `/kinitro verum`) binds directly. In the terminal and the desktop Code tab a row above the prompt offers the same choice. Use a separate working directory for each agent you run in parallel.
 
 Then write your first message. Write in your own language. The agent answers in the language you use.
 
 What you will see:
 
 - The agent behaves as its persona describes. It follows the working rules of your domain.
-- Each prompt begins with a short marker line from the plugin: `[kinitro-ai 0.8.0] context ... % · briefing ...`.
+- Each prompt begins with a short marker line from the plugin: `[kinitro-ai <version>] context ... % · briefing ... · domain <slug>`.
 - After each turn, your question and the answer appear in your kinitro.ai domain. Open the section `Protocols: Claude sessions`. There is one document per session, named `Protocol: Claude session <date> (<session id>)`.
 
 ## Check status at any time
 
 | Action | How |
 |---|---|
-| Quick status | Type `/kinitro` |
+| Choose or change the domain | Type `/kinitro` |
+| Quick status | Ask the agent to run the `probe` tool with action `status` |
 | Reload the briefing from kinitro.ai | Ask the agent to run the `probe` tool with action `reload` |
 | Test that every section arrives | Ask the agent to run `probe` with action `arm-test`, then send any message. Every section arrives once, marked `[TEST]`. Ask the agent to confirm each block. |
 
 ## If the briefing is missing
 
-`/kinitro` then shows `briefing: MISSING (...)` followed by a reason. Work through this list:
+The `probe` status then shows `briefing: MISSING (...)` followed by a reason. Work through this list:
 
 1. **Wait a moment and send another message.** The connector may still be connecting. The plugin retries on its own.
 2. **Run `probe` with action `reload`.** This reads the briefing again.

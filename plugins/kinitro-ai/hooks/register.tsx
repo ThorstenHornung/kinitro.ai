@@ -16,7 +16,7 @@ const REWARN_STEP = 5      // warn again when the fill rises this many more poin
 const MAX_MIRROR = 6000    // chars per prompt / answer in the protocol
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = 'kinitro-ai.log'
-const VERSION = '0.11.0'
+const VERSION = '0.12.0'
 // Domain binding (kinitro.ai 2026-10-08): a connection may serve several domains; every call names its domain
 // with domainRef (the slug). The slug of this session lives in DOMAIN_FILE (set it with probe action 'set-domain').
 const DOMAIN_FILE = '.kinitro-ai-domain'               // folder default: the last domain chosen in this working folder
@@ -415,9 +415,7 @@ export const register: Register = (on) => {
         if (done || tries > 40 || needsDomain) { refreshDone = true; timer.cancel(); log($, `refresh ${done ? 'done' : 'gave up'} after ${tries} tries`) }
       })
     })
-    try {
-      await $.command.register({ name: 'kinitro', description: 'Status of the kinitro-ai hooks.' })
-    } catch (err: any) { await log($, `command.register failed: ${err?.message ?? err}`) }
+    // /kinitro is a static command file (commands/kinitro.md): the Claude app lists only those
     try {
       await $.tool.register({
         name: 'probe',
@@ -556,7 +554,6 @@ export const register: Register = (on) => {
     return r
   })
 
-  on('command.run', { command: 'kinitro' }, async ($) => ({ text: await statusText($) }))
 
   // DOMAIN BAND above the prompt: which kinitro.ai domain this session works for; choose or change it
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {

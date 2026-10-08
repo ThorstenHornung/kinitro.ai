@@ -2,6 +2,12 @@
 
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.12.0] - 2026-10-08
+
+### Changed
+- `/kinitro` is now a command file, so the Claude app lists it. It opens the kinitro.ai domain selection, asks which approved domain to use, binds the session and records the slug; `/kinitro <slug>` binds directly. A domain approved on the selection page is bound at once after "check again".
+- The status moved to the `probe` tool (action `status`).
+
 ## [0.11.0] - 2026-10-08
 
 ### Added

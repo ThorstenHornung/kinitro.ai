@@ -15,13 +15,13 @@
 
 | Event | What the plugin does |
 |---|---|
-| Session start | Reads the hook state and the cached briefing from local files. Registers the `/kinitro` command and the `probe` tool. Starts a background refresh from kinitro.ai: every 3 seconds, at most 40 tries, until the load succeeds. |
+| Session start | Reads the hook state and the cached briefing from local files. Registers the `probe` tool. Starts a background refresh from kinitro.ai: every 3 seconds, at most 40 tries, until the load succeeds. |
 | First-message context | Adds a context block with **Persona** and **Working rules**. Rendered once per conversation, and again after every compaction. |
 | System prompt | Adds the same two sections to the system prompt on every request, where the host supports it. If no briefing is loaded yet, it retries the load, at most every 20 seconds. |
 | Every user prompt | Adds a one-line marker `[kinitro-ai 0.8.0] context <n> % · briefing <code>`. Adds **Session start** on the first turn, **Every turn** on every turn, **After compaction** once on the first prompt after a compaction, and **Context nearly full** when the context window reaches 70 % and again every 5 points further. With no cache and no briefing, the first prompt waits up to 6 seconds for the connector. |
 | Compaction | Appends the **Compaction instruction** to the instructions for the summarizer. Afterwards it flags the After compaction section for the next prompt, resets the context warning, and writes a compaction line into the protocol. Skipped for sub-agents. |
 | End of turn | Appends your prompt and the agent's answer to the protocol document. Each text is cut after 6000 characters. Skipped for sub-agents. |
-| `/kinitro` | Shows the status. |
+| `/kinitro` | A command file of the plugin: opens the domain selection and binds the session (see below). |
 | `probe` tool call | Runs the requested action. |
 
 The marker line and every injected block start from the sections of the briefing. If a section is empty or missing, nothing is injected for it.
@@ -37,7 +37,7 @@ The plugin hard-wires no domain. It resolves the domain and agent node from your
 4. **Agent layer.** It reads the agent node's instruction contents (table below) and merges them into the matching sections.
 5. It writes the result to the local cache and logs what was loaded.
 
-If neither the general briefing nor any agent instruction is found, the load fails and `/kinitro` shows `MISSING` with the reason.
+If neither the general briefing nor any agent instruction is found, the load fails and the `probe` status shows `MISSING` with the reason.
 
 A failed general briefing does not stop the load. The agent's own instructions are used alone.
 
@@ -50,7 +50,7 @@ One kinitro.ai connection can serve several domains, for example two agents of t
 | The connection serves one approved domain | Uses it. Nothing to set. |
 | Several approved domains, session file `.kinitro-ai-domain.<session id>` present | Uses that slug. |
 | Several approved domains, folder default `.kinitro-ai-domain` present | Uses that slug (the last domain chosen in this folder). |
-| Several approved domains, no file | Stops retrying, shows `domain: NOT SET` in `/kinitro` and asks you to choose (below). |
+| Several approved domains, no file | Stops retrying, shows `domain: NOT SET` in the `probe` status and asks you to choose (below). |
 
 How you choose:
 
@@ -104,7 +104,13 @@ The cache holds the briefing text. Do not commit these files to a repository. Th
 
 ## The `/kinitro` command
 
-`/kinitro` prints:
+`/kinitro` is a command file (`commands/kinitro.md`), so it is listed in every Claude surface, the Claude app included.
+
+- `/kinitro <slug>` binds the session to that domain.
+- `/kinitro` alone opens the kinitro.ai domain selection (in the browser pane if there is one, else as a link), asks with buttons which approved domain to use and binds it. After "check again", a domain you just approved on the selection page is bound at once.
+- Binding writes `.kinitro-ai-domain.<session id>` and `.kinitro-ai-domain` (through `probe` `set-domain`; without the plugin's tool, the folder file only).
+
+The status is shown by `probe` with action `status`:
 
 - plugin version;
 - the domain slug, or `NOT SET` with the approved slugs, or `seat-bound connection`;
@@ -161,7 +167,7 @@ At the end of every turn the plugin appends to a document named `Protocol: Claud
 | Briefing source stays `cache` | Connector was not up in time, or loading keeps failing | Run `probe` with `reload`. Read `kinitro-ai.log`. |
 | A section never arrives | Heading missing or misspelled in the briefing document | Use the exact names above. Run `probe` with `arm-test`. |
 | Persona does not change after editing in kinitro.ai | The old briefing is cached | Run `probe` with `reload`, then `invalidate-context`. |
-| No protocol document appears | Mirror write failed. `/kinitro` shows `last error`. | Check write access to the domain. Check the `_Work` section. Read `kinitro-ai.log`. |
+| No protocol document appears | Mirror write failed. the `probe` status shows `last error`. | Check write access to the domain. Check the `_Work` section. Read `kinitro-ai.log`. |
 | Agent ignores a checkpoint | The agent was not told in time, or the text is unclear | Run `arm-test` and ask the agent to confirm each block. Edit the text in kinitro.ai. |
 
-Still stuck? Send `kinitro-ai.log` and the output of `/kinitro` to [support@kinitro.ai](mailto:support@kinitro.ai). Check both for confidential content first.
+Still stuck? Send `kinitro-ai.log` and the `probe` status to [support@kinitro.ai](mailto:support@kinitro.ai). Check both for confidential content first.

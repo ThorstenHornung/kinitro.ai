@@ -20,7 +20,7 @@
 
 | Path | What it is |
 |---|---|
-| `plugins/kinitro-ai/` | The Claude Code plugin `kinitro-ai` (version 0.9.0). It briefs your agent from kinitro.ai and mirrors each conversation turn into your domain. |
+| `plugins/kinitro-ai/` | The Claude Code plugin `kinitro-ai` (version 0.12.0). It briefs your agent from kinitro.ai and mirrors each conversation turn into your domain. |
 | `.claude-plugin/marketplace.json` | The marketplace entry that lets Claude Code install the plugin. |
 | `docs/` | Guides for users, setup people and partners. |
 | `assets/` | The kinitro ai logo. |
@@ -40,13 +40,13 @@ Install the plugin once per machine, in a Claude Code session:
 /plugin install kinitro-ai@kinitro-ai
 ```
 
-The plugin is active at once and in every later session. Check it with:
+The plugin is active at once and in every later session. Choose your domain with:
 
 ```
 /kinitro
 ```
 
-The status shows the domain, the agent and the loaded briefing. Step-by-step help: [Getting started](docs/getting-started.md).
+It opens the kinitro.ai domain selection and binds the session to the domain you choose (`/kinitro verum` binds directly). Step-by-step help: [Getting started](docs/getting-started.md).
 
 ## How the plugin briefs your agent
 
