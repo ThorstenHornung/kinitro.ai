@@ -16,7 +16,7 @@ const REWARN_STEP = 5      // warn again when the fill rises this many more poin
 const MAX_MIRROR = 6000    // chars per prompt / answer in the protocol
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = 'kinitro-ai.log'
-const VERSION = '0.17.1'
+const VERSION = '0.17.2'
 const REFRESH_MS = 24 * 3600 * 1000       // regular operation: instructions change rarely (PO 2026-10-08)
 const TEST_REFRESH_MS = 2 * 60 * 1000     // test mode (/kinitro test)
 const PAGE_TEXT_TOOLS = ['mcp__remote-devices__Claude_Browser__get_page_text', 'mcp__Claude_Browser__get_page_text']
@@ -601,7 +601,8 @@ export const register: Register = (on) => {
     if (briefing && !needsDomain) {
       const age = Date.now() - Date.parse(briefing.loadedAt ?? '1970-01-01')
       const limit = (await read($, testModeA)) ? TEST_REFRESH_MS : REFRESH_MS
-      if (turns0 === 0 ? briefing.source !== 'kinitro.ai' : age > limit) { const kept = briefing; await loadBriefing($); if (!briefing) briefing = kept }
+      // a local copy (plugin restarted while the connector was still connecting) is replaced at the next prompt, not only after a day
+      if (briefing.source !== 'kinitro.ai' || age > limit) { const kept = briefing; await loadBriefing($); if (!briefing) briefing = kept }
     }
     pendingPrompt = e.text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>\s*/g, '').trim()
     const pct = await contextPercent($)

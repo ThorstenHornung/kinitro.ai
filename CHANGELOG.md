@@ -2,6 +2,11 @@
 
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.17.2] - 2026-10-08
+
+### Fixed
+- When the plugin restarted while the kinitro.ai connector was still connecting, it kept its local copy of the instructions until the daily refresh. It now loads fresh at the next prompt.
+
 ## [0.17.1] - 2026-10-08
 
 ### Added
