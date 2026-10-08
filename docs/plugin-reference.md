@@ -82,7 +82,7 @@ When the persona or working rules changed, the next prompt carries them again.
 | Edge | The domain node has an association edge with the relation name `general-procedures` to the section that holds the general library. |
 | Briefing document | That section holds a Document whose name **starts with** `Briefing: kinitro.ai agents in Claude`. Its markdown content has one `## ` heading per section (names below). |
 | Agent instructions | Optional, but something must exist: either the briefing or at least one agent instruction. |
-| Connector | Connected in Claude under the server name `kinitro_ai`. |
+| Connector | Connected in Claude. Any server name works: the plugin looks for a `current-seat` tool whose name contains "kinitro" (for example `mcp__kinitro_ai__*`, or `mcp__claude_ai_Kinitro__*` for the claude.ai connector inside Claude Code). |
 
 ### Section names
 
@@ -179,7 +179,7 @@ At the end of every turn the plugin appends to a document named `Protocol: Claud
 | `domain_ref_required` in the log or in agent calls | A call without `domainRef` on a multi-domain connection | Update the plugin to 0.10.0 or later. Remind the agent to pass `domainRef`. |
 | `briefing: MISSING (... not approved ...)` | The slug is not approved for this connection | Approve the domain for the connector in kinitro.ai, or choose another slug. |
 | `briefing: MISSING (... no briefing found ...)` | No `general-procedures` edge with a `Briefing: kinitro.ai agents in Claude` document, and no agent instructions | Ask your contact to add the edge and document, or the agent instructions. Then run `probe` with `reload`. |
-| `MISSING` with a message about `tool.call` and `mcp.call` | Connector not reachable under the name `kinitro_ai` | Check the connector name and its sign-in. Send a new message. |
+| `MISSING` with a message about `tool.call` and `mcp.call` | Connector not connected or signed out | Check the connector and its sign-in; the `probe` status shows the tool prefix the plugin found. Send a new message. |
 | Briefing source stays `cache` | Connector was not up in time, or loading keeps failing | Run `probe` with `reload`. Read `kinitro-ai.log`. |
 | A section never arrives | Heading missing or misspelled in the briefing document | Use the exact names above. Run `probe` with `arm-test`. |
 | Persona does not change after editing in kinitro.ai | The old briefing is cached | Run `probe` with `reload`, then `invalidate-context`. |

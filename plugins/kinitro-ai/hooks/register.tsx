@@ -16,7 +16,7 @@ const REWARN_STEP = 5      // warn again when the fill rises this many more poin
 const MAX_MIRROR = 6000    // chars per prompt / answer in the protocol
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = 'kinitro-ai.log'
-const VERSION = '0.17.4'
+const VERSION = '0.18.0'
 const PENDING_VIEW_FILE = '.kinitro-ai-pending'   // written by the /kinitro fallback when the plugin was not running yet: finish the binding at the next prompt
 const REFRESH_MS = 24 * 3600 * 1000       // regular operation: instructions change rarely (PO 2026-10-08)
 const TEST_REFRESH_MS = 2 * 60 * 1000     // test mode (/kinitro test)
@@ -86,18 +86,33 @@ async function log($: any, line: string) {
 
 // kinitro.ai call through the engine's tool path (same route as the model's own
 // mcp__kinitro_ai__* calls), falling back to the direct MCP route.
+// The kinitro.ai server name differs by host: `kinitro_ai` (cloud session config), `claude_ai_Kinitro`
+// (claude.ai connector inside Claude Code), or what the user named it. Found once from the session's tool list.
+let toolPrefix: string | undefined
+async function kinitroPrefix($: any): Promise<string> {
+  if (toolPrefix) return toolPrefix
+  try {
+    const names: string[] = (await $.tool.list()).map((t: any) => String(t.name))
+    const hits = names.filter((n) => /^mcp__.+__current-seat$/.test(n) && /kinitro|methos/i.test(n))
+    const pick = hits.find((n) => n === `mcp__${SERVER}__current-seat`) ?? hits[0]
+    if (pick) toolPrefix = pick.slice(0, -'current-seat'.length)
+  } catch { /* fall back to the default name */ }
+  return toolPrefix ?? `mcp__${SERVER}__`
+}
+
 async function mcp($: any, tool: string, args0: Record<string, unknown>) {
   const args = domainRef && !NO_DOMAIN_ARG.has(tool) && args0.domainRef === undefined ? { ...args0, domainRef } : args0
   let text: string
   try {
-    const r: any = await $.tool.call({ tool: `mcp__${SERVER}__${tool}`, ...args })
+    const r: any = await $.tool.call({ tool: `${await kinitroPrefix($)}${tool}`, ...args })
     if (r.deny) throw new Error(`denied: ${r.deny}`)
     text = r.text ?? (typeof r.result === 'string' ? r.result : JSON.stringify(r.result))
     if (r.isError) throw new Error(`${tool}: ${String(text).slice(0, 300)}`)
     route = 'tool.call'
   } catch (err1: any) {
     try {
-      const r = await $.mcp.call(SERVER, tool, args)
+      const server = (await kinitroPrefix($)).slice(5, -2)
+      const r = await $.mcp.call(server, tool, args)
       text = (r.content ?? []).map((b: any) => (b.type === 'text' ? b.text : '')).join('')
       if (r.isError) throw new Error(`${tool}: ${text.slice(0, 300)}`)
       route = 'mcp.call'
@@ -434,6 +449,7 @@ async function statusText($: any): Promise<string> {
     `kinitro-ai ${VERSION}`,
     `briefing: ${briefing ? `domain ${briefing.domainCode ?? '?'} / agent ${briefing.agentCode ?? '?'} (${briefing.raw.length} chars, source ${briefing.source}, loaded ${briefing.loadedAt}, route ${route})` : `MISSING (${briefingError})`}`,
     `domain: ${domainRef ?? (needsDomain ? 'NOT SET - ' + needsDomain : 'seat-bound connection')}`,
+    `kinitro.ai tools: ${await kinitroPrefix($)}*`,
     `refresh: ${(await read($, testModeA)) ? 'test mode, every 2 min' : 'daily'} · instructions loaded ${briefing?.loadedAt ?? '-'}`,
     `layers: ${briefing?.layers ?? '-'}`,
     `sections: ${briefing ? Object.keys(briefing.sections).join(' | ') : '-'} · persona from ${personaSource}`,
@@ -630,7 +646,7 @@ export const register: Register = (on) => {
       ].join('\n'))
       injected.push('Domain missing')
     }
-    else if (domainRef) blocks[0] += ` · domain ${domainRef} (pass domainRef:'${domainRef}' on every mcp__kinitro_ai__* call)`
+    else if (domainRef) blocks[0] += ` · domain ${domainRef} (pass domainRef:'${domainRef}' on every ${await kinitroPrefix($)}* call)`
     const add = (key: string, title: string, why: string) => {
       const t = sec(title)
       if (!t) return

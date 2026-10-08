@@ -2,6 +2,12 @@
 
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.18.0] - 2026-10-08
+
+### Changed
+- The plugin finds the kinitro.ai tools under whatever server name the session has: `kinitro_ai`, `claude_ai_Kinitro` (claude.ai connector inside Claude Code) or a name of your choice. Before, only `kinitro_ai` worked, and Claude Code with the claude.ai connector showed "briefing MISSING".
+- The `probe` status names the tool prefix it uses.
+
 ## [0.17.4] - 2026-10-08
 
 ### Fixed

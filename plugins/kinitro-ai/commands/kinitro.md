@@ -5,6 +5,8 @@ argument-hint: "[domain | refresh | test | test off | status]"
 
 The user wants to choose the kinitro.ai domain this Claude session works for. Arguments: "$ARGUMENTS"
 
+The kinitro.ai tools are named `mcp__kinitro_ai__*` here, or `mcp__claude_ai_Kinitro__*` when the claude.ai connector is used inside Claude Code (or another `mcp__<name>__*` with the same verbs). Below, `mcp__kinitro_ai__<verb>` means whichever of these exists.
+
 Talk to the user in their language and call it "domain" (German: "Arbeitsbereich"); never say "slug".
 
 Work in this order, without commentary between calls. The plugin stores the choice and opens pages in the browser pane (the internal browser) itself.
