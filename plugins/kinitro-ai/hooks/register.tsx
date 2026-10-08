@@ -16,7 +16,7 @@ const REWARN_STEP = 5      // warn again when the fill rises this many more poin
 const MAX_MIRROR = 6000    // chars per prompt / answer in the protocol
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = 'kinitro-ai.log'
-const VERSION = '0.17.2'
+const VERSION = '0.17.3'
 const REFRESH_MS = 24 * 3600 * 1000       // regular operation: instructions change rarely (PO 2026-10-08)
 const TEST_REFRESH_MS = 2 * 60 * 1000     // test mode (/kinitro test)
 const PAGE_TEXT_TOOLS = ['mcp__remote-devices__Claude_Browser__get_page_text', 'mcp__Claude_Browser__get_page_text']
@@ -238,7 +238,6 @@ async function bindDomain($: any, slug: string): Promise<string> {
   briefing = undefined; protocolCode = undefined; needsDomain = undefined; domainRef = undefined
   await writeState($)
   await loadBriefing($)
-  $.ui.invalidate('prompt.context')
   const ok = briefing && domainRef === slug
   await update($, currentA, () => (ok ? slug : null))
   await update($, chooserA, () => !ok)
@@ -633,7 +632,8 @@ export const register: Register = (on) => {
     const startOrAfter = turns === 0 || compactedPending || testArmed || startPack
     if (briefing) {
       // persona and working rules: when the agent does not hold the current ones (domain switch, refresh with changes, stale start block)
-      if (!needsDomain && (await read($, contextKeyA)) !== personaKey()) {
+      // after choosing a domain always: a re-render request does not reach a running conversation (measured 2026-10-08)
+      if (!needsDomain && (startPack || (await read($, contextKeyA)) !== personaKey())) {
         add('persona', S.persona, startPack ? `domain ${briefing.domainName ?? domainRef}` : 'updated')
         add('rules', S.rules, '')
         await update($, contextKeyA, () => personaKey())

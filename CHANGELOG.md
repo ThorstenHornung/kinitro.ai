@@ -2,6 +2,11 @@
 
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.17.3] - 2026-10-08
+
+### Fixed
+- After choosing a domain, persona and working rules now always travel with the next prompt. The plugin no longer asks the Claude app to re-render its start block: the app does not deliver it mid-conversation, and the plugin then took the persona as delivered.
+
 ## [0.17.2] - 2026-10-08
 
 ### Fixed
