@@ -2,6 +2,14 @@
 
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.20.0] - 2026-10-09
+
+### Added
+- Open UI comments: at every prompt the plugin calls `list-ui-comments` (bound domain, at most 20, open only, 3 s timeout, silent on error). When comments are open, the agent gets the block "Open UI comments (N)" with one line per comment and how to answer it (`answer-ui-comment`).
+- The block is sent only when the set of open comments changed in this session, every 30 minutes as a reminder, and on the first prompt, after a compaction and after choosing a domain.
+- `probe` action `comments` checks now and returns the open comments with the check time. The `probe` status shows `ui comments: N open`.
+- Plugin tests (`claude plugin test plugins/kinitro-ai`): block format, dedupe rule, the `comments` action and the timeout.
+
 ## [0.19.0] - 2026-10-08
 
 ### Changed

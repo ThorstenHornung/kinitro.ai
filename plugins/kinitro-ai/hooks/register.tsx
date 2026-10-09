@@ -20,7 +20,7 @@ const FETCH_MS = 60000
 const MAX_TEXT = 50000     // chars per prompt / answer sent to the chat
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = 'kinitro-ai.log'
-const VERSION = '0.19.0'
+const VERSION = '0.20.0'
 const PENDING_VIEW_FILE = '.kinitro-ai-pending'   // written by the /kinitro fallback when the plugin was not running yet: finish the binding at the next prompt
 const REFRESH_MS = 24 * 3600 * 1000       // regular operation: instructions change rarely (PO 2026-10-08)
 const TEST_REFRESH_MS = 2 * 60 * 1000     // test mode (/kinitro test)
@@ -38,6 +38,11 @@ const NO_DOMAIN_ARG = new Set(['current-seat', 'list-domains'])   // verbs that 
 const CACHE_FILE = '.kinitro-ai-briefing.json'
 const STATE_FILE = '.kinitro-ai-state.json'
 const WAIT_FIRST_MS = 6000   // with no cache at all, wait this long for the connector
+// open UI comments (0.20.0): people comment on page controls in kinitro.ai; the agent learns about the open ones at its next prompt
+const COMMENTS_LIMIT = 20
+const COMMENTS_TIMEOUT_MS = 3000
+const COMMENTS_REMIND_MS = 30 * 60 * 1000   // the same open set is told again after this long
+const COMMENT_TEXT_MAX = 500
 
 // section names in the briefing
 const S = {
@@ -67,6 +72,15 @@ let domainRef: string | undefined      // slug passed on every call; undefined =
 let bandRenders = 0
 let lastBandSurface = '-'
 let needsDomain: string | undefined    // set when the connection serves several domains and no slug is configured
+// open UI comments: last check (module state), last injection (persisted in STATE_FILE, per session)
+type UiComment = { id: string; page?: { nodeId?: string; code?: string; title?: string }; control?: { id?: string; type?: string; label?: string }; controlState?: unknown; kind?: string; text?: string; createdAt?: string; status?: string; answer?: unknown; author?: { name?: string }; session?: { id?: string } }
+let openComments: UiComment[] = []
+let commentsTruncated = false
+let lastCommentCheck = '-'
+let lastCommentError: string | undefined
+let commentKey = ''          // sorted ids of the open comments last told to the agent
+let commentInjectedAt = 0    // when they were told (ms)
+let commentSid = ''          // in which session
 const logLines: string[] = []
 
 // ---- band state (host-held, survives module reloads) ----------------------
@@ -357,12 +371,13 @@ async function readState($: any) {
     const st = JSON.parse(await $.fs.read(STATE_FILE))
     testArmed = !!st.testArmed; warnedAt = st.warnedAt ?? 0; compactedPending = !!st.compactedPending
     compactions = st.compactions ?? 0; contextRenders = st.contextRenders ?? 0
+    commentKey = st.commentKey ?? ''; commentInjectedAt = st.commentInjectedAt ?? 0; commentSid = st.commentSid ?? ''
   } catch (err: any) { await log($, `state read failed: ${err?.message ?? err}`) }
 }
 
 async function writeState($: any) {
   try {
-    await $.fs.write(STATE_FILE, JSON.stringify({ testArmed, warnedAt, compactedPending, compactions, contextRenders }))
+    await $.fs.write(STATE_FILE, JSON.stringify({ testArmed, warnedAt, compactedPending, compactions, contextRenders, commentKey, commentInjectedAt, commentSid }))
   } catch { /* ignore */ }
 }
 
@@ -494,6 +509,7 @@ async function statusText($: any): Promise<string> {
     `context: ${pct ?? '?'} % (warn at ${WARN_PCT} %, last warned ${warnedAt || '-'})`,
     `last prompt injected: ${lastInjected.join(', ') || '-'}`,
     `test armed: ${testArmed} · compactions seen: ${compactions} · post-compact pending: ${compactedPending}`,
+    `ui comments: ${openComments.length}${commentsTruncated ? '+' : ''} open (last check ${lastCommentCheck}, last told ${commentInjectedAt ? new Date(commentInjectedAt).toISOString() : '-'}${lastCommentError ? ', last error: ' + lastCommentError : ''})`,
     `chat mirror: ${mirrorSent} turns sent, ${mirrorDup} already present, agent ${lastMirrorTarget}${lastMirrorError ? ' · last error: ' + lastMirrorError : ''} · inbox ${inboxNew} new since start, last fetch ${lastFetch}`,
   ].join('\n')
 }
@@ -542,6 +558,64 @@ async function topicMap($: any): Promise<string | undefined> {
   } catch (err: any) { await log($, `topic map failed: ${err?.message ?? err}`); return undefined }
 }
 
+// ---- open UI comments (0.20.0) -----------------------------------------------
+function localTime(iso?: string): string {
+  const d = new Date(String(iso ?? ''))
+  if (Number.isNaN(d.getTime())) return String(iso ?? '?')
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+function oneLine(t?: string): string {
+  const s = String(t ?? '').replace(/\s+/g, ' ').trim()
+  return s.length > COMMENT_TEXT_MAX ? s.slice(0, COMMENT_TEXT_MAX) + ' [...]' : s
+}
+
+// the block told to the agent; empty when there is nothing open
+export function uiCommentsBlock(comments: UiComment[], truncated = false): string {
+  if (!comments.length) return ''
+  return [
+    `## Open UI comments (${comments.length}${truncated ? '+' : ''})`,
+    ...comments.map((c) => `- ${localTime(c.createdAt)} ${c.author?.name ?? 'unknown'} on "${c.page?.title ?? '?'}" (${c.page?.code ?? '?'}) control ${c.control?.id ?? '?'} (${c.control?.type ?? '?'}): "${oneLine(c.text)}"  [comment ${c.id}]`),
+    "Read the comment's session state if you need the user's view (tab, selection, filters). Act within the user's approved todos or ask; answer with answer-ui-comment when done.",
+  ].join('\n')
+}
+
+// sorted ids: the identity of an open set
+export function uiCommentKey(comments: UiComment[]): string {
+  return comments.map((c) => String(c.id)).sort().join(',')
+}
+
+// tell the agent when the open set changed since the last injection in this session, or as a reminder every 30 minutes
+export function uiCommentsDue(key: string, sid: string, now: number, last: { key: string; sid: string; at: number }): boolean {
+  if (!key) return false
+  return key !== last.key || sid !== last.sid || now - last.at >= COMMENTS_REMIND_MS
+}
+
+// one call, at most 3 s; undefined on any error (silent, logged)
+async function checkUiComments($: any): Promise<UiComment[] | undefined> {
+  const stop = new AbortController()
+  try {
+    const r: any = await Promise.race([
+      mcp($, 'list-ui-comments', { limit: COMMENTS_LIMIT, ...(domainRef ? { domainRef } : {}) }),
+      // a refused or aborted wait must not fail the call: it then simply has no timeout
+      $.clock.sleep(COMMENTS_TIMEOUT_MS, { signal: stop.signal }).then(() => { throw new Error(`timeout after ${COMMENTS_TIMEOUT_MS} ms`) }, () => new Promise<never>(() => {})),
+    ])
+    if (r?.status && r.status !== 'ok') throw new Error(JSON.stringify(r).slice(0, 200))
+    const d = r?.data ?? r   // the verb answers {status, data: {comments, truncated}}
+    if (!Array.isArray(d?.comments)) throw new Error(`no comments list: ${JSON.stringify(r).slice(0, 200)}`)
+    openComments = d.comments.filter((c: any) => c && c.id != null)
+    commentsTruncated = !!d.truncated
+    lastCommentCheck = new Date().toISOString()
+    lastCommentError = undefined
+    return openComments
+  } catch (err: any) {
+    lastCommentError = String(err?.message ?? err).slice(0, 300)
+    await log($, `ui comments check failed: ${lastCommentError}`)
+    return undefined
+  } finally { stop.abort() }
+}
+
 // ---- hooks -----------------------------------------------------------------
 export const register: Register = (on) => {
   on('session.start', async ($, e, next) => {
@@ -565,8 +639,8 @@ export const register: Register = (on) => {
     try {
       await $.tool.register({
         name: 'probe',
-        description: 'kinitro-ai harness control. action "status" (default): diagnostics; "test-mode" with value on|off: refresh the instructions every 2 minutes instead of daily; "selection-start": remember the approved domains and return the selection page address (call before the user chooses on that page); "selection-done": compare with that list and bind the newly approved domain, or return the list to ask from; "set-domain" with domain "<slug>": bind this session to a kinitro.ai domain (slug from list-domains) and reload; "reload": re-read the briefing from kinitro.ai; "arm-test": inject EVERY briefing section, conditional ones included, into the next user prompt, marked [TEST]; "invalidate-context": re-render the first-message context block (persona) on the next request.',
-        inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['status', 'test-mode', 'choices', 'open-domain', 'selection-start', 'selection-done', 'set-domain', 'reload', 'arm-test', 'invalidate-context'] }, domain: { type: 'string', description: 'domain slug for set-domain, e.g. verum' }, value: { type: 'string', enum: ['on', 'off'], description: 'for test-mode' } } },
+        description: 'kinitro-ai harness control. action "status" (default): diagnostics; "comments": check the open UI comments of the bound domain now and return them with the check time; "test-mode" with value on|off: refresh the instructions every 2 minutes instead of daily; "selection-start": remember the approved domains and return the selection page address (call before the user chooses on that page); "selection-done": compare with that list and bind the newly approved domain, or return the list to ask from; "set-domain" with domain "<slug>": bind this session to a kinitro.ai domain (slug from list-domains) and reload; "reload": re-read the briefing from kinitro.ai; "arm-test": inject EVERY briefing section, conditional ones included, into the next user prompt, marked [TEST]; "invalidate-context": re-render the first-message context block (persona) on the next request.',
+        inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['status', 'comments', 'test-mode', 'choices', 'open-domain', 'selection-start', 'selection-done', 'set-domain', 'reload', 'arm-test', 'invalidate-context'] }, domain: { type: 'string', description: 'domain slug for set-domain, e.g. verum' }, value: { type: 'string', enum: ['on', 'off'], description: 'for test-mode' } } },
       })
     } catch (err: any) { await log($, `tool.register failed: ${err?.message ?? err}`) }
     return next(e)
@@ -575,6 +649,10 @@ export const register: Register = (on) => {
   on('tool.call', { tool: 'mcp__kinitro-ai__probe' }, async ($, e: any) => {
     const action = e.action ?? 'status'
     if (action === 'open-domain') return { result: await openDomainView($) }
+    if (action === 'comments') {
+      const list = needsDomain ? undefined : await checkUiComments($)
+      return { result: JSON.stringify({ open: list ? list.length : null, truncated: commentsTruncated, lastCheck: lastCommentCheck, lastTold: commentInjectedAt ? new Date(commentInjectedAt).toISOString() : null, error: needsDomain ? 'domain not set' : lastCommentError ?? null, comments: list ?? openComments, block: uiCommentsBlock(list ?? openComments, commentsTruncated) || null }) }
+    }
     if (action === 'choices') {
       const seat = await mcp($, 'current-seat', {})
       const approved: DomainChoice[] = (seat?.approved ?? []).map((d: any) => ({ slug: String(d.slug), name: String(d.name) }))
@@ -731,6 +809,20 @@ export const register: Register = (on) => {
       const todo = await readSet($, 'memory-instruction')
       const todoText = todo ? cleanTodo(todo) : undefined
       if (todoText) { blocks.push(`${tag}Your todos (from ${briefing.agentCode}; keep them current with memory-append / memory-instruction-status):\n${todoText}`); injected.push('Todo') }
+      // open UI comments: one call; told when the open set changed in this session, else every 30 minutes
+      if (!needsDomain) {
+        const list = await checkUiComments($)
+        if (list) {
+          let sid = ''
+          try { sid = await $.session.id() } catch { /* ignore */ }
+          const key = uiCommentKey(list), now = Date.now()
+          // after a compaction or a domain choice the agent no longer holds the last block: tell it again
+          if (key && (startOrAfter || uiCommentsDue(key, sid, now, { key: commentKey, sid: commentSid, at: commentInjectedAt }))) {
+            blocks.push(uiCommentsBlock(list, commentsTruncated)); injected.push(`UI comments ${list.length}`)
+            commentKey = key; commentSid = sid; commentInjectedAt = now
+          } else if (!key) { commentKey = ''; commentSid = sid }   // none open: a returning comment counts as new
+        }
+      }
       if (startOrAfter) {
         const notes = await readSet($, 'memory-notes')
         if (notes && notes.split('\n').some((l) => l.startsWith('- '))) { blocks.push(`${tag}Your notes (scratchboard; migrate durable facts to topics at the checkpoint):\n${notes.trim()}`); injected.push('Notes') }
