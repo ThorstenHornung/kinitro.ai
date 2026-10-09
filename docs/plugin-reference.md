@@ -173,7 +173,7 @@ At the end of every turn the plugin writes your prompt and the agent's final ans
 
 People can comment on a control of a kinitro.ai page: a question or a remark on a grid, a chart or a field. The plugin tells the agent about the open ones.
 
-- At every prompt the plugin calls `list-ui-comments` once, with the session's `domainRef` and `limit: 20` (open comments only). The call is cut off after 3 seconds. Errors are logged, never shown.
+- At every prompt the plugin calls `list-ui-comments` once, with the session's `domainRef` and `limit: 20` (open comments only). The call runs alongside the todo read and is cut off after 10 seconds. Errors are logged, never shown.
 - When comments are open, the prompt gets the block `## Open UI comments (N)`: one line per comment with time, author, page title and code, control id and type, the text (one line, at most 500 characters) and the comment id. A last line asks the agent to read the comment's session state when it needs the user's view, to act within the approved todos or ask, and to answer with `answer-ui-comment`.
 - The block is sent only when the set of open comment ids changed since the last time in this session, every 30 minutes as a reminder, and on the first prompt, after a compaction and after choosing a domain. The last set and time are kept in `.kinitro-ai-state.json`.
 - `probe` action `comments` checks now; the `probe` status shows `ui comments: N open`.

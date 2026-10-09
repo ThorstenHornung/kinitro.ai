@@ -64,13 +64,13 @@ test('probe comments calls list-ui-comments once and returns the open list and c
   expect(String(st.text ?? st.result)).toContain('ui comments: 2 open')
 })
 
-test('a connector that does not answer within 3 s is cut off silently', async ($, on) => {
+test('a connector that does not answer within 10 s is cut off silently', async ($, on) => {
   const waits: number[] = []
   on('clock.sleep', async (_$, e) => { waits.push(e.ms); return { value: undefined } })   // the wait resolves at once
   on('tool.call', { tool: 'mcp__kinitro_ai__list-ui-comments' } as any, async () => new Promise(() => {}))
   const r: any = await ($ as any).tool.call({ tool: 'mcp__kinitro-ai__probe', action: 'comments' })
   const out = JSON.parse(String(r.text ?? r.result))
-  expect(waits).toContain(3000)
+  expect(waits).toContain(10000)
   expect(out.open).toBe(null)
-  expect(out.error).toBe('timeout after 3000 ms')
+  expect(out.error).toBe('timeout after 10000 ms')
 })

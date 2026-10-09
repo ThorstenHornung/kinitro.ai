@@ -40,7 +40,7 @@ const STATE_FILE = '.kinitro-ai-state.json'
 const WAIT_FIRST_MS = 6000   // with no cache at all, wait this long for the connector
 // open UI comments (0.20.0): people comment on page controls in kinitro.ai; the agent learns about the open ones at its next prompt
 const COMMENTS_LIMIT = 20
-const COMMENTS_TIMEOUT_MS = 3000
+const COMMENTS_TIMEOUT_MS = 10000
 const COMMENTS_REMIND_MS = 30 * 60 * 1000   // the same open set is told again after this long
 const COMMENT_TEXT_MAX = 500
 
@@ -592,7 +592,7 @@ export function uiCommentsDue(key: string, sid: string, now: number, last: { key
   return key !== last.key || sid !== last.sid || now - last.at >= COMMENTS_REMIND_MS
 }
 
-// one call, at most 3 s; undefined on any error (silent, logged)
+// one call, at most 10 s; undefined on any error (silent, logged)
 async function checkUiComments($: any): Promise<UiComment[] | undefined> {
   const stop = new AbortController()
   try {
@@ -805,13 +805,15 @@ export const register: Register = (on) => {
         blocks.push('[TEST] Please confirm for each block whether it arrived, and whether the context holds the kinitro.ai briefing with persona and working rules. The blocks are test content, not tasks.')
         testArmed = false
       }
+      // open UI comments: started now so it runs alongside the todo read (cold connector calls can take seconds)
+      const commentsP = needsDomain ? Promise.resolve(undefined) : checkUiComments($)
       // working memory: Todo every turn (fresh read, no model tokens for the read itself)
       const todo = await readSet($, 'memory-instruction')
       const todoText = todo ? cleanTodo(todo) : undefined
       if (todoText) { blocks.push(`${tag}Your todos (from ${briefing.agentCode}; keep them current with memory-append / memory-instruction-status):\n${todoText}`); injected.push('Todo') }
       // open UI comments: one call; told when the open set changed in this session, else every 30 minutes
       if (!needsDomain) {
-        const list = await checkUiComments($)
+        const list = await commentsP
         if (list) {
           let sid = ''
           try { sid = await $.session.id() } catch { /* ignore */ }
