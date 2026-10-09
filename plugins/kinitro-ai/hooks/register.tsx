@@ -28,9 +28,14 @@ const PAGE_TEXT_TOOLS = ['mcp__remote-devices__Claude_Browser__get_page_text', '
 const BROWSER_TOOLS = ['mcp__remote-devices__Claude_Browser__preview_start', 'mcp__Claude_Browser__preview_start']   // the Claude app's browser pane (cloud session linked to the computer / desktop session)
 const SNAPSHOT_FILE = '.kinitro-ai-selection.json'   // approved slugs when the selection page was opened (selection-start)
 // Domain binding (kinitro.ai 2026-10-08): a connection may serve several domains; every call names its domain
-// with domainRef (the slug). The slug of this session lives in DOMAIN_FILE (set it with probe action 'set-domain').
-const DOMAIN_FILE = '.kinitro-ai-domain'               // folder default: the last domain chosen in this working folder
-const SESSION_DOMAIN_PREFIX = '.kinitro-ai-domain.'    // + session id: the domain of exactly this session (wins over the folder default)
+// with domainRef (the slug). The slug of this session lives in its session record (set it with probe action 'set-domain').
+// 0.20.0: the domain belongs to the SESSION, not to the current folder. A shell `cd` in the main session can move the
+// working directory, and the hook process may restart there. So each session has a record in a fixed place
+// (~/.kinitro-ai/sessions/<session id>.json) holding its home folder (the working folder of its first start) and its
+// domain. Every local file is read and written in that home folder, never in the current working directory.
+const DOMAIN_FILE = '.kinitro-ai-domain'               // folder default: the last domain chosen in this folder; a NEW session starts with it
+const SESSION_DOMAIN_PREFIX = '.kinitro-ai-domain.'    // + session id: written up to 0.19.x, still read once to adopt an older session's choice
+const SESSIONS_DIR = '.kinitro-ai/sessions'            // under the user's home directory: one record per session id
 const NO_DOMAIN_ARG = new Set(['current-seat', 'list-domains'])   // verbs that take no arguments
 // Each user message may start a fresh engine process while the kinitro.ai
 // connector is still connecting: the briefing and the hook state therefore
@@ -94,10 +99,66 @@ const startPackA = atom({ plugin: 'kinitro-ai', key: 'startPack' } as const, fal
 const contextKeyA = atom({ plugin: 'kinitro-ai', key: 'contextKey' } as const, '')            // domain + hash of persona/rules the agent last received
 const boundA = atom({ plugin: 'kinitro-ai', key: 'bound' } as const, null as string | null)   // this session's slug, held by the host: survives reloads and a changed working folder
 
+// ---- the session's home folder and record (0.20.0) ---------------------------
+type SessionRecord = { sessionId: string; home: string; domain?: string | null; startedAt: string; updatedAt?: string }
+let homeDir: string | undefined         // the session's home folder: every local file lives here
+let recordPath: string | null | undefined   // ~/.kinitro-ai/sessions/<sid>.json; null when there is no user home or session id
+let sessionRecord: SessionRecord | undefined
+let lastSeenCwd: string | undefined
+
+function joinPath(dir: string, name: string): string {
+  return /[\\/]$/.test(dir) ? dir + name : `${dir}/${name}`
+}
+
+// the record of this session in the fixed place; created at the first start with the working folder of that moment
+async function sessionHome($: any): Promise<string> {
+  if (homeDir) return homeDir
+  let sid = '', cwd = '.', userHome: string | undefined
+  try { sid = await $.session.id() } catch { /* ignore */ }
+  // the project root first: a shell `cd` does not move it; the working directory only where there is none
+  try { cwd = (await $.session.root()) || (await $.session.cwd()) } catch { try { cwd = await $.session.cwd() } catch { /* ignore */ } }
+  try { userHome = (await $.env.get('HOME')) || (await $.env.get('USERPROFILE')) } catch { /* ignore */ }
+  recordPath = sid && userHome ? joinPath(joinPath(userHome, SESSIONS_DIR), `${sid}.json`) : null
+  if (recordPath) {
+    try { if (await $.fs.exists(recordPath)) sessionRecord = JSON.parse(String(await $.fs.read(recordPath))) as SessionRecord } catch { sessionRecord = undefined }
+    if (!sessionRecord?.home) {
+      sessionRecord = { sessionId: sid, home: cwd, domain: null, startedAt: new Date().toISOString() }
+      try { await $.fs.write(recordPath, JSON.stringify(sessionRecord)) } catch { /* ignore */ }
+    }
+  }
+  homeDir = sessionRecord?.home ?? cwd
+  lastSeenCwd = homeDir
+  return homeDir
+}
+
+// absolute path of a local file in the session's home folder
+async function at($: any, name: string): Promise<string> {
+  return joinPath(await sessionHome($), name)
+}
+
+async function saveRecordDomain($: any, slug: string) {
+  await sessionHome($)
+  if (!recordPath || !sessionRecord) return
+  sessionRecord = { ...sessionRecord, domain: slug, updatedAt: new Date().toISOString() }
+  try { await $.fs.write(recordPath, JSON.stringify(sessionRecord)) } catch { /* ignore */ }
+}
+
+// a changed working folder never changes the binding: log it once per folder, with that folder's default if it differs
+async function noteCwd($: any) {
+  const home = await sessionHome($)
+  let cwd: string | undefined
+  try { cwd = await $.session.cwd() } catch { return }
+  if (!cwd || cwd === lastSeenCwd) return
+  lastSeenCwd = cwd
+  if (cwd === home) { await log($, `working folder back to the session home ${home}`); return }
+  const other = await readFileTrim($, joinPath(cwd, DOMAIN_FILE))
+  await log($, `working folder changed to ${cwd}${other ? ` (folder default ${other})` : ''}; the session keeps ${sessionRecord?.domain ?? domainRef ?? 'its binding'} and its files in ${home}`)
+}
+
 // ---- helpers: top level, because the engine only lets $ flow into these ----
 async function log($: any, line: string) {
   logLines.push(`${new Date().toISOString()} ${line}`)
-  try { await $.fs.write(LOG_FILE, logLines.join('\n') + '\n') } catch { /* ignore */ }
+  try { await $.fs.write(await at($, LOG_FILE), logLines.join('\n') + '\n') } catch { /* ignore */ }
 }
 
 // kinitro.ai call through the engine's tool path (same route as the model's own
@@ -173,13 +234,16 @@ async function readFileTrim($: any, f: string): Promise<string | undefined> {
   return undefined
 }
 
-// the session's own choice first, then the folder default
+// the session's own choice (its record), then what the host holds, then a pre-0.20 session file, and only for a
+// session that never had a domain: the default of its HOME folder. The current working directory is never asked.
 async function readDomainFile($: any): Promise<string | undefined> {
+  const home = await sessionHome($)
+  if (sessionRecord?.domain) return sessionRecord.domain
   let sid = ''
   try { sid = await $.session.id() } catch { /* ignore */ }
   let held: string | null = null
   try { held = await read($, boundA) } catch { /* ignore */ }
-  return held ?? (sid ? await readFileTrim($, SESSION_DOMAIN_PREFIX + sid) : undefined) ?? await readFileTrim($, DOMAIN_FILE)
+  return held ?? (sid ? await readFileTrim($, joinPath(home, SESSION_DOMAIN_PREFIX + sid)) : undefined) ?? await readFileTrim($, joinPath(home, DOMAIN_FILE))
 }
 
 // what the agent tells the user: names only, no codes, ids or paths
@@ -190,19 +254,11 @@ function confirmation(slug: string, message: string) {
     : { bound: false, reason: message }
 }
 
-async function domainFiles($: any): Promise<string[]> {
-  let sid = '', cwd = '.'
-  try { sid = await $.session.id() } catch { /* ignore */ }
-  try { cwd = await $.session.cwd() } catch { /* ignore */ }
-  return [sid ? `${cwd}/${SESSION_DOMAIN_PREFIX}${sid}` : '', `${cwd}/${DOMAIN_FILE}`].filter(Boolean)
-}
-
+// a choice: the session record, the host, and the folder default of the session's home folder (for the next new session)
 async function writeDomainFiles($: any, slug: string) {
-  let sid = ''
-  try { sid = await $.session.id() } catch { /* ignore */ }
   try { await update($, boundA, () => slug) } catch { /* ignore */ }
-  if (sid) await $.fs.write(SESSION_DOMAIN_PREFIX + sid, slug + '\n')
-  await $.fs.write(DOMAIN_FILE, slug + '\n')
+  await saveRecordDomain($, slug)
+  await $.fs.write(await at($, DOMAIN_FILE), slug + '\n')
 }
 
 // approved domains of the connection, and the address of the seat picker (approve more domains)
@@ -280,6 +336,7 @@ async function bindDomain($: any, slug: string): Promise<string> {
 
 async function loadBriefing($: any) {
   lastLoadTry = Date.now()
+  await noteCwd($)
   try {
     const seat = await mcp($, 'current-seat', {})
     let domainId: string | undefined = seat?.domain?.id, agentId: string | undefined = seat?.agentNode?.id
@@ -298,6 +355,8 @@ async function loadBriefing($: any) {
       if (!d) throw new Error(`domain slug '${slug}' not found in list-domains`)
       if (!d.approved) throw new Error(`domain '${slug}' is not approved for this connection`)
       domainRef = slug; needsDomain = undefined
+      if (sessionRecord && sessionRecord.domain !== slug) await saveRecordDomain($, slug)   // from now on the session owns it
+      try { await update($, boundA, () => slug) } catch { /* ignore */ }
       domainId = d.id; agentId = d.defaultAgentNodeId
       if (!agentId) throw new Error(`domain '${slug}' has no default agent node`)
     }
@@ -338,7 +397,7 @@ async function loadBriefing($: any) {
     briefing = { raw, sections, code: gCode ?? agentCode, loadedAt: new Date().toISOString(), source: 'kinitro.ai', domainCode, agentCode, domainRef, domainName: dom?.name, agentName: agent?.name, layers: layers.join(', ') }
     briefingError = undefined
     try { await update($, currentA, () => domainRef ?? '') } catch { /* ignore */ }
-    try { await $.fs.write(CACHE_FILE, JSON.stringify(briefing)) } catch { /* ignore */ }
+    try { await $.fs.write(await at($, CACHE_FILE), JSON.stringify(briefing)) } catch { /* ignore */ }
     await log($, `briefing loaded for domain ${domainCode} / agent ${agentCode} via ${route}: ${raw.length} chars, layers ${briefing.layers}`)
   } catch (err: any) {
     briefingError = String(err?.message ?? err)
@@ -353,13 +412,15 @@ async function ensureBriefing($: any) {
 
 async function loadCache($: any) {
   try {
-    if (!(await $.fs.exists(CACHE_FILE))) return
-    const c = JSON.parse(await $.fs.read(CACHE_FILE))
+    const f = await at($, CACHE_FILE)
+    if (!(await $.fs.exists(f))) return
+    const c = JSON.parse(await $.fs.read(f))
     if (c?.raw) {
       const want = await readDomainFile($)
       if (want && c.domainRef && want !== c.domainRef) { await log($, `cache is for ${c.domainRef}, session domain is ${want}: ignored`); return }
       briefing = { ...c, sections: c.sections ?? parseSections(c.raw), source: 'cache' }
       if (c.domainRef) domainRef = c.domainRef
+      if (c.domainRef && sessionRecord && !sessionRecord.domain) await saveRecordDomain($, c.domainRef)   // a session from before 0.20: it owns the domain it runs with
       await log($, `briefing from cache (${c.code}, domain ${c.domainRef ?? 'seat-bound'}, loaded ${c.loadedAt})`)
     }
   } catch (err: any) { await log($, `cache read failed: ${err?.message ?? err}`) }
@@ -367,8 +428,9 @@ async function loadCache($: any) {
 
 async function readState($: any) {
   try {
-    if (!(await $.fs.exists(STATE_FILE))) return
-    const st = JSON.parse(await $.fs.read(STATE_FILE))
+    const f = await at($, STATE_FILE)
+    if (!(await $.fs.exists(f))) return
+    const st = JSON.parse(await $.fs.read(f))
     testArmed = !!st.testArmed; warnedAt = st.warnedAt ?? 0; compactedPending = !!st.compactedPending
     compactions = st.compactions ?? 0; contextRenders = st.contextRenders ?? 0
     commentKey = st.commentKey ?? ''; commentInjectedAt = st.commentInjectedAt ?? 0; commentSid = st.commentSid ?? ''
@@ -377,7 +439,7 @@ async function readState($: any) {
 
 async function writeState($: any) {
   try {
-    await $.fs.write(STATE_FILE, JSON.stringify({ testArmed, warnedAt, compactedPending, compactions, contextRenders, commentKey, commentInjectedAt, commentSid }))
+    await $.fs.write(await at($, STATE_FILE), JSON.stringify({ testArmed, warnedAt, compactedPending, compactions, contextRenders, commentKey, commentInjectedAt, commentSid }))
   } catch { /* ignore */ }
 }
 
@@ -405,8 +467,8 @@ type InMsg = { at?: string; from?: string; text: string; raw?: unknown }
 let mirrorSent = 0, mirrorDup = 0, lastMirrorTarget = '-', inboxNew = 0, lastFetch = '-'
 let flushing = false, fetching = false
 
-async function readJson<T>($: any, f: string, empty: T): Promise<T> {
-  try { if (await $.fs.exists(f)) return JSON.parse(await $.fs.read(f)) as T } catch { /* ignore */ }
+async function readJson<T>($: any, name: string, empty: T): Promise<T> {
+  try { const f = await at($, name); if (await $.fs.exists(f)) return JSON.parse(await $.fs.read(f)) as T } catch { /* ignore */ }
   return empty
 }
 
@@ -434,7 +496,7 @@ async function flushOutbox($: any) {
       } catch (err: any) { lastMirrorError = String(err?.message ?? err).slice(0, 300); await log($, `mirror append failed: ${lastMirrorError}`); break }
     }
     if (box.length > BOX_MAX) { const keep = box.filter((o) => !o.sent).concat(box.filter((o) => o.sent).slice(-BOX_MAX)); box.splice(0, box.length, ...keep.slice(-BOX_MAX)); changed = true }
-    if (changed) await $.fs.write(OUTBOX_FILE, JSON.stringify(box))
+    if (changed) await $.fs.write(await at($, OUTBOX_FILE), JSON.stringify(box))
   } finally { flushing = false }
 }
 
@@ -443,7 +505,7 @@ async function queueTurn($: any, turnId: string, prompt: string, answer: string)
   try { sid = await $.session.id() } catch { /* ignore */ }
   const box = await readJson<OutEntry[]>($, OUTBOX_FILE, [])
   if (!box.some((o) => o.sessionId === sid && o.turnId === turnId)) box.push({ sessionId: sid, turnId, prompt: cut(prompt), answer: cut(answer), eventTs: new Date().toISOString(), domainRef })
-  await $.fs.write(OUTBOX_FILE, JSON.stringify(box.slice(-BOX_MAX)))
+  await $.fs.write(await at($, OUTBOX_FILE), JSON.stringify(box.slice(-BOX_MAX)))
   await flushOutbox($)
 }
 
@@ -470,7 +532,7 @@ async function fetchInbox($: any) {
       more = !!r?.more
     }
     inbox.messages = inbox.messages.slice(-BOX_MAX)
-    await $.fs.write(INBOX_FILE, JSON.stringify(inbox))
+    await $.fs.write(await at($, INBOX_FILE), JSON.stringify(inbox))
     lastFetch = new Date().toISOString()
   } catch (err: any) { await log($, `mirror fetch failed: ${String(err?.message ?? err).slice(0, 300)}`) }
   finally { fetching = false }
@@ -482,7 +544,7 @@ async function takeInbox($: any): Promise<InMsg[]> {
   const fresh = inbox.messages.filter((m) => !m.told)
   if (!fresh.length) return []
   for (const m of fresh) m.told = true
-  await $.fs.write(INBOX_FILE, JSON.stringify(inbox))
+  await $.fs.write(await at($, INBOX_FILE), JSON.stringify(inbox))
   return fresh
 }
 
@@ -500,7 +562,7 @@ async function statusText($: any): Promise<string> {
   return [
     `kinitro-ai ${VERSION}`,
     `briefing: ${briefing ? `domain ${briefing.domainCode ?? '?'} / agent ${briefing.agentCode ?? '?'} (${briefing.raw.length} chars, source ${briefing.source}, loaded ${briefing.loadedAt}, route ${route})` : `MISSING (${briefingError})`}`,
-    `domain: ${domainRef ?? (needsDomain ? 'NOT SET - ' + needsDomain : 'seat-bound connection')}`,
+    `domain: ${domainRef ?? (needsDomain ? 'NOT SET - ' + needsDomain : 'seat-bound connection')} · session home ${homeDir ?? '-'} · record ${recordPath ?? 'none (no user home or session id)'}`,
     `kinitro.ai tools: ${await kinitroPrefix($)}*`,
     `refresh: ${(await read($, testModeA)) ? 'test mode, every 2 min' : 'daily'} · instructions loaded ${briefing?.loadedAt ?? '-'}`,
     `layers: ${briefing?.layers ?? '-'}`,
@@ -664,7 +726,7 @@ export const register: Register = (on) => {
       const approved: DomainChoice[] = (seat?.approved ?? []).map((d: any) => ({ slug: String(d.slug), name: String(d.name) }))
       const anySlug = domainRef ?? approved[0]?.slug
       const page = anySlug ? await mcp($, 'open-page', { target: 'selector', domainRef: anySlug }) : undefined
-      await $.fs.write(SNAPSHOT_FILE, JSON.stringify({ at: new Date().toISOString(), approved }))
+      await $.fs.write(await at($, SNAPSHOT_FILE), JSON.stringify({ at: new Date().toISOString(), approved }))
       await update($, approvedA, () => approved)
       if (page?.url) await update($, selectorUrlA, () => String(page.url))
       const opened = page?.url ? await openInPane($, String(page.url)) : 'no selection page address'
@@ -673,7 +735,7 @@ export const register: Register = (on) => {
     }
     if (action === 'selection-done') {
       let before: DomainChoice[] = []
-      try { before = JSON.parse(await $.fs.read(SNAPSHOT_FILE)).approved ?? [] } catch { /* no snapshot */ }
+      try { before = JSON.parse(await $.fs.read(await at($, SNAPSHOT_FILE))).approved ?? [] } catch { /* no snapshot */ }
       const seat = await mcp($, 'current-seat', {})
       const approved: DomainChoice[] = (seat?.approved ?? []).map((d: any) => ({ slug: String(d.slug), name: String(d.name) }))
       await update($, approvedA, () => approved)
@@ -731,11 +793,17 @@ export const register: Register = (on) => {
     const turns0 = await $.session.turns().catch(() => -1)
     // freshness: a new session always starts from kinitro.ai, later the copy is renewed daily (test mode: every 2 minutes)
     // the /kinitro fallback bound the domain while the plugin was still starting: finish it now (start package, domain view)
+    // the fallback writes into the agent's working directory: look in the session home and in the current folder
+    await noteCwd($)
     try {
-      if (await $.fs.exists(PENDING_VIEW_FILE)) {
-        const slug = String(await $.fs.read(PENDING_VIEW_FILE)).trim()
-        await $.fs.write(PENDING_VIEW_FILE, '')
-        if (slug) { await bindDomain($, slug); await log($, `pending binding finished for ${slug}`) }
+      let cwd = ''
+      try { cwd = await $.session.cwd() } catch { /* ignore */ }
+      const places = [await at($, PENDING_VIEW_FILE), ...(cwd ? [joinPath(cwd, PENDING_VIEW_FILE)] : [])]
+      for (const f of [...new Set(places)]) {
+        if (!(await $.fs.exists(f))) continue
+        const slug = String(await $.fs.read(f)).trim()
+        await $.fs.write(f, '')
+        if (slug) { await bindDomain($, slug); await log($, `pending binding finished for ${slug}`); break }
       }
     } catch (err: any) { await log($, `pending binding failed: ${err?.message ?? err}`) }
     if (briefing && !needsDomain) {

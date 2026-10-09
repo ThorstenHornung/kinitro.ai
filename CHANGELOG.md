@@ -10,6 +10,11 @@ All notable changes to the `kinitro-ai` plugin are listed here. The format follo
 - `probe` action `comments` checks now and returns the open comments with the check time. The `probe` status shows `ui comments: N open`.
 - Plugin tests (`claude plugin test plugins/kinitro-ai`): block format, dedupe rule, the `comments` action and the timeout.
 
+### Fixed
+- The domain belongs to the session, not to the current folder. A `cd` in the main session moved the working directory, the hook process restarted there, read that folder's `.kinitro-ai-domain` and bound the running session to another domain. Each session now has a record in `~/.kinitro-ai/sessions/<session id>.json` with its home folder (the project root at its first start) and its domain. The folder default is used only for a session without a domain. A changed working folder is logged and never changes the binding.
+- All local files (log, briefing cache, state, outbox, inbox, selection snapshot, folder default) are read and written in the session's home folder, never in the current working directory. The `/kinitro` fallback's `.kinitro-ai-pending` is looked for in both.
+- The `probe` status shows the session home and the record. Tests: a session bound to A stays A after its folder changes to one with default B (running and after a restart); a new session in folder B gets B.
+
 ## [0.19.0] - 2026-10-08
 
 ### Changed

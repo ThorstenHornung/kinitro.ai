@@ -49,10 +49,12 @@ One kinitro.ai connection can serve several domains, for example two agents of t
 
 | Situation | What the plugin does |
 |---|---|
+| The session already has a domain (its session record) | Uses it, whatever the current folder says. |
 | The connection serves one approved domain | Uses it. Nothing to set. |
-| Several approved domains, session file `.kinitro-ai-domain.<session id>` present | Uses that slug. |
-| Several approved domains, folder default `.kinitro-ai-domain` present | Uses that slug (the last domain chosen in this folder). |
-| Several approved domains, no file | Stops retrying, shows `domain: NOT SET` in the `probe` status and asks you to choose (below). |
+| New session, several approved domains, folder default `.kinitro-ai-domain` in the session's home folder | Uses that slug (the last domain chosen in this folder). |
+| New session, several approved domains, no file | Stops retrying, shows `domain: NOT SET` in the `probe` status and asks you to choose (below). |
+
+**The domain belongs to the session, not to the folder.** At its first start each session gets a record in a fixed place, `~/.kinitro-ai/sessions/<session id>.json` (`%USERPROFILE%` on Windows). The record holds the session's **home folder** (the project root, or the working directory where there is none) and its domain. The folder default is read only for a session that has no domain yet. If the working directory changes later, for example through a `cd` in the main session, the binding stays, the hook process may even restart in the new folder, and the plugin only logs `working folder changed to <folder> (folder default <slug>); the session keeps <slug>`. The `probe` status shows the session home and the record.
 
 How you choose:
 
@@ -60,7 +62,7 @@ How you choose:
 - **In the chat** (where no row can be drawn, for example a cloud session in the Claude app): the agent asks you with selection buttons, gives you the selection link if your domain is missing, and binds the session.
 - **By hand:** ask the agent to call `probe` with action `set-domain` and the slug.
 
-Choosing writes both files. The agent must pass `domainRef` on its own kinitro.ai calls too; the plugin reminds it in the marker line of every prompt.
+Choosing writes the session record and the folder default of the session's home folder. The agent must pass `domainRef` on its own kinitro.ai calls too; the plugin reminds it in the marker line of every prompt.
 
 Run two agents at the same time in two Claude sessions, each with its own working directory and its own `.kinitro-ai-domain`.
 
@@ -104,13 +106,14 @@ An agent instruction is appended below the general text under the heading **Agen
 
 ## Local files
 
-The plugin uses four files in the working directory of the Claude session.
+The plugin keeps its files in the session's **home folder** (see [Choosing the domain](#choosing-the-domain)), not in the current working directory, so a `cd` never splits or swaps them. The session record lives in `~/.kinitro-ai/sessions/<session id>.json`.
 
 | File | Content | Safe to delete? |
 |---|---|---|
 | `kinitro-ai.log` | Log of the hooks: loads, injections, mirror writes, errors. | Yes |
 | `.kinitro-ai-briefing.json` | Cache of the briefing, so the first message is fast while the connector connects. | Yes. It is rebuilt. |
-| `.kinitro-ai-domain.<session id>` | The slug of this session's domain (one line). | Yes, but the session then needs the domain again. |
+| `~/.kinitro-ai/sessions/<session id>.json` | The session record: home folder and domain. | Yes, after the session has ended. In a running session the domain is then taken from the folder default again. |
+| `.kinitro-ai-domain.<session id>` | Written up to 0.19.x. Read once to take over an older session's domain. | Yes. |
 | `.kinitro-ai-domain` | The folder default: the last slug chosen in this folder. | Yes. |
 | `.kinitro-ai-state.json` | Hook state: test flag, last context warning, compaction flag, counters. | Yes. Counters restart. |
 | `.kinitro-ai-outbox.json` | Turns not yet confirmed by kinitro.ai (prompt and answer text). At most 200 entries. | Yes, but unsent turns are lost. |
@@ -124,7 +127,7 @@ The cache holds the briefing text. Do not commit these files to a repository. Th
 
 - `/kinitro <slug>` binds the session to that domain.
 - `/kinitro` alone asks which domain: pick an approved one and it is bound at once, or pick **Approve another domain**. That opens the kinitro.ai domain selection (in the browser pane if there is one, else as a link); choose there, press **Switch**, then **Confirm my choice** in the chat. Either way the plugin stores the choice, opens the domain view in the browser pane, and the agent confirms the domain by name.
-- Binding writes `.kinitro-ai-domain.<session id>` and `.kinitro-ai-domain` (through `probe` `set-domain`; without the plugin's tool, the folder file only).
+- Binding writes the session record and `.kinitro-ai-domain` (through `probe` `set-domain`; without the plugin's tool, the agent writes the folder file and `.kinitro-ai-pending`, which the plugin looks for in the session home and in the current folder).
 
 The status is shown by `probe` with action `status`:
 
@@ -152,7 +155,7 @@ The agent can call `probe` with one of ten actions. All but `comments`, `choices
 | `open-domain` | Opens the bound domain's view in the browser pane (done automatically after binding). |
 | `selection-start` | Remembers the approved domains and returns the address of the selection page. |
 | `selection-done` | Binds the domain approved since `selection-start`, or returns the list to ask from. |
-| `set-domain` | With `domain: "<slug>"`: binds this session to that domain, stores the slug in `.kinitro-ai-domain` and reloads. |
+| `set-domain` | With `domain: "<slug>"`: binds this session to that domain, stores the slug in the session record and in `.kinitro-ai-domain` and reloads. |
 | `reload` | Reads the briefing again from kinitro.ai. |
 | `arm-test` | The next prompt receives every section once, marked `[TEST]`, including the ones that normally appear only at certain moments. The Compaction instruction is shown too, although it normally goes only to the summarizer. Use it to verify the setup. |
 | `invalidate-context` | Renders the first-message context block (persona and working rules) again on the next request. |
