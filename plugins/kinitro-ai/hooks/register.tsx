@@ -20,7 +20,7 @@ const FETCH_MS = 60000
 const MAX_TEXT = 50000     // chars per prompt / answer sent to the chat
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = 'kinitro-ai.log'
-const VERSION = '0.21.0'
+const VERSION = '0.22.0'
 const PENDING_VIEW_FILE = '.kinitro-ai-pending'   // written by the /kinitro fallback when the plugin was not running yet: finish the binding at the next prompt
 const REFRESH_MS = 24 * 3600 * 1000       // regular operation: instructions change rarely (PO 2026-10-08)
 const TEST_REFRESH_MS = 2 * 60 * 1000     // test mode (/kinitro test)
@@ -337,11 +337,19 @@ async function switchedOnPage($: any, approved: DomainChoice[]): Promise<DomainC
   return undefined
 }
 
-// open the domain view of the bound domain in the browser pane, straight from the plugin (no model turn)
+// open the domain view of the bound domain in the browser pane, straight from the plugin (no model turn).
+// 0.22.0: the link is the shell of the domain (open-page target 'shell'). A server that does not know the target answers
+// page_link_bad_target; then the plugin asks once more without a target and opens the page the older server gives.
 async function openDomainView($: any): Promise<string> {
   if (!domainRef) return 'no domain bound'
   let url: string | undefined
-  try { url = (await mcp($, 'open-page', {}))?.url } catch (err: any) { return `open-page failed: ${err?.message ?? err}` }
+  try {
+    try { url = (await mcp($, 'open-page', { target: 'shell' }))?.url } catch (err: any) {
+      if (!String(err?.message ?? err).includes('page_link_bad_target')) throw err
+      await log($, 'open-page target shell not known by the server; asking again without a target')
+      url = (await mcp($, 'open-page', {}))?.url
+    }
+  } catch (err: any) { return `open-page failed: ${err?.message ?? err}` }
   if (!url) return 'open-page gave no url'
   return openInPane($, url)
 }

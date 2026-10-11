@@ -3,15 +3,21 @@
 // directory and project root the test can move, a user home, and a kinitro.ai connector serving three domains.
 import { mock } from 'claude-code/testing'
 
-export type World = { files: Map<string, string>; cwd: string; root: string; sid: string; calls: string[]; tools?: string[]; prefixes: string[] }
+export type World = { files: Map<string, string>; cwd: string; root: string; sid: string; calls: string[]; tools?: string[]; prefixes: string[]; sent: Array<{ verb: string; args: Record<string, unknown> }>; verbs?: Record<string, (args: Record<string, unknown>) => unknown> }
 
 const DOMAINS = ['alpha', 'beta', 'gamma']
 
 // `tools` (optional, changeable by the test): the tool names the session lists. When set, only a tool of a listed server
 // answers; a call to any other server name fails, as it does in a session that does not have that server.
-export function makeWorld(on: any, w: Omit<World, 'calls' | 'prefixes'>): World {
-  const world: World = { ...w, calls: [], prefixes: [] }
-  const abs = (p: string) => (p.startsWith('/') ? p : `${world.cwd}/${p}`)
+// `verbs` (optional): an answer for one kinitro.ai verb, given the call's arguments; it returns the engine's tool result
+// (`{ result }`, or `{ result: <text>, isError: true }` for an error answer). `sent` records every call with its arguments.
+export function makeWorld(on: any, w: Omit<World, 'calls' | 'prefixes' | 'sent'>): World {
+  const world: World = { ...w, calls: [], prefixes: [], sent: [] }
+  // The host resolves a path before the mock sees it; on Windows it arrives with a drive letter and backslashes. Fold it back to /w/b/file.
+  const abs = (raw: string) => {
+    const p = raw.replace(/^[A-Za-z]:/, '').replace(/\\/g, '/')
+    return p.startsWith('/') ? p : `${world.cwd}/${p}`
+  }
   mock.env(on, { HOME: '/u' })
   on('session.id', async () => ({ value: world.sid }))
   on('session.cwd', async () => ({ value: world.cwd }))
@@ -32,6 +38,10 @@ export function makeWorld(on: any, w: Omit<World, 'calls' | 'prefixes'>): World 
     world.prefixes.push(prefix)
     const verb = m[2] as string
     world.calls.push(verb + (e.domainRef ? `@${e.domainRef}` : ''))
+    const { tool: _tool, ...args } = e
+    world.sent.push({ verb, args })
+    const custom = world.verbs?.[verb]
+    if (custom) return custom(args) as any
     const out = (v: unknown) => ({ result: JSON.stringify(v) })
     if (verb === 'current-seat') return out({ approved: DOMAINS.map((d) => ({ slug: d, name: d.toUpperCase() })) })
     if (verb === 'list-domains') return out({ domains: DOMAINS.map((d) => ({ id: `dom-${d}`, slug: d, approved: true, defaultAgentNodeId: `agent-${d}` })) })
