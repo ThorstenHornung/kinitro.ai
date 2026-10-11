@@ -5,8 +5,8 @@
 | Step | Who | What |
 |---|---|---|
 | 1 | kinitro or partner | Account and agent seat |
-| 2 | Setup person | Connect the kinitro.ai connector in Claude |
-| 3 | Setup person | Install the plugin |
+| 2 | Setup person | Install the plugin (it brings the kinitro.ai server) |
+| 3 | Setup person | Sign in once: `/mcp` → `plugin:kinitro-ai:kinitro_ai` → Authenticate |
 | 4 | Business user | Start the first conversation |
 
 ## Before you start
@@ -29,13 +29,7 @@ Ask your contact to confirm these points:
 
 Points 2 to 4 are explained in the [plugin reference](plugin-reference.md#what-must-be-configured-in-kinitroai). You do not need to do them yourself.
 
-## Step 2: Connect the kinitro.ai connector in Claude
-
-The plugin talks to kinitro.ai through your own connector. The connector must be connected under the server name **`kinitro_ai`**. Its tools then appear as `mcp__kinitro_ai__*`.
-
-If the name differs, the plugin cannot reach kinitro.ai. Ask your setup person to correct it.
-
-## Step 3: Install the plugin
+## Step 2: Install the plugin
 
 You install once per machine, not per Claude account. In a Claude Code session, add the marketplace and install the plugin:
 
@@ -49,6 +43,20 @@ Choose **user scope** when asked. The plugin is active in every later session. N
 **Updates:** run `/plugin marketplace update kinitro-ai`, or turn on **Enable auto-update** for the marketplace under **Marketplaces** in `/plugin`.
 
 If the install fails, check that `git` is installed and the machine can reach github.com. If an SSH attempt hangs or fails, set `CLAUDE_CODE_PLUGIN_PREFER_HTTPS=1` and try again. Still stuck: write to [support@kinitro.ai](mailto:support@kinitro.ai).
+
+## Step 3: Sign in once
+
+The plugin ships the kinitro.ai MCP server, so there is no separate connector to set up. After installing, sign in once:
+
+1. Open `/mcp`.
+2. Choose **`plugin:kinitro-ai:kinitro_ai`**.
+3. Choose **Authenticate** and finish the sign-in in the browser.
+
+Plugin hooks never start a sign-in, so until you have done this the plugin finds no kinitro.ai tools and tells you: "Open /mcp, choose plugin:kinitro-ai:kinitro_ai and Authenticate".
+
+**You already have the kinitro.ai connector or a `kinitro_ai` server of your own?** No harm. A `kinitro_ai` server of yours at the same address is used instead of the plugin's copy. The claude.ai connector at the same address is hidden in favour of the plugin's server. The plugin finds the tools under any of these names, and the `probe` status says which one it uses (bundled plugin server, user server or claude.ai connector).
+
+**Claude Code cloud sessions do not load plugins.** Use the terminal or the Code tab of the desktop app.
 
 ## Step 4: First conversation
 
@@ -75,9 +83,9 @@ What you will see:
 
 The `probe` status then shows `briefing: MISSING (...)` followed by a reason. Work through this list:
 
-1. **Wait a moment and send another message.** The connector may still be connecting. The plugin retries on its own.
+1. **Wait a moment and send another message.** The server may still be connecting. The plugin retries on its own.
 2. **Run `probe` with action `reload`.** This reads the briefing again.
-3. **Check the connector name.** It must be `kinitro_ai`.
+3. **Check the sign-in.** If the status says `kinitro.ai tools: none visible`, do step 3 above: open `/mcp`, choose `plugin:kinitro-ai:kinitro_ai` and Authenticate.
 4. **Read the reason in the status line.** The [troubleshooting table](plugin-reference.md#troubleshooting) maps typical messages to a fix.
 5. **Ask your contact** to check the `general-procedures` edge, the briefing document name and the agent instructions.
 

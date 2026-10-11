@@ -20,7 +20,7 @@ const FETCH_MS = 60000
 const MAX_TEXT = 50000     // chars per prompt / answer sent to the chat
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = 'kinitro-ai.log'
-const VERSION = '0.20.0'
+const VERSION = '0.21.0'
 const PENDING_VIEW_FILE = '.kinitro-ai-pending'   // written by the /kinitro fallback when the plugin was not running yet: finish the binding at the next prompt
 const REFRESH_MS = 24 * 3600 * 1000       // regular operation: instructions change rarely (PO 2026-10-08)
 const TEST_REFRESH_MS = 2 * 60 * 1000     // test mode (/kinitro test)
@@ -162,41 +162,85 @@ async function log($: any, line: string) {
 }
 
 // kinitro.ai call through the engine's tool path (same route as the model's own
-// mcp__kinitro_ai__* calls), falling back to the direct MCP route.
-// The kinitro.ai server name differs by host: `kinitro_ai` (cloud session config), `claude_ai_Kinitro`
-// (claude.ai connector inside Claude Code), or what the user named it. Found once from the session's tool list.
+// tool calls), falling back to the direct MCP route.
+// Where the kinitro.ai tools come from (0.21.0), best first:
+//   bundled    the plugin's own MCP server (.mcp.json): mcp__plugin_kinitro-ai_kinitro_ai__<verb>
+//   user       a server of the user named kinitro_ai: mcp__kinitro_ai__<verb>
+//   connector  the claude.ai connector inside Claude Code: mcp__claude_ai_Kinitro__<verb>
+//   other      any other server that has a current-seat tool and "kinitro" or "methos" in its name
+export type KinitroSource = 'bundled' | 'user' | 'connector' | 'other'
+const BUNDLED_PREFIX = 'mcp__plugin_kinitro-ai_kinitro_ai__'
+const USER_PREFIX = `mcp__${SERVER}__`
+const CONNECTOR_PREFIX = 'mcp__claude_ai_Kinitro__'
+const SEAT_VERB = 'current-seat'
+const SOURCE_LABEL: Record<KinitroSource, string> = { bundled: 'bundled plugin server', user: 'user server', connector: 'claude.ai connector', other: 'other server' }
+export const AUTH_HINT = 'Open /mcp, choose plugin:kinitro-ai:kinitro_ai and Authenticate'
+const NO_TOOLS = `no kinitro.ai tools are visible in this session. ${AUTH_HINT}.`
+
+// pure: picks the kinitro.ai tool prefix from a list of tool names (the session's tool list). A server counts when it
+// has a current-seat tool; the bundled server wins over a user server, that over the claude.ai connector, that over the rest.
+export function resolveKinitroTools(names: string[]): { prefix: string; source: KinitroSource } | undefined {
+  const seats = new Set(names.filter((n) => n.endsWith(`__${SEAT_VERB}`)))
+  const has = (prefix: string) => seats.has(prefix + SEAT_VERB)
+  if (has(BUNDLED_PREFIX)) return { prefix: BUNDLED_PREFIX, source: 'bundled' }
+  const bundled = [...seats].find((n) => /^mcp__plugin_kinitro-ai_.+__current-seat$/.test(n))   // the plugin's server under another server name
+  if (bundled) return { prefix: bundled.slice(0, -SEAT_VERB.length), source: 'bundled' }
+  if (has(USER_PREFIX)) return { prefix: USER_PREFIX, source: 'user' }
+  if (has(CONNECTOR_PREFIX)) return { prefix: CONNECTOR_PREFIX, source: 'connector' }
+  const other = [...seats].find((n) => /^mcp__.+__current-seat$/.test(n) && /kinitro|methos/i.test(n))
+  if (other) return { prefix: other.slice(0, -SEAT_VERB.length), source: 'other' }
+  return undefined
+}
+
 let toolPrefix: string | undefined
-async function kinitroPrefix($: any): Promise<string> {
-  if (toolPrefix) return toolPrefix
+let toolSource: KinitroSource | undefined
+let toolResolvedAt = 0
+const RESOLVE_AGAIN_MS = 60000   // a fallback source is looked at again after this long: the bundled server may have been authenticated meanwhile
+async function kinitroTools($: any): Promise<{ prefix: string | undefined; source: KinitroSource | undefined }> {
+  let now = Date.now()
+  try { now = await $.clock.now() } catch { /* the wall clock */ }
+  const fresh = now - toolResolvedAt < RESOLVE_AGAIN_MS
+  if (toolPrefix && (toolSource === 'bundled' || fresh)) return { prefix: toolPrefix, source: toolSource }
   try {
     const names: string[] = (await $.tool.list()).map((t: any) => String(t.name))
-    const hits = names.filter((n) => /^mcp__.+__current-seat$/.test(n) && /kinitro|methos/i.test(n))
-    const pick = hits.find((n) => n === `mcp__${SERVER}__current-seat`) ?? hits[0]
-    if (pick) toolPrefix = pick.slice(0, -'current-seat'.length)
-  } catch { /* fall back to the default name */ }
-  return toolPrefix ?? `mcp__${SERVER}__`
+    const found = resolveKinitroTools(names)
+    toolPrefix = found?.prefix; toolSource = found?.source; toolResolvedAt = now
+  } catch { /* keep what was found before; else nothing is visible */ }
+  return { prefix: toolPrefix, source: toolSource }
+}
+
+// the prefix to show or to name in texts: the resolved one, else the bundled name
+async function kinitroPrefix($: any): Promise<string> {
+  return (await kinitroTools($)).prefix ?? BUNDLED_PREFIX
 }
 
 async function mcp($: any, tool: string, args0: Record<string, unknown>) {
   const args = domainRef && !NO_DOMAIN_ARG.has(tool) && args0.domainRef === undefined ? { ...args0, domainRef } : args0
-  let text: string
-  try {
-    const r: any = await $.tool.call({ tool: `${await kinitroPrefix($)}${tool}`, ...args })
-    if (r.deny) throw new Error(`denied: ${r.deny}`)
-    text = r.text ?? (typeof r.result === 'string' ? r.result : JSON.stringify(r.result))
-    if (r.isError) throw new Error(`${tool}: ${String(text).slice(0, 300)}`)
-    route = 'tool.call'
-  } catch (err1: any) {
+  const { prefix, source } = await kinitroTools($)
+  // nothing visible (the server may still be connecting or not signed in): try the bundled name, then the user server name
+  const prefixes = prefix ? [prefix] : [BUNDLED_PREFIX, USER_PREFIX]
+  const errs1: string[] = [], errs2: string[] = []
+  let text: string | undefined
+  for (const p of prefixes) {
     try {
-      const server = (await kinitroPrefix($)).slice(5, -2)
-      const r = await $.mcp.call(server, tool, args)
-      text = (r.content ?? []).map((b: any) => (b.type === 'text' ? b.text : '')).join('')
-      if (r.isError) throw new Error(`${tool}: ${text.slice(0, 300)}`)
-      route = 'mcp.call'
-    } catch (err2: any) {
-      throw new Error(`tool.call: ${err1?.message ?? err1} | mcp.call: ${err2?.message ?? err2}`)
+      const r: any = await $.tool.call({ tool: `${p}${tool}`, ...args })
+      if (r.deny) throw new Error(`denied: ${r.deny}`)
+      const t = r.text ?? (typeof r.result === 'string' ? r.result : JSON.stringify(r.result))
+      if (r.isError) throw new Error(`${tool}: ${String(t).slice(0, 300)}`)
+      text = t; route = 'tool.call'; break
+    } catch (err: any) { errs1.push(String(err?.message ?? err)) }
+  }
+  if (text === undefined) {
+    for (const p of prefixes) {
+      try {
+        const r = await $.mcp.call(p.slice(5, -2), tool, args)
+        const t = (r.content ?? []).map((b: any) => (b.type === 'text' ? b.text : '')).join('')
+        if (r.isError) throw new Error(`${tool}: ${t.slice(0, 300)}`)
+        text = t; route = 'mcp.call'; break
+      } catch (err: any) { errs2.push(String(err?.message ?? err)) }
     }
   }
+  if (text === undefined) throw new Error(`${source ? '' : NO_TOOLS + ' '}tool.call: ${errs1.join(' ; ')} | mcp.call: ${errs2.join(' ; ')}`)
   try { return JSON.parse(text) } catch { return { text } }
 }
 
@@ -251,7 +295,7 @@ function confirmation(slug: string, message: string) {
   const ok = domainRef === slug && !!briefing
   return ok
     ? { bound: true, domain: briefing?.domainName ?? slug, agent: briefing?.agentName ?? null, domainView: message.split('domain view: ')[1] ?? null, sayToUser: `This session now works for ${briefing?.domainName ?? slug}${briefing?.agentName && briefing.agentName !== briefing.domainName ? ` with the agent ${briefing.agentName}` : ''}.` }
-    : { bound: false, reason: message }
+    : { bound: false, reason: message, ...(toolSource ? {} : { sayToUser: `No kinitro.ai tools are visible. ${AUTH_HINT}.` }) }
 }
 
 // a choice: the session record, the host, and the folder default of the session's home folder (for the next new session)
@@ -557,13 +601,18 @@ async function contextPercent($: any): Promise<number | undefined> {
   try { return (await $.session.usage()).context.percent } catch { return undefined }
 }
 
+async function toolsLine($: any): Promise<string> {
+  const { prefix, source } = await kinitroTools($)
+  return source ? `kinitro.ai tools: ${prefix}* (source: ${SOURCE_LABEL[source]})` : `kinitro.ai tools: none visible (${AUTH_HINT})`
+}
+
 async function statusText($: any): Promise<string> {
   const pct = await contextPercent($)
   return [
     `kinitro-ai ${VERSION}`,
     `briefing: ${briefing ? `domain ${briefing.domainCode ?? '?'} / agent ${briefing.agentCode ?? '?'} (${briefing.raw.length} chars, source ${briefing.source}, loaded ${briefing.loadedAt}, route ${route})` : `MISSING (${briefingError})`}`,
     `domain: ${domainRef ?? (needsDomain ? 'NOT SET - ' + needsDomain : 'seat-bound connection')} · session home ${homeDir ?? '-'} · record ${recordPath ?? 'none (no user home or session id)'}`,
-    `kinitro.ai tools: ${await kinitroPrefix($)}*`,
+    await toolsLine($),
     `refresh: ${(await read($, testModeA)) ? 'test mode, every 2 min' : 'daily'} · instructions loaded ${briefing?.loadedAt ?? '-'}`,
     `layers: ${briefing?.layers ?? '-'}`,
     `sections: ${briefing ? Object.keys(briefing.sections).join(' | ') : '-'} · persona from ${personaSource}`,

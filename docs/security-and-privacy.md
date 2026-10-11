@@ -6,7 +6,7 @@
 
 | Question | Answer |
 |---|---|
-| Where does data go? | Only to kinitro.ai, through the connector you connected in Claude under the name `kinitro_ai`. The plugin has no other destination. |
+| Where does data go? | Only to kinitro.ai, through the MCP server the plugin brings (`https://methos.kinitro.ai/mcp`, shown in `/mcp` as `plugin:kinitro-ai:kinitro_ai`), or through a kinitro.ai server or connector of your own that you already use. The plugin has no other destination. |
 | What is read from kinitro.ai? | Your seat, the domain and agent nodes, the general briefing and the agent's own instructions. |
 | What is written to kinitro.ai? | Your prompts and the agent's final answers, written into the agent's chat, each cut after 50,000 characters. Tool calls, thinking and injected instruction blocks are not sent. |
 | Who can read the chat? | Whoever can read that agent's chat. The domain's access rights apply. |

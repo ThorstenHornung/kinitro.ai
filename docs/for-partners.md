@@ -19,7 +19,7 @@ Together they make a domain a customer can use without platform knowledge. See [
 
 1. You build the solution in a kinitro.ai domain, in Design mode.
 2. The customer gets an account and an agent seat, set up by kinitro or by you as the partner.
-3. The customer connects the kinitro.ai connector in Claude and installs the plugin from this repository. See [Getting started](getting-started.md).
+3. The customer installs the plugin from this repository and signs in once in `/mcp` (the plugin brings the kinitro.ai server). See [Getting started](getting-started.md).
 4. The plugin briefs the agent from the customer's domain at the right moments. The customer talks to the agent in plain language.
 5. Deliverables and knowledge stay in the customer's domain.
 

@@ -30,7 +30,7 @@
 You need three things:
 
 1. A kinitro.ai account with an **agent seat** (a domain and an agent node, set up by kinitro or a partner).
-2. The **kinitro.ai connector** connected in Claude under the server name `kinitro_ai`.
+2. Nothing to connect: the plugin brings the kinitro.ai MCP server. After installing, sign in once in `/mcp` (`plugin:kinitro-ai:kinitro_ai` → Authenticate).
 3. **Claude Code** with plugin support (terminal, or the Code tab of the desktop app), and `git` on the machine.
 
 Install the plugin once per machine, in a Claude Code session:

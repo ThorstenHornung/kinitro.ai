@@ -1,6 +1,6 @@
 # Plugin reference
 
-**The plugin `kinitro-ai` 0.20.0 reads a briefing from kinitro.ai, injects its sections at fixed moments, tells the agent about open UI comments and mirrors each turn into the agent's chat.** It contains no instruction texts and sends nothing anywhere except to kinitro.ai through your own connector. This page is the technical reference for the setup person.
+**The plugin `kinitro-ai` 0.21.0 reads a briefing from kinitro.ai, injects its sections at fixed moments, tells the agent about open UI comments and mirrors each turn into the agent's chat.** It contains no instruction texts and sends nothing anywhere except to kinitro.ai through its own bundled MCP server (or a kinitro.ai server or connector you already have). This page is the technical reference for the setup person.
 
 - [Hooks and events](#hooks-and-events)
 - [How the briefing is looked up](#how-the-briefing-is-looked-up)
@@ -11,6 +11,7 @@
 - [The chat mirror](#the-chat-mirror)
 - [Open UI comments](#open-ui-comments)
 - [Known limits](#known-limits-in-the-beta)
+- [Server and tool lookup](#server-and-tool-lookup)
 - [Troubleshooting](#troubleshooting)
 
 ## Hooks and events
@@ -20,7 +21,7 @@
 | Session start | Reads the hook state and the cached briefing from local files. Registers the `probe` tool. Starts a background refresh from kinitro.ai: every 3 seconds, at most 40 tries, until the load succeeds. |
 | First-message context | Adds a context block with **Persona** and **Working rules**. Rendered once per conversation, and again after every compaction. |
 | System prompt | Adds the same two sections to the system prompt on every request, where the host supports it. If no briefing is loaded yet, it retries the load, at most every 20 seconds. |
-| Every user prompt | Adds a one-line marker `[kinitro-ai 0.20.0] context <n> % · briefing <code>`. Adds **Session start** on the first turn, **Every turn** on every turn, **After compaction** once on the first prompt after a compaction, and **Context nearly full** when the context window reaches 70 % and again every 5 points further. Adds the open UI comments of the domain when they changed (see [Open UI comments](#open-ui-comments)). With no cache and no briefing, the first prompt waits up to 6 seconds for the connector. |
+| Every user prompt | Adds a one-line marker `[kinitro-ai 0.21.0] context <n> % · briefing <code>`. Adds **Session start** on the first turn, **Every turn** on every turn, **After compaction** once on the first prompt after a compaction, and **Context nearly full** when the context window reaches 70 % and again every 5 points further. Adds the open UI comments of the domain when they changed (see [Open UI comments](#open-ui-comments)). With no cache and no briefing, the first prompt waits up to 6 seconds for the connector. |
 | Compaction | Appends the **Compaction instruction** to the instructions for the summarizer. Afterwards it flags the After compaction section for the next prompt and resets the context warning. Skipped for sub-agents. |
 | End of turn | Writes your prompt and the agent's final answer into the agent's chat (see [The chat mirror](#the-chat-mirror)). Each text is cut after 50,000 characters. Skipped for sub-agents. |
 | `/kinitro` | A command file of the plugin: opens the domain selection and binds the session (see below). |
@@ -86,7 +87,7 @@ When the persona or working rules changed, the next prompt carries them again.
 | Edge | The domain node has an association edge with the relation name `general-procedures` to the section that holds the general library. |
 | Briefing document | That section holds a Document whose name **starts with** `Briefing: kinitro.ai agents in Claude`. Its markdown content has one `## ` heading per section (names below). |
 | Agent instructions | Optional, but something must exist: either the briefing or at least one agent instruction. |
-| Connector | Connected in Claude. Any server name works: the plugin looks for a `current-seat` tool whose name contains "kinitro" (for example `mcp__kinitro_ai__*`, or `mcp__claude_ai_Kinitro__*` for the claude.ai connector inside Claude Code). |
+| MCP server | The plugin brings its own: `.mcp.json` declares the HTTP server `kinitro_ai` at `https://methos.kinitro.ai/mcp` (OAuth client `claude-code`, callback port 33418). It shows in `/mcp` as `plugin:kinitro-ai:kinitro_ai`; its tools are named `mcp__plugin_kinitro-ai_kinitro_ai__<verb>`. Sign in once there (Authenticate). Plugin hooks never start the sign-in. See [Server and tool lookup](#server-and-tool-lookup). |
 
 ### Section names
 
@@ -188,6 +189,23 @@ People can comment on a control of a kinitro.ai page: a question or a remark on 
 - Prompts and answers longer than 50,000 characters are cut in the chat.
 - Mirroring needs the connector. If it is down, the turn waits in the outbox and is sent later.
 
+## Server and tool lookup
+
+The plugin finds the kinitro.ai tools in the session's tool list: a server counts when it has a `current-seat` tool. It uses the first source that exists:
+
+| Order | Source | Tool names | `probe` status says |
+|---|---|---|---|
+| 1 | The plugin's bundled server | `mcp__plugin_kinitro-ai_kinitro_ai__<verb>` | `source: bundled plugin server` |
+| 2 | A `kinitro_ai` server of the user (user, project or local scope) | `mcp__kinitro_ai__<verb>` | `source: user server` |
+| 3 | The claude.ai connector inside Claude Code | `mcp__claude_ai_Kinitro__<verb>` | `source: claude.ai connector` |
+| 4 | Any other server with `current-seat` and "kinitro" or "methos" in its name | `mcp__<name>__<verb>` | `source: other server` |
+
+Claude Code itself decides which servers are connected: a server of yours at the same address as the plugin's is used instead of the plugin's copy (precedence local, project, user, plugin, claude.ai connectors), and a claude.ai connector at the same address is hidden in favour of the plugin's server. The plugin only chooses among what is listed. A fallback source is looked at again after 60 seconds, so the bundled server is taken as soon as it is signed in.
+
+When no kinitro.ai tool is visible, the `probe` status shows `kinitro.ai tools: none visible (Open /mcp, choose plugin:kinitro-ai:kinitro_ai and Authenticate)`, a failed binding returns the same instruction as `sayToUser`, and the `MISSING (...)` reason begins with it.
+
+**Claude Code cloud sessions do not load plugins**, so the bundled server is not available there. A `kinitro_ai` server in the session configuration or the claude.ai connector is used instead.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
@@ -198,7 +216,10 @@ People can comment on a control of a kinitro.ai page: a question or a remark on 
 | `domain_ref_required` in the log or in agent calls | A call without `domainRef` on a multi-domain connection | Update the plugin to 0.10.0 or later. Remind the agent to pass `domainRef`. |
 | `briefing: MISSING (... not approved ...)` | The slug is not approved for this connection | Approve the domain for the connector in kinitro.ai, or choose another slug. |
 | `briefing: MISSING (... no briefing found ...)` | No `general-procedures` edge with a `Briefing: kinitro.ai agents in Claude` document, and no agent instructions | Ask your contact to add the edge and document, or the agent instructions. Then run `probe` with `reload`. |
-| `MISSING` with a message about `tool.call` and `mcp.call` | Connector not connected or signed out | Check the connector and its sign-in; the `probe` status shows the tool prefix the plugin found. Send a new message. |
+| `kinitro.ai tools: none visible`, or `MISSING (no kinitro.ai tools are visible ...)` | The bundled server is not signed in yet | Open `/mcp`, choose `plugin:kinitro-ai:kinitro_ai` and Authenticate. Send a new message. |
+| The sign-in in `/mcp` fails with a redirect mismatch (redirect URI not registered) | Claude Code sends `http://localhost:33418/callback`; the server accepts only another form of the address | The kinitro.ai server must accept `http://localhost:33418/callback` for the client `claude-code`. Ask your contact at kinitro to register it. |
+| `MISSING` with a message about `tool.call` and `mcp.call`, tools are listed | The server is connected but the call fails | The `probe` status shows the tool prefix and source the plugin found; check that server's sign-in. Send a new message. |
+| The status shows `source: claude.ai connector` or `user server` although the plugin is installed | Your own server or connector is used, or the bundled one is not signed in | Harmless. To use the bundled server, remove the other one or sign in to `plugin:kinitro-ai:kinitro_ai` in `/mcp`. |
 | Briefing source stays `cache` | Connector was not up in time, or loading keeps failing | Run `probe` with `reload`. Read `kinitro-ai.log`. |
 | A section never arrives | Heading missing or misspelled in the briefing document | Use the exact names above. Run `probe` with `arm-test`. |
 | Persona does not change after editing in kinitro.ai | The old briefing is cached | Run `probe` with `reload`, then `invalidate-context`. |

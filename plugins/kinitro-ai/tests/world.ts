@@ -3,12 +3,14 @@
 // directory and project root the test can move, a user home, and a kinitro.ai connector serving three domains.
 import { mock } from 'claude-code/testing'
 
-export type World = { files: Map<string, string>; cwd: string; root: string; sid: string; calls: string[] }
+export type World = { files: Map<string, string>; cwd: string; root: string; sid: string; calls: string[]; tools?: string[]; prefixes: string[] }
 
 const DOMAINS = ['alpha', 'beta', 'gamma']
 
-export function makeWorld(on: any, w: Omit<World, 'calls'>): World {
-  const world: World = { ...w, calls: [] }
+// `tools` (optional, changeable by the test): the tool names the session lists. When set, only a tool of a listed server
+// answers; a call to any other server name fails, as it does in a session that does not have that server.
+export function makeWorld(on: any, w: Omit<World, 'calls' | 'prefixes'>): World {
+  const world: World = { ...w, calls: [], prefixes: [] }
   const abs = (p: string) => (p.startsWith('/') ? p : `${world.cwd}/${p}`)
   mock.env(on, { HOME: '/u' })
   on('session.id', async () => ({ value: world.sid }))
@@ -21,8 +23,14 @@ export function makeWorld(on: any, w: Omit<World, 'calls'>): World {
     return { value: world.files.get(f)! }
   })
   on('fs.write', async (_$: any, e: any) => { world.files.set(abs(e.path), e.text); return { value: undefined } })
+  if (w.tools) on('tool.list', async () => ({ value: world.tools!.map((name) => ({ name, description: '', isMcp: true })) }))
   on('tool.call', async (_$: any, e: any) => {
-    const verb = String(e.tool).replace(/^mcp__kinitro_ai__/, '')
+    const m = /^(mcp__(?:plugin_kinitro-ai_kinitro_ai|kinitro_ai|claude_ai_Kinitro)__)(.*)$/.exec(String(e.tool))
+    if (!m) throw new Error(`unexpected tool ${e.tool}`)
+    const prefix = m[1] as string
+    if (world.tools && !world.tools.some((n) => n.startsWith(prefix))) throw new Error(`no such tool ${e.tool}`)
+    world.prefixes.push(prefix)
+    const verb = m[2] as string
     world.calls.push(verb + (e.domainRef ? `@${e.domainRef}` : ''))
     const out = (v: unknown) => ({ result: JSON.stringify(v) })
     if (verb === 'current-seat') return out({ approved: DOMAINS.map((d) => ({ slug: d, name: d.toUpperCase() })) })

@@ -2,6 +2,23 @@
 
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.21.0] - 2026-10-11
+
+### Added
+- The plugin brings the kinitro.ai MCP server: `.mcp.json` declares the HTTP server `kinitro_ai` at `https://methos.kinitro.ai/mcp` (OAuth client `claude-code`, callback port 33418). A new user installs only the plugin and signs in once: `/mcp` → `plugin:kinitro-ai:kinitro_ai` → Authenticate. The separate connector step is gone.
+- The tools of the bundled server are `mcp__plugin_kinitro-ai_kinitro_ai__<verb>`. The plugin prefers them; a `kinitro_ai` user server, the claude.ai connector (`mcp__claude_ai_Kinitro__`) and any other kinitro/methos server still work as fallbacks. A fallback is looked at again after 60 seconds, so the bundled server is taken as soon as it is signed in.
+- The `probe` status names the source: `source: bundled plugin server`, `user server`, `claude.ai connector` or `other server`. When no kinitro.ai tool is visible it says `none visible (Open /mcp, choose plugin:kinitro-ai:kinitro_ai and Authenticate)`; the failed-binding answer carries the same text as `sayToUser`, and the `MISSING (...)` reason begins with it.
+- Tests: `claude plugin test plugins/kinitro-ai` covers the preference order (bundled, user server, connector, other, none) and a session that goes from nothing visible to the connector to the bundled server.
+
+### Changed
+- `/kinitro` no longer names a fixed server: it speaks of "the kinitro.ai tools" (`mcp__plugin_kinitro-ai_kinitro_ai__<verb>`, `mcp__kinitro_ai__<verb>` or `mcp__claude_ai_Kinitro__<verb>`) and loads all three names in its ToolSearch line.
+- Docs: getting started (install, then sign in once), plugin reference (server and tool lookup, troubleshooting), README, security and partner pages.
+
+### Notes
+- Prerequisite on the kinitro.ai server: Claude Code sends the redirect as `http://localhost:33418/callback` in current builds; the server must accept it for the client `claude-code` (today it registers `http://127.0.0.1:33418/callback`). Otherwise the sign-in fails with a redirect mismatch.
+- Whether Claude Code honours the `oauth` keys for a plugin's server is not confirmed; they are kept.
+- Claude Code cloud sessions do not load plugins.
+
 ## [0.20.0] - 2026-10-09
 
 ### Added
