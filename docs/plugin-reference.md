@@ -1,6 +1,6 @@
 # Plugin reference
 
-**The plugin `kinitro-ai` 0.21.0 reads a briefing from kinitro.ai, injects its sections at fixed moments, tells the agent about open UI comments and mirrors each turn into the agent's chat.** It contains no instruction texts and sends nothing anywhere except to kinitro.ai through its own bundled MCP server (or a kinitro.ai server or connector you already have). This page is the technical reference for the setup person.
+**The plugin `kinitro-ai` 0.22.0 reads a briefing from kinitro.ai, injects its sections at fixed moments, tells the agent about open UI comments and mirrors each turn into the agent's chat.** It contains no instruction texts and sends nothing anywhere except to kinitro.ai through its own bundled MCP server (or a kinitro.ai server or connector you already have). This page is the technical reference for the setup person.
 
 - [Hooks and events](#hooks-and-events)
 - [How the briefing is looked up](#how-the-briefing-is-looked-up)
@@ -21,7 +21,7 @@
 | Session start | Reads the hook state and the cached briefing from local files. Registers the `probe` tool. Starts a background refresh from kinitro.ai: every 3 seconds, at most 40 tries, until the load succeeds. |
 | First-message context | Adds a context block with **Persona** and **Working rules**. Rendered once per conversation, and again after every compaction. |
 | System prompt | Adds the same two sections to the system prompt on every request, where the host supports it. If no briefing is loaded yet, it retries the load, at most every 20 seconds. |
-| Every user prompt | Adds a one-line marker `[kinitro-ai 0.21.0] context <n> % · briefing <code>`. Adds **Session start** on the first turn, **Every turn** on every turn, **After compaction** once on the first prompt after a compaction, and **Context nearly full** when the context window reaches 70 % and again every 5 points further. Adds the open UI comments of the domain when they changed (see [Open UI comments](#open-ui-comments)). With no cache and no briefing, the first prompt waits up to 6 seconds for the connector. |
+| Every user prompt | Adds a one-line marker `[kinitro-ai 0.22.0] context <n> % · briefing <code>`. Adds **Session start** on the first turn, **Every turn** on every turn, **After compaction** once on the first prompt after a compaction, and **Context nearly full** when the context window reaches 70 % and again every 5 points further. Adds the open UI comments of the domain when they changed (see [Open UI comments](#open-ui-comments)). With no cache and no briefing, the first prompt waits up to 6 seconds for the connector. |
 | Compaction | Appends the **Compaction instruction** to the instructions for the summarizer. Afterwards it flags the After compaction section for the next prompt and resets the context warning. Skipped for sub-agents. |
 | End of turn | Writes your prompt and the agent's final answer into the agent's chat (see [The chat mirror](#the-chat-mirror)). Each text is cut after 50,000 characters. Skipped for sub-agents. |
 | `/kinitro` | A command file of the plugin: opens the domain selection and binds the session (see below). |
@@ -153,7 +153,7 @@ The agent can call `probe` with one of ten actions. All but `comments`, `choices
 | `status` (default) | Shows diagnostics. |
 | `comments` | Checks the open UI comments of the bound domain now. Returns them, the formatted block, the check time and the last time the agent was told. |
 | `choices` | Returns the approved domains and the current one. |
-| `open-domain` | Opens the bound domain's view in the browser pane (done automatically after binding). |
+| `open-domain` | Opens the bound domain's view in the browser pane (done automatically after binding): the shell of the domain, `open-page` with `target: "shell"`. A server that does not know the target is asked once more without it and its page is opened. |
 | `selection-start` | Remembers the approved domains and returns the address of the selection page. |
 | `selection-done` | Binds the domain approved since `selection-start`, or returns the list to ask from. |
 | `set-domain` | With `domain: "<slug>"`: binds this session to that domain, stores the slug in the session record and in `.kinitro-ai-domain` and reloads. |

@@ -2,6 +2,19 @@
 
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.22.0] - 2026-10-11
+
+### Changed
+- The domain view opens the shell of the bound domain. After binding (and on the `probe` action `open-domain`) the plugin calls `open-page` with `target: "shell"` and opens the address it gets in the browser pane. The address is `<server>/?domain=<code>&link=<payload>`: the same page as for a person in the browser, but a session started from the link shows the domain's own pages and no Chat tab, and the navigation holds only the domain and what lies under it down to the next domain.
+- A server that does not know the shell target answers `page_link_bad_target`. The plugin then asks once more with `open-page` without a target and opens that page, as 0.21.0 did. Any other error is reported and not repeated.
+
+### Tests
+- `tests/domain-shell.test.ts`: the call carries `target: "shell"` and the bound domain; the fallback after `page_link_bad_target` happens once; any other error is not repeated.
+- `tests/world.ts` folds the drive letter and backslashes the Windows host puts on paths, so the domain tests run on Windows too (`domain-running` and `domain-restart` were red there); a world can answer a verb itself (`verbs`) and records every call with its arguments (`sent`).
+
+### Notes
+- Needs the kinitro.ai server release that knows `open-page` target `shell` (item 4.2.1-3485). Before that release the plugin works through the fallback.
+
 ## [0.21.0] - 2026-10-11
 
 ### Added
