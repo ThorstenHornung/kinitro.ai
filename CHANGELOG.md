@@ -2,6 +2,18 @@
 
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.0] - 2026-10-14
+
+### Changed
+- The chat mirror sends only what the person typed, what another agent sent to the session and the main agent's final answer (item 4.2.1-3536, part 2). The plugin decides by the engine's `origin.kind` of each prompt, never by its text: `composer`, `bridge`, `slack-ping` and `sdk` are the person's; `peer`, `peer-send-message`, `coordinator`, `projects-relay` and `observer` are another agent's and are sent with `promptFrom: "agent"`; every other kind (task notifications, scheduled triggers, automatic follow-ups, plugin texts, unclassified, and any kind not known) is dropped.
+- A notice that arrives in a running turn no longer replaces the typed prompt. Prompts of a sub agent are never kept, sub agent turns stay skipped, and no hook reads tool calls.
+- Several prompts in one turn are sent in their order; the answer stands on the last one. A turn that only a notice started sends the answer alone.
+- An engine that gives no `origin` is served as by 0.22.0 (every prompt is the person's); the log line of each prompt names the kind and the class, never the text.
+- Needs the server of item 4.2.1-3536 part 1 (the verb argument `promptFrom`); an older server would store another agent's prompt as the person's.
+
+### Tests
+- `tests/chat-mirror.test.ts`: `classifyOrigin` for all 16 kinds, unknown kind, no kind; `planTurn` for notices, tool-call turns, another agent's message, two prompts in one turn; `turn.complete` of a sub agent queues nothing and a main agent turn without prompt sends the answer alone. The cases that need the engine to raise `prompt.submit` with an `origin` are not in the suite (the test kit cannot set an origin); the live proof covers them.
+
 ## [0.22.0] - 2026-10-11
 
 ### Changed

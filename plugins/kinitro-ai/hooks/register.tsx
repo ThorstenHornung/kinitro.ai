@@ -20,7 +20,7 @@ const FETCH_MS = 60000
 const MAX_TEXT = 50000     // chars per prompt / answer sent to the chat
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = 'kinitro-ai.log'
-const VERSION = '0.22.0'
+const VERSION = '0.23.0'
 const PENDING_VIEW_FILE = '.kinitro-ai-pending'   // written by the /kinitro fallback when the plugin was not running yet: finish the binding at the next prompt
 const REFRESH_MS = 24 * 3600 * 1000       // regular operation: instructions change rarely (PO 2026-10-08)
 const TEST_REFRESH_MS = 2 * 60 * 1000     // test mode (/kinitro test)
@@ -61,7 +61,7 @@ let briefing: Briefing | undefined
 let briefingError: string | undefined
 let lastLoadTry = 0
 let route = '-'
-let pendingPrompt = ''
+let pending: PendingPrompt[] = []   // prompts of this turn that the person typed or another agent sent (item 3536)
 let warnedAt = 0
 let compactedPending = false
 let testArmed = false
@@ -514,7 +514,31 @@ async function waitForBriefing($: any) {
 }
 
 // ---- chat mirror (item 3413) ------------------------------------------------
-type OutEntry = { sessionId: string; turnId: string; prompt: string; answer: string; eventTs: string; domainRef?: string; sent?: boolean; result?: string }
+type OutEntry = { sessionId: string; turnId: string; prompt: string; promptFrom?: 'agent'; answer: string; eventTs: string; domainRef?: string; sent?: boolean; result?: string }
+type PendingPrompt = { from: 'person' | 'agent'; text: string }
+
+// Who wrote a prompt, by the engine's origin.kind and never by its text (item 3536, rules P1/P2).
+// person: mirrored as the person's; agent: mirrored as another agent's message; drop: never mirrored.
+// No kind at all (an engine without origin) is the person's, as in 0.22.0 (P5).
+const PERSON_KINDS = ['composer', 'bridge', 'slack-ping', 'sdk']
+const AGENT_KINDS = ['peer', 'peer-send-message', 'coordinator', 'projects-relay', 'observer']
+export function classifyOrigin(kind: string | undefined): 'person' | 'agent' | 'drop' {
+  if (kind === undefined) return 'person'
+  if (PERSON_KINDS.includes(kind)) return 'person'
+  if (AGENT_KINDS.includes(kind)) return 'agent'
+  return 'drop'   // task-notification, scheduled-trigger, auto-continuation, observer-activity, unclassified, channel, plugin and any unknown kind
+}
+
+// The outbox entries of one finished main-agent turn: the answer stands on the last prompt, a later prompt gets turnId:p<i>.
+export function planTurn(pending: PendingPrompt[], turnId: string, answer: string): { turnId: string; prompt: string; promptFrom?: 'agent'; answer: string }[] {
+  if (pending.length === 0) return answer ? [{ turnId, prompt: '', answer }] : []
+  return pending.map((p, i) => ({
+    turnId: i === 0 ? turnId : turnId + ':p' + (i + 1),
+    prompt: p.text,
+    ...(p.from === 'agent' ? { promptFrom: 'agent' as const } : {}),
+    answer: i === pending.length - 1 ? answer : '',
+  }))
+}
 type InMsg = { at?: string; from?: string; text: string; raw?: unknown }
 let mirrorSent = 0, mirrorDup = 0, lastMirrorTarget = '-', inboxNew = 0, lastFetch = '-'
 let flushing = false, fetching = false
@@ -538,7 +562,7 @@ async function flushOutbox($: any) {
       const ref = o.domainRef ?? domainRef
       if (!ref && needsDomain) break       // no domain yet: send after binding
       try {
-        const r = await mcp($, 'mirror-messaging', { action: 'append', platform: MIRROR_PLATFORM, sessionId: o.sessionId, turnId: o.turnId, prompt: o.prompt, answer: o.answer, eventTs: o.eventTs, ...(ref ? { domainRef: ref } : {}) })
+        const r = await mcp($, 'mirror-messaging', { action: 'append', platform: MIRROR_PLATFORM, sessionId: o.sessionId, turnId: o.turnId, prompt: o.prompt, ...(o.promptFrom ? { promptFrom: o.promptFrom } : {}), answer: o.answer, eventTs: o.eventTs, ...(ref ? { domainRef: ref } : {}) })
         if (r?.status && r.status !== 'ok') throw new Error(JSON.stringify(r).slice(0, 200))
         o.sent = true; o.domainRef = ref; changed = true
         o.result = r?.alreadyPresent ? 'alreadyPresent' : `rows ${(r?.rowIds ?? []).length}`
@@ -552,11 +576,14 @@ async function flushOutbox($: any) {
   } finally { flushing = false }
 }
 
-async function queueTurn($: any, turnId: string, prompt: string, answer: string) {
+async function queueTurn($: any, planned: { turnId: string; prompt: string; promptFrom?: 'agent'; answer: string }[]) {
+  if (planned.length === 0) return
   let sid = ''
   try { sid = await $.session.id() } catch { /* ignore */ }
   const box = await readJson<OutEntry[]>($, OUTBOX_FILE, [])
-  if (!box.some((o) => o.sessionId === sid && o.turnId === turnId)) box.push({ sessionId: sid, turnId, prompt: cut(prompt), answer: cut(answer), eventTs: new Date().toISOString(), domainRef })
+  for (const p of planned) {
+    if (!box.some((o) => o.sessionId === sid && o.turnId === p.turnId)) box.push({ sessionId: sid, turnId: p.turnId, prompt: cut(p.prompt), ...(p.promptFrom ? { promptFrom: p.promptFrom } : {}), answer: cut(p.answer), eventTs: new Date().toISOString(), domainRef })
+  }
   await $.fs.write(await at($, OUTBOX_FILE), JSON.stringify(box.slice(-BOX_MAX)))
   await flushOutbox($)
 }
@@ -869,7 +896,13 @@ export const register: Register = (on) => {
       // a local copy (plugin restarted while the connector was still connecting) is replaced at the next prompt, not only after a day
       if (briefing.source !== 'kinitro.ai' || age > limit) { const kept = briefing; await loadBriefing($); if (!briefing) briefing = kept }
     }
-    pendingPrompt = e.text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>\s*/g, '').trim()
+    // item 3536: only what the person typed and what another agent sent is kept; notices and sub agent prompts are not (P2-P4)
+    const kind: string | undefined = (e as any).origin?.kind
+    const cls = (e as any).agentId ? 'drop' : classifyOrigin(kind)
+    if (cls !== 'drop') {
+      const text = e.text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>\s*/g, '').trim()
+      if (text) pending.push({ from: cls, text })
+    }
     const pct = await contextPercent($)
     const turns = await $.session.turns().catch(() => -1)
     const tag = testArmed ? '[TEST] ' : ''
@@ -959,7 +992,7 @@ export const register: Register = (on) => {
     }
     lastInjected = injected
     await writeState($)
-    await log($, `prompt.submit turns=${turns} pct=${pct} injected=${injected.join(',')}`)
+    await log($, `prompt.submit turns=${turns} pct=${pct} injected=${injected.join(',')} origin=${kind ?? 'absent'} class=${cls}${kind === undefined ? ' (engine gives no origin: served as the person, as 0.22.0)' : ''}`)
     return next({ ...e, context: [...(e.context ?? []), blocks.join('\n\n')] })
   })
 
@@ -983,9 +1016,9 @@ export const register: Register = (on) => {
   on('turn.complete', async ($, e, next) => {
     const r = await next(e)
     if (e.agentId) return r
-    const prompt = pendingPrompt
-    pendingPrompt = ''
-    if (prompt || e.answer) await queueTurn($, e.turnId, prompt, e.answer ?? '')
+    const taken = pending
+    pending = []
+    await queueTurn($, planTurn(taken, e.turnId, e.answer ?? ''))
     await log($, `turn.complete reason=${e.reason} mirrorSent=${mirrorSent} dup=${mirrorDup}${lastMirrorError ? ' error=' + lastMirrorError : ''}`)
     return r
   })

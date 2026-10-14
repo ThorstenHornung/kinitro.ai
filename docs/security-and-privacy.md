@@ -1,5 +1,7 @@
 # Security and privacy
 
+*Valid for the plugin `kinitro-ai` 0.23.0.*
+
 **The plugin sends nothing anywhere except to kinitro.ai, and it does so through your own connector.** It stores no credentials. What it does write is a mirror of your conversation into your own kinitro.ai domain and a few small files on your computer. This page lists exactly what goes where and what to review.
 
 ## What the plugin does with data
@@ -8,7 +10,7 @@
 |---|---|
 | Where does data go? | Only to kinitro.ai, through the MCP server the plugin brings (`https://methos.kinitro.ai/mcp`, shown in `/mcp` as `plugin:kinitro-ai:kinitro_ai`), or through a kinitro.ai server or connector of your own that you already use. The plugin has no other destination. |
 | What is read from kinitro.ai? | Your seat, the domain and agent nodes, the general briefing and the agent's own instructions. |
-| What is written to kinitro.ai? | Your prompts and the agent's final answers, written into the agent's chat, each cut after 50,000 characters. Tool calls, thinking and injected instruction blocks are not sent. |
+| What is written to kinitro.ai? | The plugin sends what you typed, what another agent sent to this session and the main agent's final answer. Automatic notices, sub agent texts, tool calls, thinking and instruction blocks are not sent. Each text is cut after 50,000 characters. |
 | Who can read the chat? | Whoever can read that agent's chat. The domain's access rights apply. |
 | What is stored on your computer? | A log, a cache of the briefing, a small state file, an outbox and an inbox in the working directory. See below. |
 | Are credentials stored? | No. The plugin uses your connector's existing sign-in and stores no passwords or tokens. |
