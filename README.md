@@ -6,7 +6,7 @@
 
 ---
 
-**kinitro.ai lets business users work with AI agents that know their business, follow their procedures and keep their results in one governed place. This repository holds what you need to run a kinitro.ai agent in Claude.**
+**kinitro.ai lets business users work with AI agents that know their business, follow their procedures and keep their results in one governed place. This repository holds integrations for running a kinitro.ai agent in Claude and Codex.**
 
 ## What kinitro.ai is
 
@@ -21,11 +21,13 @@
 | Path | What it is |
 |---|---|
 | `plugins/kinitro-ai/` | The Claude Code plugin `kinitro-ai` (version 0.12.0). It briefs your agent from kinitro.ai and mirrors each conversation turn into your domain. |
+| `plugins/kinitro-ai-codex/` | The Codex plugin (0.1.0): MethOS MCP connection and the kinitro domain/briefing skill. See [Codex setup](docs/codex-plugin.md). |
+| `.agents/plugins/marketplace.json` | The Codex marketplace entry. |
 | `.claude-plugin/marketplace.json` | The marketplace entry that lets Claude Code install the plugin. |
 | `docs/` | Guides for users, setup people and partners. |
 | `assets/` | The kinitro ai logo. |
 
-## Quick start
+## Quick start — Claude
 
 You need three things:
 
@@ -48,7 +50,11 @@ The plugin is active at once and in every later session. Choose your domain with
 
 It opens the kinitro.ai domain selection and binds the session to the domain you choose (`/kinitro verum` binds directly). Step-by-step help: [Getting started](docs/getting-started.md).
 
-## How the plugin briefs your agent
+## Codex
+
+Install the separate Codex plugin using [Codex setup](docs/codex-plugin.md). Version 0.1.0 prioritizes MethOS MCP and explicit domain/briefing workflows; the guide lists the differences from Claude's hooks.
+
+## How the Claude plugin briefs your agent
 
 All instruction texts live in kinitro.ai and are edited by the domain owner. The plugin only decides **when** each section is handed to the agent.
 

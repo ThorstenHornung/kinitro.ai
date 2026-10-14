@@ -1,5 +1,12 @@
 # Changelog
 
+## Codex plugin 0.1.0 — 2026-10-14
+
+- Added plugins/kinitro-ai-codex and a separate Codex marketplace alongside the Claude integration.
+- Bundled MethOS MCP with plugin-owned public client metadata and a matching fixed callback instead of the Claude OAuth client.
+- Added the kinitro skill for domain choice, platform briefing and explicit refresh/status.
+- Added installation, design and validation documentation. Automatic Claude hooks/chat mirroring are not included; authenticated account validation is a separate check.
+
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.22.0] - 2026-10-11

@@ -1,0 +1,18 @@
+{
+  "name": "kinitro-ai-codex",
+  "version": "0.1.0",
+  "description": "Connect Codex to kinitro.ai via MethOS MCP and load the selected domain agent's briefing through the kinitro skill.",
+  "author": {
+    "name": "Thorsten Hornung / kinitro consulting"
+  },
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "kinitro.ai for Codex",
+    "shortDescription": "MethOS MCP connection and domain-agent briefing",
+    "developerName": "kinitro consulting",
+    "defaultPrompt": [
+      "Use kinitro to connect this conversation to my domain."
+    ]
+  }
+}

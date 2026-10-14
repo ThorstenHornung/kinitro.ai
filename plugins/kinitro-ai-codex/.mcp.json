@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "kinitro_ai": {
+      "type": "http",
+      "url": "https://methos.kinitro.ai/mcp",
+      "oauth": {
+        "clientId": "https://raw.githubusercontent.com/ThorstenHornung/kinitro.ai/codex/kinitro-ai-plugin/plugins/kinitro-ai-codex/oauth/client.json",
+        "callbackUrl": "http://127.0.0.1:33419/callback",
+        "callbackPort": 33419
+      }
+    }
+  }
+}
