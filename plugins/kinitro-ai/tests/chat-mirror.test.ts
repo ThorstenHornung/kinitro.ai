@@ -69,3 +69,62 @@ describe('turn.complete raised through the engine', () => {
     expect('promptFrom' in calls[0]!.args).toBe(false)
   })
 })
+
+describe('prompt.submit raised through the engine (rule P3, P4, P5)', () => {
+  // A terminal handler lets the test raise prompt.submit with an origin and an agent id, as the engine does.
+  const mk = (on: any) => {
+    on('turn.complete', async () => ({ text: '' }))
+    on('prompt.submit', async (_$: any, e: any) => ({ text: e.text }))
+    return makeWorld(on, { files: new Map([['/w/b/.kinitro-ai-domain', 'beta\n']]), cwd: '/w/b', root: '/w/b', sid: 'S9' })
+  }
+  const done = { reason: 'answer', durationMs: 1, isAborted: false } as const
+  const submit = ($: any, text: string, origin?: { kind: string }, agentId?: string) =>
+    $.prompt.submit({ text, ...(origin ? { origin } : {}), ...(agentId ? { agentId } : {}) } as any)
+  const appends = (w: ReturnType<typeof makeWorld>) => w.sent.filter((s) => s.verb === 'mirror-messaging' && s.args.action === 'append')
+  test('a typed prompt then a task notification in one turn: one append with the typed prompt', async ($, on) => {
+    const w = mk(on)
+    await probe($, 'reload')
+    await submit($, 'typed words', { kind: 'composer' })
+    await submit($, 'a notice text', { kind: 'task-notification' })
+    await $.turn.complete({ ...done, turnId: 'e1', answer: 'ans1' } as any)
+    const c = appends(w)
+    expect(c.length).toBe(1)
+    expect(c[0]!.args).toMatchObject({ prompt: 'typed words', answer: 'ans1', turnId: 'e1' })
+  })
+  test('a turn that holds only a notice: the answer is stored with an empty prompt', async ($, on) => {
+    const w = mk(on)
+    await probe($, 'reload')
+    await submit($, 'wake up', { kind: 'scheduled-trigger' })
+    await $.turn.complete({ ...done, turnId: 'e2', answer: 'ans2' } as any)
+    const c = appends(w)
+    expect(c.length).toBe(1)
+    expect(c[0]!.args).toMatchObject({ prompt: '', answer: 'ans2' })
+    expect(JSON.stringify(c[0]!.args)).not.toContain('wake up')
+  })
+  test('a prompt from another agent is sent with promptFrom agent', async ($, on) => {
+    const w = mk(on)
+    await probe($, 'reload')
+    await submit($, 'hello from a peer', { kind: 'peer' })
+    await $.turn.complete({ ...done, turnId: 'e3', answer: 'ans3' } as any)
+    expect(appends(w)[0]!.args).toMatchObject({ prompt: 'hello from a peer', promptFrom: 'agent', answer: 'ans3' })
+  })
+  test('a sub agent prompt is not kept; a prompt with no origin counts as the person', async ($, on) => {
+    const w = mk(on)
+    await probe($, 'reload')
+    await submit($, 'sub agent prompt', { kind: 'composer' }, 'agent-x')
+    await submit($, 'engine without origin')
+    await $.turn.complete({ ...done, turnId: 'e4', answer: 'ans4' } as any)
+    const c = appends(w)
+    expect(c.length).toBe(1)
+    expect(c[0]!.args).toMatchObject({ prompt: 'engine without origin', answer: 'ans4' })
+  })
+  test('the log carries the origin kind and class but never the prompt text', async ($, on) => {
+    const w = mk(on)
+    await probe($, 'reload')
+    await submit($, 'SECRETWORDS-123', { kind: 'composer' })
+    await $.turn.complete({ ...done, turnId: 'e5', answer: 'ans5' } as any)
+    const log = w.files.get('/w/b/kinitro-ai.log') ?? ''
+    expect(log).toContain('origin=composer class=person')
+    expect(log.includes('SECRETWORDS-123')).toBe(false)
+  })
+})

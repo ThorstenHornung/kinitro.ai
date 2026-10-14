@@ -12,7 +12,7 @@ All notable changes to the `kinitro-ai` plugin are listed here. The format follo
 - Needs the server of item 4.2.1-3536 part 1 (the verb argument `promptFrom`); an older server would store another agent's prompt as the person's.
 
 ### Tests
-- `tests/chat-mirror.test.ts`: `classifyOrigin` for all 16 kinds, unknown kind, no kind; `planTurn` for notices, tool-call turns, another agent's message, two prompts in one turn; `turn.complete` of a sub agent queues nothing and a main agent turn without prompt sends the answer alone. The cases that need the engine to raise `prompt.submit` with an `origin` are not in the suite (the test kit cannot set an origin); the live proof covers them.
+- `tests/chat-mirror.test.ts`: `classifyOrigin` for all 16 kinds, unknown kind, no kind; `planTurn` for notices, tool-call turns, another agent's message, two prompts in one turn; `turn.complete` of a sub agent queues nothing and a main agent turn without prompt sends the answer alone. The `prompt.submit` handler runs through the test kit with an `origin` and an `agentId` (a terminal handler registered on `prompt.submit`): a typed prompt followed by a notice in one turn, a turn that holds only a notice, a prompt from another agent, a sub agent prompt and a prompt with no origin, and the log carrying kind and class but never the prompt text.
 
 ## [0.22.0] - 2026-10-11
 
