@@ -6,9 +6,22 @@ Authenticate the plugin-provided kinitro_ai server in Codex's MCP connection UI;
 
 For a standalone CLI connection (an alternative to the plugin, not a duplicate server):
 
+Merge this server entry into your existing ~/.codex/config.toml, preserving other settings:
+
+```toml
+[mcp_servers.kinitro_ai]
+url = "https://methos.kinitro.ai/mcp"
+
+[mcp_servers.kinitro_ai.oauth]
+client_id = "https://raw.githubusercontent.com/ThorstenHornung/kinitro.ai/codex/kinitro-ai-plugin/plugins/kinitro-ai-codex/oauth/client.json"
+callback_url = "http://127.0.0.1:33419/callback"
+callback_port = 33419
+```
+
+Then authenticate:
+
 ```powershell
-codex mcp add kinitro_ai --url https://methos.kinitro.ai/mcp --oauth-client-id https://raw.githubusercontent.com/ThorstenHornung/kinitro.ai/codex/kinitro-ai-plugin/plugins/kinitro-ai-codex/oauth/client.json
-codex -c 'mcp_servers.kinitro_ai.oauth.callback_url="http://127.0.0.1:33419/callback"' -c 'mcp_servers.kinitro_ai.oauth.callback_port=33419' mcp login kinitro_ai --scopes methos,offline_access
+codex mcp login kinitro_ai --scopes methos,offline_access
 ```
 
 Codex owns PKCE, callback listener, token storage and renewal. Never ask for pasted tokens. Public discovery advertises published client metadata and issuer-bound authorization, but not DCR or token auth method none. Explicitly naming the published Codex client avoids assuming automatic registration works. Successful sign-in still depends on provider acceptance and user consent.
@@ -17,7 +30,7 @@ For invalid-client/redirect errors, preserve the error and displayed client/redi
 
 Tools absent: check installation, authentication and new-conversation activation. An approved domain without a default agent is a platform setup gap. Missing briefing is a separate gap, not an initialized session.
 
-See the [repository guide](https://github.com/ThorstenHornung/kinitro.ai/blob/main/docs/codex-plugin.md).
+See the [repository guide](https://github.com/ThorstenHornung/kinitro.ai/blob/codex/kinitro-ai-plugin/docs/codex-plugin.md).
 
 ### Fixed callback constraint
 

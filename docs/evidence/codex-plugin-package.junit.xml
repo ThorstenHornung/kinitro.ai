@@ -1,0 +1,11 @@
+<testsuite name="kinitro-ai-codex-package" tests="9" failures="0">
+  <testcase name="manifest-and-resources" />
+  <testcase name="methos-oauth-connection" />
+  <testcase name="published-client-metadata" />
+  <testcase name="counterprobe-wrong-callback" />
+  <testcase name="marketplace-path" />
+  <testcase name="skill-and-reference" />
+  <testcase name="counterprobe-wrong-resource" />
+  <testcase name="counterprobe-claude-client" />
+  <testcase name="codex-install-and-mcp-discovery" />
+</testsuite>

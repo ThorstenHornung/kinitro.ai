@@ -20,7 +20,7 @@
 
 | Path | What it is |
 |---|---|
-| `plugins/kinitro-ai/` | The Claude Code plugin `kinitro-ai` (version 0.12.0). It briefs your agent from kinitro.ai and mirrors each conversation turn into your domain. |
+| `plugins/kinitro-ai/` | The Claude Code plugin `kinitro-ai` (version 0.22.0). It briefs your agent from kinitro.ai and mirrors each conversation turn into your domain. |
 | `plugins/kinitro-ai-codex/` | The Codex plugin (0.1.0): MethOS MCP connection and the kinitro domain/briefing skill. See [Codex setup](docs/codex-plugin.md). |
 | `.agents/plugins/marketplace.json` | The Codex marketplace entry. |
 | `.claude-plugin/marketplace.json` | The marketplace entry that lets Claude Code install the plugin. |

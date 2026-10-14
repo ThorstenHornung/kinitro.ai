@@ -27,9 +27,22 @@ Read-only discovery on 2026-10-14 confirmed the methos resource scope, PKCE S256
 
 A CLI-only alternative for MCP without the plugin:
 
+Merge this server entry into your existing ~/.codex/config.toml, preserving other settings:
+
+```toml
+[mcp_servers.kinitro_ai]
+url = "https://methos.kinitro.ai/mcp"
+
+[mcp_servers.kinitro_ai.oauth]
+client_id = "https://raw.githubusercontent.com/ThorstenHornung/kinitro.ai/codex/kinitro-ai-plugin/plugins/kinitro-ai-codex/oauth/client.json"
+callback_url = "http://127.0.0.1:33419/callback"
+callback_port = 33419
+```
+
+Then authenticate:
+
 ```powershell
-codex mcp add kinitro_ai --url https://methos.kinitro.ai/mcp --oauth-client-id https://raw.githubusercontent.com/ThorstenHornung/kinitro.ai/codex/kinitro-ai-plugin/plugins/kinitro-ai-codex/oauth/client.json
-codex -c 'mcp_servers.kinitro_ai.oauth.callback_url="http://127.0.0.1:33419/callback"' -c 'mcp_servers.kinitro_ai.oauth.callback_port=33419' mcp login kinitro_ai --scopes methos,offline_access
+codex mcp login kinitro_ai --scopes methos,offline_access
 ```
 
 Choose one connection path to avoid duplicate servers. Preserve login errors for diagnosis; do not reuse Claude tokens or disable authentication checks.
