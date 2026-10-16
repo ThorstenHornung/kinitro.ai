@@ -56,7 +56,7 @@ All instruction texts live in kinitro.ai and are edited by the domain owner. The
 |---|---|
 | First message of a conversation, and again after each compaction | Persona and Working rules |
 | First prompt of a session | Session start |
-| Every prompt | A one-line marker, the Every turn section, the agent's todo list (short form: one line of at most 160 characters per todo; the full text at the first turn, after a compaction and when the list changed) and a reminder to update it |
+| Every prompt | A one-line marker, the Every turn section, the agent's todo list (short form: one line of at most 160 characters per todo; the full text at the first turn, after a compaction and when the list changed) and a reminder to update it; at the first turn and after a compaction also the last 5 turns of the agent's chat |
 | First prompt and after a compaction | The agent's notes and a map of its memory topics |
 | Context window reaches 70 % (and again every 5 points more) | Context nearly full |
 | First prompt after a compaction | After compaction |

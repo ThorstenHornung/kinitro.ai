@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'claude-code/testing'
-import { contextReminder, parseTodos, todoAgeMs, todoBlock, todoListHash, todoPushLine, todoShortList } from '../hooks/register'
+import { chatTailBlock, contextReminder, parseTodos, todoAgeMs, todoBlock, todoListHash, todoPushLine, todoShortList } from '../hooks/register'
 import { makeWorld, probe } from './world'
 
 // 0.23.1 (PO 2026-10-16): a short todo list every prompt, the full text only when due, and a push line with the housekeeping counts
@@ -206,5 +206,48 @@ describe('compaction cycle (review of the agent 101 draft)', () => {
     await compact($)
     ctx.pct = 72; ctx.turns = 6; await $.prompt.submit({ text: 'd' } as any)
     expect(seen[3]).toContain('FULL-TEXT')
+  })
+})
+
+describe('chat tail at session start and after compaction (PO 2026-10-16)', () => {
+  const msgs = (n: number, len = 50) => Array.from({ length: n }, (_, i) => ({ speaker: i % 2 ? 'agent' : 'user', createdAtUtc: `2026-10-16T0${i % 10}:00:00Z`, body: `m${i} ` + 'z'.repeat(len) }))
+  test('who, time, text; the last 10 messages; each cut at 600; the block at about 6,000; the closing line', async () => {
+    const b = chatTailBlock(msgs(14))!
+    const lines = b.split('\n')
+    expect(lines.length).toBe(12)
+    expect(lines[1]).toMatch(/^- user, 2026-10-16 04:00: m4 z+$/)
+    expect(lines[11]).toBe('Earlier turns: read-chat-tail (more turns) if the context needs it.')
+    const big = chatTailBlock(msgs(10, 2000))!
+    expect(big.length).toBeLessThanOrEqual(6000)
+    expect(big).toContain('z'.repeat(596) + ' [...]')
+    expect(big).not.toContain('z'.repeat(601))
+    expect(chatTailBlock([])).toBe(undefined)
+  })
+  const mk = (on: any, ctx: { turns: number; fail?: boolean }, seen: string[]) => {
+    on('session.turns', async () => ({ value: ctx.turns }))
+    on('prompt.submit', async (_$: any, e: any) => { seen.push((e.context ?? []).join('\n\n')); return { text: e.text } })
+    on('session.compact', async (_$: any, e: any) => ({ messages: e.messages.slice(-1), tokensBefore: 10, tokensAfter: 1 }))
+    return makeWorld(on, { files: new Map([['/w/b/.kinitro-ai-domain', 'beta\n']]), cwd: '/w/b', root: '/w/b', sid: 'S10',
+      verbs: { 'read-chat-tail': () => ctx.fail ? { result: JSON.stringify({ status: 'error', error: 'chat_no_active_chapter' }) } : { result: JSON.stringify({ status: 'ok', messages: msgs(4) }) } } })
+  }
+  test('present at the first turn and after compaction, absent on normal turns', async ($, on) => {
+    const seen: string[] = [], ctx = { turns: 0 }
+    mk(on, ctx, seen)
+    await probe($, 'reload')
+    await $.prompt.submit({ text: 'a' } as any)
+    ctx.turns = 3; await $.prompt.submit({ text: 'b' } as any)
+    await ($ as any).session.compact({ trigger: 'auto', messages: [{ role: 'user', text: 'a', toolUses: [] }, { role: 'assistant', text: 'b', toolUses: [] }] })
+    ctx.turns = 4; await $.prompt.submit({ text: 'c' } as any)
+    expect(seen[0]).toContain('Earlier turns: read-chat-tail (more turns) if the context needs it.')
+    expect(seen[1]).not.toContain('read-chat-tail (more turns)')
+    expect(seen[2]).toContain('- agent, 2026-10-16 01:00: m1 ')
+  })
+  test('a failed read is skipped silently and logged', async ($, on) => {
+    const seen: string[] = [], ctx = { turns: 0, fail: true }
+    const w = mk(on, ctx, seen)
+    await probe($, 'reload')
+    await $.prompt.submit({ text: 'a' } as any)
+    expect(seen[0]).not.toContain('read-chat-tail (more turns)')
+    expect(w.files.get('/w/b/kinitro-ai.log')).toMatch(/chat tail skipped: .*chat_no_active_chapter/)
   })
 })

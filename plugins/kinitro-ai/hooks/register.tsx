@@ -15,6 +15,11 @@ const TODO_MAX_ITEMS = 10          // more open todos than this are named in the
 const TODO_MAX_ITEM_CHARS = 400    // a todo text longer than this is named in the push line
 const TODO_TURN_LINE_CHARS = 160   // the short per-turn list shows this many chars of each todo
 
+// Chat tail (0.23.1, PO 2026-10-16): at session start and after compaction the last turns of the agent's chat (read-chat-tail)
+const CHAT_TAIL_TURNS = 5          // turns (a turn = the prompt and the answer: two messages)
+const CHAT_TAIL_MSG_CHARS = 600    // each message is cut to this
+const CHAT_TAIL_BLOCK_CHARS = 6000 // the whole block stays about this size: the oldest messages go first
+
 const SERVER = 'kinitro_ai'
 // Everything is resolved from the seat (current-seat): no domain codes are hard-wired.
 const GENERAL_EDGE = 'general-procedures'                 // association edge from the domain node to the general library section
@@ -782,6 +787,18 @@ export function contextReminder(pct: number): string {
   return `Context ${pct} % (compaction at about 80 %): the "${S.full}" steps you got earlier in this cycle are still due if you have not done them.`
 }
 
+// pure: the chat tail block: who, time, text; each message cut, the oldest dropped until the block fits; undefined when empty
+export type ChatMsg = { speaker?: string; createdAtUtc?: string; body?: string }
+export function chatTailBlock(messages: ChatMsg[]): string | undefined {
+  const lines = messages.filter((m) => String(m?.body ?? '').trim())
+    .slice(-CHAT_TAIL_TURNS * 2)
+    .map((m) => `- ${m.speaker ?? 'unknown'}, ${String(m.createdAtUtc ?? '?').slice(0, 16).replace('T', ' ')}: ${cutLine(String(m.body), CHAT_TAIL_MSG_CHARS)}`)
+  const head = `Your last ${CHAT_TAIL_TURNS} turns in your kinitro.ai chat (oldest first; for context, not new tasks):`
+  const tail = 'Earlier turns: read-chat-tail (more turns) if the context needs it.'
+  while (lines.length && [head, ...lines, tail].join('\n').length > CHAT_TAIL_BLOCK_CHARS) lines.shift()
+  return lines.length ? [head, ...lines, tail].join('\n') : undefined
+}
+
 // pure: identity of a list's text
 export function todoListHash(text: string): string {
   let h = 5381
@@ -809,6 +826,17 @@ async function readSet($: any, type: string): Promise<string | undefined> {
     const r = await mcp($, 'load-node-content', { nodeCode: briefing.agentCode, contentTypeCode: type })
     return r?.contentTypeCode === type ? (r.body as string | undefined) : undefined   // the verb may answer with another row when the set does not exist
   } catch (err: any) { await log($, `read ${type} failed: ${err?.message ?? err}`); return undefined }
+}
+
+// the last turns of the agent's chat; skipped silently (logged) when there is no chat or the read fails
+async function chatTail($: any): Promise<string | undefined> {
+  try {
+    const r = await mcp($, 'read-chat-tail', { count: CHAT_TAIL_TURNS * 2 })
+    if (r?.status !== 'ok') throw new Error(JSON.stringify(r).slice(0, 200))
+    const block = chatTailBlock(Array.isArray(r?.messages) ? r.messages : [])
+    if (!block) await log($, 'chat tail: no messages')
+    return block
+  } catch (err: any) { await log($, `chat tail skipped: ${String(err?.message ?? err).slice(0, 300)}`); return undefined }
 }
 
 async function topicMap($: any): Promise<string | undefined> {
@@ -1113,6 +1141,7 @@ export const register: Register = (on) => {
       if (startOrAfter) {
         const notes = await readSet($, 'memory-notes')
         if (notes && notes.split('\n').some((l) => l.startsWith('- '))) { blocks.push(`${tag}Your notes (scratchboard; migrate durable facts to topics at the checkpoint):\n${notes.trim()}`); injected.push('Notes') }
+        if (!needsDomain) { const tail = await chatTail($); if (tail) { blocks.push(`${tag}${tail}`); injected.push(`Chat tail ${tail.length}`) } }
         const map = await topicMap($)
         if (map) { blocks.push(`${tag}Your memory topics (map; read a topic with search-memory or load-node-content when you need it):\n${map}`); injected.push('Topic map') }
       }

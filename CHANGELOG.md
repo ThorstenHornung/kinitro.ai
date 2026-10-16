@@ -9,9 +9,10 @@ All notable changes to the `kinitro-ai` plugin are listed here. The format follo
 - Housekeeping without deleting: the push line names todos older than 7 days, more than 10 open todos and todos over 400 characters, and asks to shorten or archive them. The limits are constants at the top of `hooks/register.tsx`.
 - After a compaction Persona and Working rules are injected again together with After compaction (review of the agent 101 draft).
 - Context nearly full is injected once per compaction cycle, at the first threshold (70 %); at 75 % and 80 % only a one-line reminder follows.
+- At the first turn and after a compaction the last 5 turns of the agent's chat come with the start package (`read-chat-tail` with `count` 10; who, time, text; each message cut at 600 characters, the block at about 6,000), ending with "Earlier turns: read-chat-tail (more turns) if the context needs it." No chat or a failed read: skipped and logged (PO 2026-10-16).
 
 ### Tests
-- `tests/todo-housekeeping.test.ts`: parsing, short form, push line with counts, stamps without a year, every todo text kept in the full block, and through `prompt.submit`: full at the first turn, short while the list stays, full after a change and after a compaction, the hash persisted and read after a restart, the push line on an empty list; Persona and Working rules after a compaction; Context nearly full once per cycle.
+- `tests/todo-housekeeping.test.ts`: parsing, short form, push line with counts, stamps without a year, every todo text kept in the full block, and through `prompt.submit`: full at the first turn, short while the list stays, full after a change and after a compaction, the hash persisted and read after a restart, the push line on an empty list; Persona and Working rules after a compaction; Context nearly full once per cycle; the chat tail at the first turn and after a compaction, not on other turns, with its caps, and a failed read skipped and logged.
 
 ## [0.23.0] - 2026-10-14
 
