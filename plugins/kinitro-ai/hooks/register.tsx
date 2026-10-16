@@ -105,6 +105,8 @@ let commentSid = ''          // in which session
 // todo list: hash of the list at its last FULL injection and in which session (persisted in STATE_FILE)
 let todoHash = ''
 let todoSid = ''
+// chat mirroring switch (PO 2026-10-16): off = no mirror-messaging call at all; persisted in STATE_FILE as mirror 'on'|'off', absent = on
+let mirrorOff = false
 const logLines: string[] = []
 
 // ---- band state (host-held, survives module reloads) ----------------------
@@ -506,13 +508,41 @@ async function readState($: any) {
     compactions = st.compactions ?? 0; contextRenders = st.contextRenders ?? 0
     commentKey = st.commentKey ?? ''; commentInjectedAt = st.commentInjectedAt ?? 0; commentSid = st.commentSid ?? ''
     todoHash = st.todoHash ?? ''; todoSid = st.todoSid ?? ''
+    mirrorOff = st.mirror === 'off'
   } catch (err: any) { await log($, `state read failed: ${err?.message ?? err}`) }
 }
 
 async function writeState($: any) {
   try {
-    await $.fs.write(await at($, STATE_FILE), JSON.stringify({ testArmed, warnedAt, compactedPending, compactions, contextRenders, commentKey, commentInjectedAt, commentSid, todoHash, todoSid }))
+    await $.fs.write(await at($, STATE_FILE), JSON.stringify({ testArmed, warnedAt, compactedPending, compactions, contextRenders, commentKey, commentInjectedAt, commentSid, todoHash, todoSid, mirror: mirrorOff ? 'off' : 'on' }))
   } catch { /* ignore */ }
+}
+
+// the mirroring switch, read from STATE_FILE at every use (survives reloads; absent file or field = on)
+async function mirrorEnabled($: any): Promise<boolean> {
+  try {
+    const f = await at($, STATE_FILE)
+    mirrorOff = (await $.fs.exists(f)) ? JSON.parse(await $.fs.read(f)).mirror === 'off' : false
+  } catch { /* keep the last known value */ }
+  return !mirrorOff
+}
+
+// probe mirror on|off: off stops every mirror-messaging call; on resumes from the next turn, with no backfill:
+// turns left unsent in the outbox are marked skipped and the inbox cursor is dropped (the next fetch starts from now)
+async function setMirror($: any, enable: boolean) {
+  await readState($)
+  const was = !mirrorOff
+  mirrorOff = !enable
+  await writeState($)
+  if (enable && !was) {
+    const box = await readJson<OutEntry[]>($, OUTBOX_FILE, [])
+    let skipped = 0
+    for (const o of box) if (!o.sent) { o.sent = true; o.result = 'skipped: mirroring was off'; skipped++ }
+    if (skipped) await $.fs.write(await at($, OUTBOX_FILE), JSON.stringify(box))
+    const inbox = await readJson<{ cursor?: string; messages: unknown[] }>($, INBOX_FILE, { messages: [] })
+    if (inbox.cursor) { delete inbox.cursor; await $.fs.write(await at($, INBOX_FILE), JSON.stringify(inbox)) }
+    await log($, `chat mirroring on (${skipped} unsent turns skipped, inbox cursor reset)`)
+  } else await log($, `chat mirroring ${enable ? 'on' : 'off'}`)
 }
 
 // refresh from kinitro.ai once the connector is up (session.start timer)
@@ -572,7 +602,7 @@ function cut(t: string): string { return t.length > MAX_TEXT ? t.slice(0, MAX_TE
 
 // send every unsent outbox entry; keep at most BOX_MAX entries (oldest sent ones go first)
 async function flushOutbox($: any) {
-  if (flushing) return
+  if (flushing || !(await mirrorEnabled($))) return
   flushing = true
   try {
     const box = await readJson<OutEntry[]>($, OUTBOX_FILE, [])
@@ -597,7 +627,7 @@ async function flushOutbox($: any) {
 }
 
 async function queueTurn($: any, planned: { turnId: string; prompt: string; promptFrom?: 'agent'; answer: string }[]) {
-  if (planned.length === 0) return
+  if (planned.length === 0 || !(await mirrorEnabled($))) return   // off: nothing is queued, so nothing is sent later
   let sid = ''
   try { sid = await $.session.id() } catch { /* ignore */ }
   const box = await readJson<OutEntry[]>($, OUTBOX_FILE, [])
@@ -610,7 +640,7 @@ async function queueTurn($: any, planned: { turnId: string; prompt: string; prom
 
 // new chat messages since the stored cursor (a first fetch without cursor starts from now)
 async function fetchInbox($: any) {
-  if (fetching || !domainRef) return
+  if (fetching || !domainRef || !(await mirrorEnabled($))) return
   fetching = true
   try {
     let sid = ''
@@ -677,6 +707,7 @@ async function statusText($: any): Promise<string> {
     `todos: full text when the list changes (last full ${todoHash || '-'}); limits ${TODO_MAX_ITEMS} items, ${TODO_MAX_AGE_DAYS} days, ${TODO_MAX_ITEM_CHARS} chars; ${TODO_TURN_LINE_CHARS} chars per line otherwise`,
     `test armed: ${testArmed} · compactions seen: ${compactions} · post-compact pending: ${compactedPending}`,
     `ui comments: ${openComments.length}${commentsTruncated ? '+' : ''} open (last check ${lastCommentCheck}, last told ${commentInjectedAt ? new Date(commentInjectedAt).toISOString() : '-'}${lastCommentError ? ', last error: ' + lastCommentError : ''})`,
+    `Chat mirroring: ${(await mirrorEnabled($)) ? 'on' : 'off'}`,
     `chat mirror: ${mirrorSent} turns sent, ${mirrorDup} already present, agent ${lastMirrorTarget}${lastMirrorError ? ' · last error: ' + lastMirrorError : ''} · inbox ${inboxNew} new since start, last fetch ${lastFetch}`,
   ].join('\n')
 }
@@ -958,8 +989,8 @@ export const register: Register = (on) => {
     try {
       await $.tool.register({
         name: 'probe',
-        description: 'kinitro-ai harness control. action "status" (default): diagnostics; "comments": check the open UI comments of the bound domain now and return them with the check time; "test-mode" with value on|off: refresh the instructions every 2 minutes instead of daily; "selection-start": remember the approved domains and return the selection page address (call before the user chooses on that page); "selection-done": compare with that list and bind the newly approved domain, or return the list to ask from; "set-domain" with domain "<slug>": bind this session to a kinitro.ai domain (slug from list-domains) and reload; "reload": re-read the briefing from kinitro.ai; "arm-test": inject EVERY briefing section, conditional ones included, into the next user prompt, marked [TEST]; "invalidate-context": re-render the first-message context block (persona) on the next request.',
-        inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['status', 'comments', 'test-mode', 'choices', 'open-domain', 'selection-start', 'selection-done', 'set-domain', 'reload', 'arm-test', 'invalidate-context'] }, domain: { type: 'string', description: 'domain slug for set-domain, e.g. verum' }, value: { type: 'string', enum: ['on', 'off'], description: 'for test-mode' } } },
+        description: 'kinitro-ai harness control. action "status" (default): diagnostics; "comments": check the open UI comments of the bound domain now and return them with the check time; "test-mode" with value on|off: refresh the instructions every 2 minutes instead of daily; "mirror" with value on|off: switch the chat mirror into the kinitro.ai chat of the agent on or off (default on; off sends and fetches nothing, on resumes from the next turn without backfill); "selection-start": remember the approved domains and return the selection page address (call before the user chooses on that page); "selection-done": compare with that list and bind the newly approved domain, or return the list to ask from; "set-domain" with domain "<slug>": bind this session to a kinitro.ai domain (slug from list-domains) and reload; "reload": re-read the briefing from kinitro.ai; "arm-test": inject EVERY briefing section, conditional ones included, into the next user prompt, marked [TEST]; "invalidate-context": re-render the first-message context block (persona) on the next request.',
+        inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['status', 'comments', 'test-mode', 'mirror', 'choices', 'open-domain', 'selection-start', 'selection-done', 'set-domain', 'reload', 'arm-test', 'invalidate-context'] }, domain: { type: 'string', description: 'domain slug for set-domain, e.g. verum' }, value: { type: 'string', enum: ['on', 'off'], description: 'for test-mode and mirror' } } },
       })
     } catch (err: any) { await log($, `tool.register failed: ${err?.message ?? err}`) }
     return next(e)
@@ -1013,6 +1044,7 @@ export const register: Register = (on) => {
     }
     if (action === 'reload') { needsDomain = undefined; await loadBriefing($) }
     if (action === 'test-mode') { const enable = String(e.value ?? 'on') !== 'off'; await update($, testModeA, () => enable); await log($, `test mode ${enable ? 'on' : 'off'}`) }
+    if (action === 'mirror') await setMirror($, String(e.value ?? 'on') !== 'off')
     if (action === 'arm-test') { testArmed = true; await writeState($) }
     if (action === 'invalidate-context') $.ui.invalidate('prompt.context')
     const res = `action: ${action}\n${await statusText($)}`
@@ -1093,7 +1125,7 @@ export const register: Register = (on) => {
       ].join('\n'))
       injected.push('Domain missing')
     }
-    if (!needsDomain && domainRef) {
+    if (!needsDomain && domainRef && await mirrorEnabled($)) {
       await flushOutbox($)
       await fetchInbox($)
       const msgs = await takeInbox($)

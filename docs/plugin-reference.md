@@ -117,7 +117,7 @@ The plugin keeps its files in the session's **home folder** (see [Choosing the d
 | `~/.kinitro-ai/sessions/<session id>.json` | The session record: home folder and domain. | Yes, after the session has ended. In a running session the domain is then taken from the folder default again. |
 | `.kinitro-ai-domain.<session id>` | Written up to 0.19.x. Read once to take over an older session's domain. | Yes. |
 | `.kinitro-ai-domain` | The folder default: the last slug chosen in this folder. | Yes. |
-| `.kinitro-ai-state.json` | Hook state: test flag, last context warning, compaction flag, counters. | Yes. Counters restart. |
+| `.kinitro-ai-state.json` | Hook state: test flag, chat mirroring switch (`mirror`), last context warning, compaction flag, counters. | Yes. Counters restart. |
 | `.kinitro-ai-outbox.json` | Turns not yet confirmed by kinitro.ai (prompt and answer text). At most 200 entries. | Yes, but unsent turns are lost. |
 | `.kinitro-ai-inbox.json` | New messages fetched from the agent's chat, and the fetch cursor. | Yes. |
 
@@ -143,11 +143,12 @@ The status is shown by `probe` with action `status`:
 - what was injected into the last prompt;
 - test flag, compactions seen, post-compaction flag;
 - ui comments: how many are open, last check, last time the agent was told, last error;
+- `Chat mirroring: on` or `off` (the switch, see [The chat mirror](#the-chat-mirror));
 - chat mirror: turns sent, already present, agent, last error, new inbox messages, last fetch.
 
 ## The `probe` tool
 
-The agent can call `probe` with one of ten actions. All but `comments`, `choices`, `open-domain`, `selection-*` and `set-domain` return the same status text.
+The agent can call `probe` with one of twelve actions. All but `comments`, `choices`, `open-domain`, `selection-*` and `set-domain` return the same status text.
 
 | Action | Effect |
 |---|---|
@@ -158,6 +159,8 @@ The agent can call `probe` with one of ten actions. All but `comments`, `choices
 | `selection-start` | Remembers the approved domains and returns the address of the selection page. |
 | `selection-done` | Binds the domain approved since `selection-start`, or returns the list to ask from. |
 | `set-domain` | With `domain: "<slug>"`: binds this session to that domain, stores the slug in the session record and in `.kinitro-ai-domain` and reloads. |
+| `test-mode` | With `value: "on"` or `"off"`: refreshes the instructions every 2 minutes instead of daily. |
+| `mirror` | With `value: "on"` or `"off"`: switches the chat mirror on or off (default on). See [The chat mirror](#the-chat-mirror). |
 | `reload` | Reads the briefing again from kinitro.ai. |
 | `arm-test` | The next prompt receives every section once, marked `[TEST]`, including the ones that normally appear only at certain moments. The Compaction instruction is shown too, although it normally goes only to the summarizer. Use it to verify the setup. |
 | `invalidate-context` | Renders the first-message context block (persona and working rules) again on the next request. |
@@ -174,6 +177,7 @@ The plugin sends what you typed, what another agent sent to this session and the
 - Every 60 seconds and at each prompt the plugin fetches new messages from that chat (`mirror-messaging` action `fetch` with a stored cursor). It stores them in `.kinitro-ai-inbox.json` and tells the agent at the next prompt, in the block "New messages in your kinitro.ai chat".
 - No protocol document is created or appended any more, and there is no compaction line. Protocol documents written by older versions stay where they are.
 - Mirroring is a script call and costs no model tokens.
+- **Switch:** `probe` action `mirror` with `value: "off"` stops the mirror: no `mirror-messaging` call at all (no append at the end of a turn, no fetch at a prompt, every 60 seconds or after a session start), and turns are not queued. `value: "on"` resumes from the next turn without backfill: turns left unsent are marked skipped and the inbox cursor is dropped, so messages written in the chat while it was off are not fetched. The default is on; the flag (`mirror`) is kept in `.kinitro-ai-state.json` and survives restarts. `probe status` shows `Chat mirroring: on` or `off`. No tenant or agent setting can require mirroring yet.
 
 ## Todo list
 
