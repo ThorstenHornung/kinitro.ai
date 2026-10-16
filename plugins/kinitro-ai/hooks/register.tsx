@@ -3,7 +3,8 @@ import type { Register } from 'claude-code'
 import type { DomainChoice } from '../types'
 
 // kinitro-ai harness for Claude. All instruction TEXTS live in kinitro.ai; this file only decides WHEN
-// each section is injected. Layers G+M: the general briefing behind the domain's general-procedures edge;
+// each section is injected. Layer S (0.23.4): the Agent 101 inside the System instruction every agent of every tenant carries,
+// served by get-briefing; layers G+M: an optional general briefing behind the domain's general-procedures edge, added after S;
 // layer A: the agent node's native instruction-* contents. Nothing is hard-wired to a domain.
 
 // Todo housekeeping (0.23.1, PO 2026-10-16): the full todo list costs about 3,000 tokens on every prompt of a long list.
@@ -36,7 +37,7 @@ const FETCH_MS = 60000
 const MAX_TEXT = 50000     // chars per prompt / answer sent to the chat
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = 'kinitro-ai.log'
-const VERSION = '0.23.3'
+const VERSION = '0.23.4'
 // update notice (PO 2026-10-16): at the first prompt, compare with the published marketplace.json on the download page
 const UPDATE_BASE = 'https://methos.kinitro.ai/download/plugins/claude/'   // the download page; the environment variable KINITRO_AI_DOWNLOAD_BASE overrides it
 const UPDATE_TIMEOUT_MS = 2500
@@ -405,6 +406,33 @@ function viewOfferText(name: string, link: string): string {
 // 0.23.3: the link a person reads. The ?link= payload is no sign-in (the device cookie is); a domain view or node page
 // opens without it for the signed-in person. The pane still gets the full link (it ties the page to this session).
 // Only the seat selector and a single approval need the payload, so their links are shown as they are.
+// 0.23.4 (PO 16.10.2026): the Agent 101 lives once in the System partition, inside the System instruction that every tenant's
+// agents carry (Default System Instruction). get-briefing returns that instruction at its head for any signed-in tenant user;
+// the plugin takes only the block between these markers, never the rest of the composed briefing (layer A stays its own).
+const SYSTEM_101 = /<!-- kinitro-agent-101[^>]*?begin -->([\s\S]*?)<!-- kinitro-agent-101[^>]*?end -->/
+
+/** The Agent 101 block inside a get-briefing text, or undefined when the text carries none. */
+export function system101(text: unknown): string | undefined {
+  const m = typeof text === 'string' ? SYSTEM_101.exec(text) : null
+  const body = m?.[1]?.trim()
+  return body ? body : undefined
+}
+
+/** Adds the domain's optional briefing sections after the System ones: a new title is added; a title the System text already
+ *  has gets the domain body appended, unless every line of it is already in the System body (a copy of the same 101). */
+export function addDomainSections(sections: Record<string, string>, extra: Record<string, string>): number {
+  let added = 0
+  for (const [title, body] of Object.entries(extra)) {
+    const have = sections[title]
+    if (have === undefined) { sections[title] = body; added++; continue }
+    const lines = new Set(have.split('\n').map((l) => l.trim()))
+    if (body.split('\n').every((l) => !l.trim() || lines.has(l.trim()))) continue
+    sections[title] = `${have}\n\n**Domain-specific:**\n${body}`
+    added++
+  }
+  return added
+}
+
 export function readableLink(url: string): string {
   try {
     const u = new URL(url)
@@ -479,7 +507,13 @@ async function loadBriefing($: any) {
     const sections: Record<string, string> = {}
     const layers: string[] = []
     let gCode: string | undefined
-    // Layers G + M: general briefing behind the domain's general-procedures edge
+    // Layer S (0.23.4): the Agent 101 from the System instruction, for every session in every tenant; no edge needed
+    try {
+      const s101 = system101((await mcp($, 'get-briefing', { moment: 'start' }))?.text)
+      if (s101) { Object.assign(sections, parseSections(s101)); layers.push('S system-101') }
+      else await log($, 'system 101 not found: get-briefing carries no kinitro-agent-101 block')
+    } catch (err: any) { await log($, `system 101 failed: ${err?.message ?? err}`) }
+    // Layers G + M (optional): general briefing behind the domain's general-procedures edge, added after layer S
     try {
       const ed = await mcp($, 'list-edges', { nodeCode: domainCode, relation: GENERAL_EDGE, direction: 'outgoing', limit: 5 })
       const target = ed?.edges?.[0]?.node?.code
@@ -488,7 +522,7 @@ async function loadBriefing($: any) {
         const doc = (kids?.nodes ?? []).find((n: any) => String(n.name).startsWith(GENERAL_BRIEFING_PREFIX))
         if (doc) {
           const g = await mcp($, 'load-node-content', { nodeCode: doc.code, contentTypeCode: 'md' })
-          if (g?.body && g?.contentTypeCode === 'md') { Object.assign(sections, parseSections(g.body)); gCode = doc.code; layers.push(`G+M ${doc.code}`) }
+          if (g?.body && g?.contentTypeCode === 'md') { const n = addDomainSections(sections, parseSections(g.body)); gCode = doc.code; layers.push(`G+M ${doc.code} (+${n})`) }
         }
       }
     } catch (err: any) { await log($, `general briefing failed: ${err?.message ?? err}`) }
@@ -505,7 +539,7 @@ async function loadBriefing($: any) {
       layers.push(`A ${A_TYPES[title]}`)
     }
     personaSource = sections[S.persona] ? `${agentCode} instruction-persona` : 'none'
-    if (!Object.keys(sections).length) throw new Error(`no briefing found: no '${GENERAL_EDGE}' edge with a '${GENERAL_BRIEFING_PREFIX}' document on ${domainCode}, and no instruction-* on ${agentCode}`)
+    if (!Object.keys(sections).length) throw new Error(`no briefing found: no Agent 101 from get-briefing, no '${GENERAL_EDGE}' edge with a '${GENERAL_BRIEFING_PREFIX}' document on ${domainCode}, and no instruction-* on ${agentCode}`)
     const raw = Object.entries(sections).map(([k, v]) => `## ${k}\n${v}`).join('\n\n')
     briefing = { raw, sections, code: gCode ?? agentCode, loadedAt: new Date().toISOString(), source: 'kinitro.ai', domainCode, agentCode, domainRef, domainName: dom?.name, agentName: agent?.name, layers: layers.join(', ') }
     briefingError = undefined
