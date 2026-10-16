@@ -382,6 +382,26 @@ async function openDomainView($: any): Promise<string> {
   return openInPane($, url, readableLink(url))
 }
 
+// 0.23.3: the readable link of the bound domain's view, for the offer to open it (no pane opened here).
+async function domainViewLink($: any): Promise<string | undefined> {
+  if (!domainRef) return undefined
+  try {
+    let url: string | undefined
+    try { url = (await mcp($, 'open-page', { target: 'shell' }))?.url } catch (err: any) {
+      if (!String(err?.message ?? err).includes('page_link_bad_target')) throw err
+      url = (await mcp($, 'open-page', {}))?.url
+    }
+    return url ? readableLink(url) : undefined
+  } catch (err: any) { await log($, `domain view link failed: ${err?.message ?? err}`); return undefined }
+}
+
+// 0.23.3 (PO 16.10.2026): new sessions and domain switches OFFER the domain view in the built-in browser; nothing opens
+// until the user says yes. Set at the first turn and after a binding the /kinitro command did not confirm itself.
+let viewOfferPending = false
+function viewOfferText(name: string, link: string): string {
+  return `Offer the user once, in one short sentence at the end of your reply, to open the ${name} domain in the built-in browser, and give this readable link: ${link} . Open it only if the user says yes: \`mcp__kinitro-ai__probe\` with {"action": "open-domain"}.`
+}
+
 // 0.23.3: the link a person reads. The ?link= payload is no sign-in (the device cookie is); a domain view or node page
 // opens without it for the signed-in person. The pane still gets the full link (it ties the page to this session).
 // Only the seat selector and a single approval need the payload, so their links are shown as they are.
@@ -422,8 +442,9 @@ async function bindDomain($: any, slug: string): Promise<string> {
   if (!ok) return `binding ${slug} failed: ${briefingError}`
   await update($, startPackA, () => true)
   try { $.ui.toast(`kinitro.ai: this session works for ${slug}`) } catch { /* ignore */ }
-  const view = await openDomainView($)
-  return `bound to ${slug}; domain view: ${view}`
+  // 0.23.3: no automatic open; the readable link goes back for the offer
+  const view = await domainViewLink($)
+  return `bound to ${slug}; domain view: ${view ?? 'no link'}`
 }
 
 async function loadBriefing($: any) {
@@ -1167,7 +1188,7 @@ export const register: Register = (on) => {
         if (!(await $.fs.exists(f))) continue
         const slug = String(await $.fs.read(f)).trim()
         await $.fs.write(f, '')
-        if (slug) { await bindDomain($, slug); await log($, `pending binding finished for ${slug}`); break }
+        if (slug) { await bindDomain($, slug); viewOfferPending = true; await log($, `pending binding finished for ${slug}`); break }
       }
     } catch (err: any) { await log($, `pending binding failed: ${err?.message ?? err}`) }
     if (briefing && !needsDomain) {
@@ -1233,6 +1254,11 @@ export const register: Register = (on) => {
         if (others.length) { blocks.push(`Shared agent: ${others.length} other Claude session(s) worked with this agent today (${others.join(', ')}). Todos, notes and memory are shared with them. Before acting on a todo you did not start in this session, check its exception line and the notes; tell the user once that another session is active on this agent.`); injected.push('Other sessions') }
       }
       if (startPack) await update($, startPackA, () => false)
+      if (!needsDomain && domainRef && (turns === 0 || viewOfferPending)) {
+        viewOfferPending = false
+        const link = await domainViewLink($)
+        if (link) { blocks.push(viewOfferText(briefing.domainName ?? domainRef, link)); injected.push('Domain view offer') }
+      }
       add('turn', S.turn, '')
       if (compactedPending || testArmed) { add('after', S.after, testArmed ? 'Test' : 'after compaction'); compactedPending = false }
       const full = pct !== undefined && pct >= WARN_PCT && pct >= warnedAt + REWARN_STEP
