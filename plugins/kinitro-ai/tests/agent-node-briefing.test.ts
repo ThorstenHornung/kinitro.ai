@@ -2,8 +2,9 @@ import { expect, test } from 'claude-code/testing'
 import { composeSections, instructionSet, noAgentNodeText } from '../hooks/register'
 import { makeWorld, probe } from './world'
 
-// 0.23.5 (PO 16.10.2026): the bind loads only the agent node's instruction set from get-briefing `instructions`
-// (server rule: AIAgent first, agent node appended; persona: the node's replaces the AIAgent's). No domain edge is read.
+// 0.23.5/0.23.6 (PO 16.10.2026): the bind loads only the agent node's instruction set from get-briefing `instructions`
+// (composed server-side: AIAgent first, then the agent node; persona: the node's replaces the AIAgent's), injected as given.
+// No domain edge is read; no instruction-agent101 entry is expected or cut.
 
 type Slot = { type: string; source: string; text: string }
 const gb = (instructions: Slot[] | undefined) => () => ({ result: JSON.stringify({ status: 'ok', situation: 'ColdStart', text: 'composed', instructions }) })
@@ -37,15 +38,22 @@ test('a type missing on both tiers is left out; the bind holds when another part
   expect(await probe($, 'status')).toContain('persona from none')
 })
 
-test('the Agent 101 opens the briefing; persona replaces, other types are appended to its sections', () => {
+test('each type is injected as given; an instruction-agent101 entry is ignored', () => {
+  const start = 'Expanded Agent 101\n\n## Working rules\n- 101 rule\n\n## Context nearly full\nFULL\n\n## Compaction instruction\nKEEP'
   const set = instructionSet({ instructions: [
-    { type: 'instruction-agent101', source: 'aiagent', text: '## Working rules\n- 101 rule\n\n## Persona\nGeneric' },
+    { type: 'instruction-agent101', source: 'aiagent', text: '## Working rules\n- OLD 101 rule\n\n## Persona\nGeneric' },
     { type: 'instruction-persona', source: 'node', text: 'Jane' },
-    { type: 'instruction-standing', source: 'node', text: '- own rule' }, none('instruction-coldstart')] })!
+    { type: 'instruction-standing', source: 'aiagent+node', text: '- ai rule\n\n- own rule' },
+    { type: 'instruction-coldstart', source: 'aiagent', text: start }, none('instruction-postcompaction')] })!
   const s = composeSections(set, parse)
   expect(s['Persona']).toBe('Jane')
-  expect(s['Working rules']).toBe('- 101 rule\n\n**Agent-specific:**\n- own rule')
-  expect(s['Session start']).toBe(undefined)
+  expect(s['Working rules']).toBe('- ai rule\n\n- own rule')
+  expect(s['Session start']).toBe(start)
+  expect(s['After compaction']).toBe(undefined)
+  expect(s['Context nearly full']).toBe('FULL')
+  expect(s['Compaction instruction']).toBe('KEEP')
+  expect(JSON.stringify(s)).not.toContain('OLD 101 rule')
+  expect(JSON.stringify(s)).not.toContain('Agent-specific')
   expect(instructionSet({ text: 'old api' })).toBe(undefined)
 })
 

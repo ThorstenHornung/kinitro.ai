@@ -24,7 +24,7 @@ Ask your contact to confirm these points:
 
 1. Your account has an agent seat.
 2. The domain has an agent node.
-3. The agent node names an AIAgent that points to the platform instruction templates (including the Agent 101).
+3. The agent node names an AIAgent that points to the platform instruction templates; the Agent 101 reaches the agent through the include tag in the coldstart and postcompaction templates.
 4. The agent node carries its own instructions where it needs more than the AIAgent's.
 
 Points 2 to 4 are explained in the [plugin reference](plugin-reference.md#what-must-be-configured-in-kinitroai). You do not need to do them yourself.

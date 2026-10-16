@@ -213,8 +213,14 @@ describe('todo list through prompt.submit', () => {
 })
 
 describe('compaction cycle (review of the agent 101 draft)', () => {
-  // an Agent 101 with every section, served in the agent node's instruction set (0.23.5)
-  const G = '## Persona\nPERSONA-TEXT\n\n## Working rules\nRULES-TEXT\n\n## Every turn\nTURN-TEXT\n\n## Context nearly full\nFULL-TEXT\n\n## After compaction\nAFTER-TEXT\n\n## Compaction instruction\nKEEP-TEXT'
+  // every section served as given in the agent node's instruction set (0.23.6); the postcompaction text carries the
+  // included Agent 101 with its Context nearly full and Compaction instruction headings
+  const G = [
+    { type: 'instruction-persona', source: 'node', text: 'PERSONA-TEXT' },
+    { type: 'instruction-standing', source: 'aiagent', text: 'RULES-TEXT' },
+    { type: 'instruction-preturn-continue', source: 'aiagent', text: 'TURN-TEXT' },
+    { type: 'instruction-postcompaction', source: 'aiagent', text: 'AFTER-TEXT\n\n## Context nearly full\nFULL-TEXT\n\n## Compaction instruction\nKEEP-TEXT' },
+  ]
   const mk = (on: any, ctx: { pct: number; turns: number }, seen: string[]) => {
     on('session.turns', async () => ({ value: ctx.turns }))
     on('session.usage', async () => ({ value: { context: { percent: ctx.pct } } }))
@@ -223,7 +229,7 @@ describe('compaction cycle (review of the agent 101 draft)', () => {
     return makeWorld(on, {
       files: new Map([['/w/b/.kinitro-ai-domain', 'beta\n']]), cwd: '/w/b', root: '/w/b', sid: 'S8',
       verbs: {
-        'get-briefing': () => ({ result: JSON.stringify({ status: 'ok', instructions: [{ type: 'instruction-agent101', source: 'aiagent', text: G }] }) }),
+        'get-briefing': () => ({ result: JSON.stringify({ status: 'ok', instructions: G }) }),
         'load-node-content': () => ({ result: JSON.stringify({ contentTypeCode: 'other', body: null }) }),
       },
     })

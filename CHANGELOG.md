@@ -2,6 +2,17 @@
 
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.6] - 2026-10-16
+
+### Changed
+- The plugin injects what `get-briefing` `instructions` and the hook templates return, as given. The server composes each type (AIAgent first, then the agent node; the node's persona replaces the AIAgent's; a type missing on both is empty) and expands the Agent 101 through `{{mx:include "<nodeGuid>:<contentType>"}}` in the coldstart and postcompaction templates.
+- Removed: the `instruction-agent101` entry, its `## ` split into sections, the "Agent-specific" append, and the `instruction-agent101` read in the fallback for an API without the instruction set.
+- "Context nearly full" and "Compaction instruction" are read from a `## ` heading of that name inside a given text; the text itself is not changed.
+- Kept: the 0.23.5 refusal for a domain without an agent node.
+
+### Tests
+- `agent-node-briefing` checks the as-given injection and that an `instruction-agent101` entry is ignored; `todo-housekeeping` serves its sections through the coldstart template.
+
 ## [0.23.5] - 2026-10-16
 
 ### Changed

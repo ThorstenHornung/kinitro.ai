@@ -3,10 +3,11 @@ import type { Register } from 'claude-code'
 import type { DomainChoice } from '../types'
 
 // kinitro-ai harness for Claude. All instruction TEXTS live in kinitro.ai; this file only decides WHEN
-// each section is injected. 0.23.5 (PO 16.10.2026): the briefing is the agent node's instruction set and nothing else.
-// get-briefing returns it per instruction-* type: the AIAgent's text first (incl. the platform Agent 101 it references),
-// the agent node's appended; persona: the node's replaces the AIAgent's. A type missing on both is left out. No domain
-// edge is read. A domain without an agent node is refused with a plain message.
+// each section is injected. 0.23.6 (PO 16.10.2026): the briefing is the agent node's instruction set, injected as the
+// server gives it. get-briefing `instructions` is composed server-side (AIAgent first, then the agent node; the node's
+// persona replaces the AIAgent's; a type missing on both is empty). The Agent 101 reaches the agent through the server's
+// {{mx:include}} in the coldstart and postcompaction templates; the plugin neither expects nor cuts an Agent 101 block.
+// No domain edge is read. A domain without an agent node is refused with a plain message.
 
 // Todo housekeeping (0.23.1, PO 2026-10-16): the full todo list costs about 3,000 tokens on every prompt of a long list.
 // Every prompt gets a short list (one line per todo) and a push line; the full text only at the first turn, after a
@@ -36,7 +37,7 @@ const FETCH_MS = 60000
 const MAX_TEXT = 50000     // chars per prompt / answer sent to the chat
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = 'kinitro-ai.log'
-const VERSION = '0.23.5'
+const VERSION = '0.23.6'
 // update notice (PO 2026-10-16): at the first prompt, compare with the published marketplace.json on the download page
 const UPDATE_BASE = 'https://methos.kinitro.ai/download/plugins/claude/'   // the download page; the environment variable KINITRO_AI_DOWNLOAD_BASE overrides it
 const UPDATE_TIMEOUT_MS = 2500
@@ -405,9 +406,7 @@ function viewOfferText(name: string, link: string): string {
 // 0.23.3: the link a person reads. The ?link= payload is no sign-in (the device cookie is); a domain view or node page
 // opens without it for the signed-in person. The pane still gets the full link (it ties the page to this session).
 // Only the seat selector and a single approval need the payload, so their links are shown as they are.
-// 0.23.5 (PO 16.10.2026): the agent node's instruction set, per type, from get-briefing `instructions`. The Agent 101 is a
-// platform template the AIAgent references; it opens the briefing and its own ## headings become sections.
-export const AGENT_101 = 'instruction-agent101'
+// 0.23.6 (PO 16.10.2026): the agent node's instruction set, per type, from get-briefing `instructions`, as given.
 export type InstructionSet = Record<string, { text: string; source: string }>
 
 /** The plain refusal for a domain without an agent node. */
@@ -427,16 +426,17 @@ export function instructionSet(answer: any): InstructionSet | undefined {
   return set
 }
 
-/** The briefing sections of an instruction set: the Agent 101 first, then each type into its section (persona replaces,
- *  the others are appended as "Agent-specific" when the 101 already has that section). A type with no text is left out. */
+/** The briefing sections of an instruction set: each type's text, as the server gives it, into its section. A type with
+ *  no text is left out. "Context nearly full" and "Compaction instruction" have no type of their own: they are read from a
+ *  `## ` heading of that name inside a given text, which itself stays unchanged in its own section. */
 export function composeSections(set: InstructionSet, parse: (body: string) => Record<string, string>): Record<string, string> {
   const sections: Record<string, string> = {}
-  if (set[AGENT_101]) Object.assign(sections, parse(set[AGENT_101].text))
   for (const [title, type] of Object.entries(A_TYPES)) {
     const body = set[type]?.text
-    if (!body) continue
-    if (title === S.persona || !sections[title]) sections[title] = body
-    else sections[title] = `${sections[title]}\n\n**Agent-specific:**\n${body}`
+    if (body) sections[title] = body
+  }
+  for (const title of [S.full, S.keep]) {
+    for (const v of Object.values(set)) { const part = parse(v.text)[title]; if (part) { sections[title] = part; break } }
   }
   return sections
 }
@@ -526,7 +526,7 @@ async function loadBriefing($: any) {
       // an API without `instructions`: the agent node's own contents only (no AIAgent tier until the API release)
       await log($, 'get-briefing carries no instruction set: agent node contents only')
       set = {}
-      await Promise.all([AGENT_101, ...Object.values(A_TYPES)].map(async (type) => {
+      await Promise.all(Object.values(A_TYPES).map(async (type) => {
         // the verb answers with ANOTHER row when the asked type is missing (platform G7): take the body only when the type matches
         try { const r = await mcp($, 'load-node-content', { nodeCode: agentCode, contentTypeCode: type }); if (r?.contentTypeCode === type && r?.body) set![type] = { text: String(r.body), source: 'node' } }
         catch { /* missing = left out */ }

@@ -29,14 +29,14 @@ All instruction texts live in kinitro.ai and the domain owner can edit them. The
 
 | Layer | Applies to | Where it lives | Example content |
 |---|---|---|---|
-| **General** | All kinitro.ai agents | The platform Agent 101 template the AIAgent references (`instruction-agent101`) | Working principles, reporting style |
+| **General** | All kinitro.ai agents | The platform Agent 101, included by the server into the coldstart and postcompaction templates (`{{mx:include}}`) | Working principles, reporting style |
 | **Claude-specific** | Agents running in Claude | The same Agent 101 template | How to work with Claude's tools and its context limits |
 | **Domain** | Everyone working in one domain | Domain purpose and Index, read by the agent itself | What the solution is for, how its sections are organized |
 | **Agent** | One agent | The agent node: its own instruction contents | Persona, own standing rules, start routine |
 
 How the plugin merges them:
 
-- General and Claude-specific layers come from the Agent 101, split into named sections. For every type the AIAgent's text comes first and the agent node's is appended; the agent node's persona replaces the AIAgent's.
+- The server composes every type (the AIAgent's text first, then the agent node's; the agent node's persona replaces the AIAgent's) and expands the Agent 101 include; the plugin injects the result as given.
 - The agent's own instructions are added to the matching sections under the heading **Agent-specific**.
 - The agent's persona **replaces** the general persona, if the agent has one.
 - The domain layer is not injected. The agent reads the domain purpose and Index itself.
