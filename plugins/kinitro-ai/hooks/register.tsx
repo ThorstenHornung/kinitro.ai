@@ -36,7 +36,11 @@ const FETCH_MS = 60000
 const MAX_TEXT = 50000     // chars per prompt / answer sent to the chat
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = 'kinitro-ai.log'
-const VERSION = '0.23.1'
+const VERSION = '0.23.2'
+// update notice (PO 2026-10-16): at the first prompt, compare with the published marketplace.json on the download page
+const UPDATE_BASE = 'https://methos.kinitro.ai/download/plugins/claude/'   // the download page; the environment variable KINITRO_AI_DOWNLOAD_BASE overrides it
+const UPDATE_TIMEOUT_MS = 2500
+const UPDATE_EVERY_MS = 24 * 3600 * 1000   // fetch at most once a day (timestamp in STATE_FILE); the last seen version is kept between checks
 const PENDING_VIEW_FILE = '.kinitro-ai-pending'   // written by the /kinitro fallback when the plugin was not running yet: finish the binding at the next prompt
 const REFRESH_MS = 24 * 3600 * 1000       // regular operation: instructions change rarely (PO 2026-10-08)
 const TEST_REFRESH_MS = 2 * 60 * 1000     // test mode (/kinitro test)
@@ -107,6 +111,9 @@ let todoHash = ''
 let todoSid = ''
 // chat mirroring switch (PO 2026-10-16): off = no mirror-messaging call at all; persisted in STATE_FILE as mirror 'on'|'off', absent = on
 let mirrorOff = false
+// update notice: when the published marketplace.json was last fetched (ms) and the version it gave (persisted in STATE_FILE)
+let updateCheckedAt = 0
+let updateLatest = ''
 const logLines: string[] = []
 
 // ---- band state (host-held, survives module reloads) ----------------------
@@ -509,12 +516,13 @@ async function readState($: any) {
     commentKey = st.commentKey ?? ''; commentInjectedAt = st.commentInjectedAt ?? 0; commentSid = st.commentSid ?? ''
     todoHash = st.todoHash ?? ''; todoSid = st.todoSid ?? ''
     mirrorOff = st.mirror === 'off'
+    updateCheckedAt = st.updateCheckedAt ?? 0; updateLatest = st.updateLatest ?? ''
   } catch (err: any) { await log($, `state read failed: ${err?.message ?? err}`) }
 }
 
 async function writeState($: any) {
   try {
-    await $.fs.write(await at($, STATE_FILE), JSON.stringify({ testArmed, warnedAt, compactedPending, compactions, contextRenders, commentKey, commentInjectedAt, commentSid, todoHash, todoSid, mirror: mirrorOff ? 'off' : 'on' }))
+    await $.fs.write(await at($, STATE_FILE), JSON.stringify({ testArmed, warnedAt, compactedPending, compactions, contextRenders, commentKey, commentInjectedAt, commentSid, todoHash, todoSid, mirror: mirrorOff ? 'off' : 'on', updateCheckedAt, updateLatest }))
   } catch { /* ignore */ }
 }
 
@@ -966,6 +974,61 @@ async function checkUiComments($: any): Promise<UiComment[] | undefined> {
   } finally { stop.abort() }
 }
 
+// ---- update notice ------------------------------------------------------------
+// numeric compare of X.Y.Z (a missing part counts as 0, a pre-release suffix is ignored): >0 when a is newer than b
+export function compareVersions(a: string, b: string): number {
+  const parts = (v: string) => String(v).trim().replace(/^v/, '').split(/[-+]/)[0]!.split('.').map((n) => parseInt(n, 10) || 0)
+  const x = parts(a), y = parts(b)
+  for (let i = 0; i < Math.max(x.length, y.length); i++) { const d = (x[i] ?? 0) - (y[i] ?? 0); if (d) return d }
+  return 0
+}
+
+// the published version of the kinitro-ai plugin in a marketplace.json text; undefined when it names none
+export function publishedVersion(json: string): string | undefined {
+  const m = JSON.parse(json)
+  const entry = Array.isArray(m?.plugins) ? m.plugins.find((p: any) => p?.name === 'kinitro-ai') : undefined
+  const v = entry?.version ?? m?.metadata?.version ?? m?.version
+  return typeof v === 'string' && /^\d+(\.\d+)*/.test(v) ? v : undefined
+}
+
+export function updateNotice(latest: string, running: string, page: string): string | undefined {
+  if (!latest || compareVersions(latest, running) <= 0) return undefined
+  return `kinitro-ai ${latest} is available (you run ${running}). Claude Code: run /kinitro update. Cowork/Desktop: re-upload the plugin from ${page}.`
+}
+
+async function downloadBase($: any): Promise<string> {
+  let b: string | undefined
+  try { b = await $.env.get('KINITRO_AI_DOWNLOAD_BASE') } catch { /* ignore */ }
+  b = (b ?? '').trim() || UPDATE_BASE
+  return /\/$/.test(b) ? b : b + '/'
+}
+
+// at the first prompt: fetch marketplace.json at most once per 24 h (2.5 s, silent on any error, logged), then compare
+async function updateCheck($: any): Promise<string | undefined> {
+  const base = await downloadBase($)
+  let now = Date.now()
+  try { now = await $.clock.now() } catch { /* the wall clock */ }
+  if (now - updateCheckedAt >= UPDATE_EVERY_MS || now < updateCheckedAt) {
+    updateCheckedAt = now
+    const stop = new AbortController()
+    try {
+      const r: any = await Promise.race([
+        $.http.fetch(base + 'marketplace.json', { headers: { accept: 'application/json' } }),
+        $.clock.sleep(UPDATE_TIMEOUT_MS, { signal: stop.signal }).then(() => { throw new Error(`timeout after ${UPDATE_TIMEOUT_MS} ms`) }, () => new Promise<never>(() => {})),
+      ])
+      if (!r?.ok) throw new Error(`HTTP ${r?.status}`)
+      const v = publishedVersion(String(r.text))
+      if (!v) throw new Error('no kinitro-ai version in marketplace.json')
+      updateLatest = v
+      await log($, `update check: published ${v}, running ${VERSION}`)
+    } catch (err: any) {
+      await log($, `update check failed: ${String(err?.message ?? err).slice(0, 200)}`)
+    } finally { stop.abort() }
+    await writeState($)
+  }
+  return updateNotice(updateLatest, VERSION, base)
+}
+
 // ---- hooks -----------------------------------------------------------------
 export const register: Register = (on) => {
   on('session.start', async ($, e, next) => {
@@ -1113,6 +1176,8 @@ export const register: Register = (on) => {
     const tag = testArmed ? '[TEST] ' : ''
     const blocks: string[] = [`[kinitro-ai ${VERSION}] context ${pct ?? '?'} % · briefing ${briefing ? briefing.code : 'MISSING (' + briefingError + ')'}`]
     const injected: string[] = ['marker']
+    // update notice: first prompt only; one line when the download page publishes a newer version
+    if (turns === 0 && !(e as any).agentId) { const note = await updateCheck($); if (note) { blocks.push(note); injected.push('Update notice') } }
     if (needsDomain) {
       const approved = await read($, approvedA)
       const url = await read($, selectorUrlA)

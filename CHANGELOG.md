@@ -2,6 +2,15 @@
 
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.2] - 2026-10-16
+
+### Added
+- Update notice (PO 2026-10-16): at the first prompt of a session the plugin fetches `marketplace.json` from the download page `https://methos.kinitro.ai/download/plugins/claude/` (the environment variable `KINITRO_AI_DOWNLOAD_BASE` overrides the base), at most once per 24 hours (`updateCheckedAt` and `updateLatest` in `.kinitro-ai-state.json`), with a 2.5-second deadline; any failure is silent and logged (`update check failed: ...`). The published version is read from the `kinitro-ai` plugin entry's `version`, else `metadata.version`. When it is higher than the running version, one line is injected: "kinitro-ai X.Y.Z is available (you run A.B.C). Claude Code: run /kinitro update. Cowork/Desktop: re-upload the plugin from <download page>." Between checks the last seen version still gives the notice.
+- `/kinitro update`: runs `claude plugin marketplace update kinitro-ai` and then `claude plugin update kinitro-ai@kinitro-ai`, and tells the user to run `/reload-plugins`. The command's `allowed-tools` pre-approves exactly these two Bash commands for the turn that invokes it; it does not restrict other tools (Claude Code docs, "Pre-approve tools for a skill").
+
+### Tests
+- `tests/update-notice.test.ts`: version compare and parse; a higher published version gives the notice line from the download page; equal and lower give none; a fetch failure, an HTTP error and a fetch that misses the 2.5-second deadline give none, do not block the prompt and are logged; a check within 24 hours is not repeated and its stored version still gives the notice; an older check fetches again and stores time and version; no check at a later prompt.
+
 ## [0.23.1] - 2026-10-16
 
 ### Changed

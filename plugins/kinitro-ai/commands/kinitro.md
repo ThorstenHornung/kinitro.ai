@@ -1,6 +1,7 @@
 ---
 description: Choose the kinitro.ai domain this session works in
-argument-hint: "[domain | refresh | test | test off | status]"
+argument-hint: "[domain | refresh | test | test off | status | update]"
+allowed-tools: Bash(claude plugin marketplace update kinitro-ai) Bash(claude plugin update kinitro-ai@kinitro-ai)
 ---
 
 The user wants to choose the kinitro.ai domain this Claude session works for. Arguments: "$ARGUMENTS"
@@ -8,6 +9,8 @@ The user wants to choose the kinitro.ai domain this Claude session works for. Ar
 The kinitro.ai tools, named `mcp__plugin_kinitro-ai_kinitro_ai__<verb>` when the plugin provides them, or `mcp__kinitro_ai__<verb>` / `mcp__claude_ai_Kinitro__<verb>` (a user-scope server or the claude.ai connector). Below, "the kinitro.ai tools" and `<verb>` mean whichever of these exists; the plugin's own `mcp__kinitro-ai__probe` is a different tool and keeps its name. If no kinitro.ai tool is available at all, tell the user: "Open /mcp, choose plugin:kinitro-ai:kinitro_ai and Authenticate", then stop.
 
 Talk to the user in their language and call it "domain" (German: "Arbeitsbereich"); never say "slug".
+
+**`update`** (the arguments are `update`): do not load or call any kinitro.ai tool. Run these two commands with the Bash tool, one after the other, exactly as written: `claude plugin marketplace update kinitro-ai`, then `claude plugin update kinitro-ai@kinitro-ai`. If the first one fails, do not run the second. Then answer in the user's language: the version the second command reports (or that kinitro-ai is already up to date), and "Run /reload-plugins to load the new version in this session." If a command fails, quote its error in one line and add: "In Cowork or the Claude desktop app, re-upload the plugin from https://methos.kinitro.ai/download/plugins/claude/." Then stop.
 
 Work in this order, without commentary between calls. The plugin stores the choice and opens pages in the browser pane (the internal browser) itself.
 
