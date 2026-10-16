@@ -1,6 +1,6 @@
 # Security and privacy
 
-*Valid for the plugin `kinitro-ai` 0.23.0.*
+*Valid for the plugin `kinitro-ai` 0.23.1.*
 
 **The plugin sends nothing anywhere except to kinitro.ai, and it does so through your own connector.** It stores no credentials. What it does write is a mirror of your conversation into your own kinitro.ai domain and a few small files on your computer. This page lists exactly what goes where and what to review.
 

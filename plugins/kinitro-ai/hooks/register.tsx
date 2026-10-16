@@ -6,6 +6,15 @@ import type { DomainChoice } from '../types'
 // each section is injected. Layers G+M: the general briefing behind the domain's general-procedures edge;
 // layer A: the agent node's native instruction-* contents. Nothing is hard-wired to a domain.
 
+// Todo housekeeping (0.23.1, PO 2026-10-16): the full todo list costs about 3,000 tokens on every prompt of a long list.
+// Every prompt gets a short list (one line per todo) and a push line; the full text only at the first turn, after a
+// compaction, after a domain choice and when the list changed since its last full injection. Nothing is ever deleted:
+// the push line only names what exceeds these limits.
+const TODO_MAX_AGE_DAYS = 7        // a todo older than this is named in the push line
+const TODO_MAX_ITEMS = 10          // more open todos than this are named in the push line
+const TODO_MAX_ITEM_CHARS = 400    // a todo text longer than this is named in the push line
+const TODO_TURN_LINE_CHARS = 160   // the short per-turn list shows this many chars of each todo
+
 const SERVER = 'kinitro_ai'
 // Everything is resolved from the seat (current-seat): no domain codes are hard-wired.
 const GENERAL_EDGE = 'general-procedures'                 // association edge from the domain node to the general library section
@@ -20,7 +29,7 @@ const FETCH_MS = 60000
 const MAX_TEXT = 50000     // chars per prompt / answer sent to the chat
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = 'kinitro-ai.log'
-const VERSION = '0.23.0'
+const VERSION = '0.23.1'
 const PENDING_VIEW_FILE = '.kinitro-ai-pending'   // written by the /kinitro fallback when the plugin was not running yet: finish the binding at the next prompt
 const REFRESH_MS = 24 * 3600 * 1000       // regular operation: instructions change rarely (PO 2026-10-08)
 const TEST_REFRESH_MS = 2 * 60 * 1000     // test mode (/kinitro test)
@@ -86,6 +95,9 @@ let lastCommentError: string | undefined
 let commentKey = ''          // sorted ids of the open comments last told to the agent
 let commentInjectedAt = 0    // when they were told (ms)
 let commentSid = ''          // in which session
+// todo list: hash of the list at its last FULL injection and in which session (persisted in STATE_FILE)
+let todoHash = ''
+let todoSid = ''
 const logLines: string[] = []
 
 // ---- band state (host-held, survives module reloads) ----------------------
@@ -486,12 +498,13 @@ async function readState($: any) {
     testArmed = !!st.testArmed; warnedAt = st.warnedAt ?? 0; compactedPending = !!st.compactedPending
     compactions = st.compactions ?? 0; contextRenders = st.contextRenders ?? 0
     commentKey = st.commentKey ?? ''; commentInjectedAt = st.commentInjectedAt ?? 0; commentSid = st.commentSid ?? ''
+    todoHash = st.todoHash ?? ''; todoSid = st.todoSid ?? ''
   } catch (err: any) { await log($, `state read failed: ${err?.message ?? err}`) }
 }
 
 async function writeState($: any) {
   try {
-    await $.fs.write(await at($, STATE_FILE), JSON.stringify({ testArmed, warnedAt, compactedPending, compactions, contextRenders, commentKey, commentInjectedAt, commentSid }))
+    await $.fs.write(await at($, STATE_FILE), JSON.stringify({ testArmed, warnedAt, compactedPending, compactions, contextRenders, commentKey, commentInjectedAt, commentSid, todoHash, todoSid }))
   } catch { /* ignore */ }
 }
 
@@ -654,6 +667,7 @@ async function statusText($: any): Promise<string> {
     `system prompt section injected in ${composeCount} renders (prompt.compose) · first-message context block rendered ${contextRenders}x (prompt.context)`,
     `context: ${pct ?? '?'} % (warn at ${WARN_PCT} %, last warned ${warnedAt || '-'})`,
     `last prompt injected: ${lastInjected.join(', ') || '-'}`,
+    `todos: full text when the list changes (last full ${todoHash || '-'}); limits ${TODO_MAX_ITEMS} items, ${TODO_MAX_AGE_DAYS} days, ${TODO_MAX_ITEM_CHARS} chars; ${TODO_TURN_LINE_CHARS} chars per line otherwise`,
     `test armed: ${testArmed} · compactions seen: ${compactions} · post-compact pending: ${compactedPending}`,
     `ui comments: ${openComments.length}${commentsTruncated ? '+' : ''} open (last check ${lastCommentCheck}, last told ${commentInjectedAt ? new Date(commentInjectedAt).toISOString() : '-'}${lastCommentError ? ', last error: ' + lastCommentError : ''})`,
     `chat mirror: ${mirrorSent} turns sent, ${mirrorDup} already present, agent ${lastMirrorTarget}${lastMirrorError ? ' · last error: ' + lastMirrorError : ''} · inbox ${inboxNew} new since start, last fetch ${lastFetch}`,
@@ -686,6 +700,107 @@ function cleanTodo(body: string): string | undefined {
     } else if (l.trim()) out.push(l)
   }
   return out.some((l) => !/^## /.test(l)) ? out.join('\n') : undefined
+}
+
+// ---- todo housekeeping (0.23.1) ----------------------------------------------
+// A todo line as the server writes it: 12. "text" (dd.MM. HH:mm) [item 3471]   (the stamp is UTC and has no year)
+const TODO_LINE_RX = /^(\d+)\.\s+"(.*)"\s+\(([^)]+)\)(?:\s+\[item\s+(\d+)\])?\s*$/
+const TODO_LOOSE_RX = /^(\d+)\.\s+(.*)$/
+const DAY_MS = 24 * 3600 * 1000
+export type TodoItem = { nr: string; text: string; stamp?: string }
+export type TodoList = { items: TodoItem[]; sections: { heading: string; lines: string[]; todo: boolean }[] }
+
+// pure: the todos of a cleaned list (cleanTodo) and its other sections (Exceptions, Questions), line by line
+export function parseTodos(clean: string): TodoList {
+  const sections: TodoList['sections'] = []
+  const items: TodoItem[] = []
+  for (const l of clean.split('\n')) {
+    if (/^## /.test(l)) { sections.push({ heading: l, lines: [], todo: /^## (Todo|Instructions)\b/.test(l) }); continue }
+    if (!sections.length) sections.push({ heading: '', lines: [], todo: true })
+    const s = sections[sections.length - 1]!
+    s.lines.push(l)
+    if (!s.todo) continue
+    const m = TODO_LINE_RX.exec(l.trim())
+    if (m) { items.push({ nr: m[1]!, text: m[2]!, stamp: m[3] }); continue }
+    const loose = TODO_LOOSE_RX.exec(l.trim())
+    if (loose) items.push({ nr: loose[1]!, text: loose[2]! })
+    else if (items.length) items[items.length - 1]!.text += ' ' + l.trim()   // a continuation line of the todo above
+    else items.push({ nr: '-', text: l.trim() })
+  }
+  return { items, sections }
+}
+
+// pure: age of a stamp "dd.MM. HH:mm" (UTC, no year: the latest such date not after now) in ms; undefined when unreadable
+export function todoAgeMs(stamp: string | undefined, now: number): number | undefined {
+  const m = /^(\d{1,2})\.(\d{1,2})\.(\d{4})?\s*(?:(\d{1,2}):(\d{2}))?/.exec(String(stamp ?? '').trim())
+  if (!m) return undefined
+  const at = (y: number) => Date.UTC(y, Number(m[2]) - 1, Number(m[1]), Number(m[4] ?? 0), Number(m[5] ?? 0))
+  const y = new Date(now).getUTCFullYear()
+  let t = at(m[3] ? Number(m[3]) : y)
+  if (!m[3] && t > now + DAY_MS) t = at(y - 1)
+  return Number.isNaN(t) ? undefined : Math.max(0, now - t)
+}
+
+function cutLine(t: string, max: number): string {
+  const s = t.replace(/\s+/g, ' ').trim()
+  return s.length > max ? s.slice(0, max) + ' [...]' : s
+}
+
+// pure: the short per-turn list: one line per todo (number + the first TODO_TURN_LINE_CHARS chars); the other sections cut the same way
+export function todoShortList(clean: string): string {
+  const { sections } = parseTodos(clean)
+  const out: string[] = []
+  for (const s of sections) {
+    if (s.heading) out.push(s.heading)
+    if (s.todo) {
+      for (const it of parseTodos([s.heading, ...s.lines].join('\n')).items) out.push(`${it.nr}. ${cutLine(it.text, TODO_TURN_LINE_CHARS)}`)
+    } else for (const l of s.lines) if (l.trim()) out.push(cutLine(l, TODO_TURN_LINE_CHARS))
+  }
+  return out.join('\n')
+}
+
+// pure: the push line of every prompt, with what exceeds the housekeeping limits (nothing is deleted)
+export function todoPushLine(clean: string | undefined, now: number, readOk = true): string {
+  const verbs = 'Update your todos now if this turn changed anything: memory-append / memory-instruction-status.'
+  if (!readOk) return verbs
+  const items = clean ? parseTodos(clean).items : []
+  if (!items.length) return `No open todos. ${verbs}`
+  const ages = items.map((i) => todoAgeMs(i.stamp, now)).filter((a): a is number => a !== undefined)
+  const oldest = ages.length ? `${Math.floor(Math.max(...ages) / DAY_MS)} days` : 'unknown'
+  const old = ages.filter((a) => a > TODO_MAX_AGE_DAYS * DAY_MS).length
+  const long = items.filter((i) => i.text.length > TODO_MAX_ITEM_CHARS).length
+  const over: string[] = []
+  if (old) over.push(`${old} todo${old === 1 ? '' : 's'} older than ${TODO_MAX_AGE_DAYS} days`)
+  if (items.length > TODO_MAX_ITEMS) over.push(`${items.length} todos open, more than ${TODO_MAX_ITEMS}`)
+  if (long) over.push(`${long} over ${TODO_MAX_ITEM_CHARS} chars`)
+  const line = `${verbs} Oldest open todo: ${oldest}.`
+  return over.length ? `${line} ${over.join(', ')}: shorten or archive them (memory-instruction-status done or withdrawn keeps the full text in your notes).` : line
+}
+
+// pure: the one line at a later threshold of the same compaction cycle (the section itself came at the first one)
+export function contextReminder(pct: number): string {
+  return `Context ${pct} % (compaction at about 80 %): the "${S.full}" steps you got earlier in this cycle are still due if you have not done them.`
+}
+
+// pure: identity of a list's text
+export function todoListHash(text: string): string {
+  let h = 5381
+  for (let i = 0; i < text.length; i++) h = ((h * 33) ^ text.charCodeAt(i)) >>> 0
+  return `${text.length}:${h.toString(36)}`
+}
+
+// pure: the todo block of one prompt. full: the whole list; else the short list. Always the push line.
+export function todoBlock(clean: string | undefined, agentCode: string, full: boolean, now: number, readOk = true, tag = ''): string {
+  const push = todoPushLine(clean, now, readOk)
+  if (!clean) return `${tag}${push}`
+  return full
+    ? `${tag}Your todos (from ${agentCode}, full text; keep them current with memory-append / memory-instruction-status):\n${clean}\n${push}`
+    : `${tag}Your todos (from ${agentCode}, short form: the first ${TODO_TURN_LINE_CHARS} chars of each; the full text comes after a change, a compaction and at the first turn):\n${todoShortList(clean)}\n${push}`
+}
+
+// pure: is the full list due? first turn, after compaction, domain choice or test (startOrAfter), another session, or a changed list
+export function todoFullDue(hash: string, sid: string, startOrAfter: boolean, last: { hash: string; sid: string }): boolean {
+  return startOrAfter || hash !== last.hash || sid !== last.sid
 }
 
 async function readSet($: any, type: string): Promise<string | undefined> {
@@ -939,8 +1054,9 @@ export const register: Register = (on) => {
     if (briefing) {
       // persona and working rules: when the agent does not hold the current ones (domain switch, refresh with changes, stale start block)
       // after choosing a domain always: a re-render request does not reach a running conversation (measured 2026-10-08)
-      if (!needsDomain && (startPack || (await read($, contextKeyA)) !== personaKey())) {
-        add('persona', S.persona, startPack ? `domain ${briefing.domainName ?? domainRef}` : 'updated')
+      // 0.23.1: after a compaction too - the summary does not keep the general procedures (review of the agent 101 draft)
+      if (!needsDomain && (startPack || compactedPending || (await read($, contextKeyA)) !== personaKey())) {
+        add('persona', S.persona, startPack ? `domain ${briefing.domainName ?? domainRef}` : compactedPending ? 'after compaction' : 'updated')
         add('rules', S.rules, '')
         await update($, contextKeyA, () => personaKey())
       }
@@ -953,10 +1069,11 @@ export const register: Register = (on) => {
       add('turn', S.turn, '')
       if (compactedPending || testArmed) { add('after', S.after, testArmed ? 'Test' : 'after compaction'); compactedPending = false }
       const full = pct !== undefined && pct >= WARN_PCT && pct >= warnedAt + REWARN_STEP
-      if (full || testArmed) {
-        add('full', S.full, testArmed ? `Test, context ${pct} %` : `context ${pct} %, compaction at about 80 %`)
-        if (full) warnedAt = pct as number
-      }
+      // 0.23.1: the section once per compaction cycle (the first threshold); a later threshold gets one reminder line
+      const firstWarn = warnedAt === 0
+      if (testArmed || (full && firstWarn)) add('full', S.full, testArmed ? `Test, context ${pct} %` : `context ${pct} %, compaction at about 80 %`)
+      else if (full && sec(S.full)) { blocks.push(contextReminder(pct as number)); injected.push('Context reminder') }
+      if (full) warnedAt = pct as number
       if (testArmed) {
         blocks.push(`[TEST] Compaction instruction (otherwise goes ONLY to the summarizer, not to you):\n${sec(S.keep)}`)
         injected.push(S.keep)
@@ -966,9 +1083,19 @@ export const register: Register = (on) => {
       // open UI comments: started now so it runs alongside the todo read (cold connector calls can take seconds)
       const commentsP = needsDomain ? Promise.resolve(undefined) : checkUiComments($)
       // working memory: Todo every turn (fresh read, no model tokens for the read itself)
+      // 0.23.1: the full text only when due (first turn, after compaction, domain choice, changed list); else one line per todo. Always the push line.
       const todo = await readSet($, 'memory-instruction')
       const todoText = todo ? cleanTodo(todo) : undefined
-      if (todoText) { blocks.push(`${tag}Your todos (from ${briefing.agentCode}; keep them current with memory-append / memory-instruction-status):\n${todoText}`); injected.push('Todo') }
+      if (briefing.agentCode) {
+        let sid = '', now = Date.now()
+        try { sid = await $.session.id() } catch { /* ignore */ }
+        try { now = await $.clock.now() } catch { /* the wall clock */ }
+        const hash = todoText ? todoListHash(todoText) : ''
+        const full = !!todoText && todoFullDue(hash, sid, startOrAfter, { hash: todoHash, sid: todoSid })
+        const block = todoBlock(todoText, briefing.agentCode, full, now, todo !== undefined, tag)
+        blocks.push(block); injected.push(`${todoText ? (full ? 'Todo full' : 'Todo short') : 'Todo push'} ${block.length}`)
+        if (full || !todoText) { todoHash = hash; todoSid = sid }
+      }
       // open UI comments: one call; told when the open set changed in this session, else every 30 minutes
       if (!needsDomain) {
         const list = await commentsP

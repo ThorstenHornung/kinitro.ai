@@ -2,6 +2,17 @@
 
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.1] - 2026-10-16
+
+### Changed
+- The todo list no longer comes in full at every prompt (about 3,000 tokens per prompt on a 12,000-character list). Every prompt gets a short list, one line per todo with its number and the first 160 characters, and a push line: "Update your todos now if this turn changed anything: memory-append / memory-instruction-status. Oldest open todo: <n> days." The full text comes at the first prompt, after a compaction, after a domain choice and when the list changed since its last full injection (hash and session id in `.kinitro-ai-state.json`). Measured on a 12,038-character list of 24 todos: 12,441 characters before, 4,557 after.
+- Housekeeping without deleting: the push line names todos older than 7 days, more than 10 open todos and todos over 400 characters, and asks to shorten or archive them. The limits are constants at the top of `hooks/register.tsx`.
+- After a compaction Persona and Working rules are injected again together with After compaction (review of the agent 101 draft).
+- Context nearly full is injected once per compaction cycle, at the first threshold (70 %); at 75 % and 80 % only a one-line reminder follows.
+
+### Tests
+- `tests/todo-housekeeping.test.ts`: parsing, short form, push line with counts, stamps without a year, every todo text kept in the full block, and through `prompt.submit`: full at the first turn, short while the list stays, full after a change and after a compaction, the hash persisted and read after a restart, the push line on an empty list; Persona and Working rules after a compaction; Context nearly full once per cycle.
+
 ## [0.23.0] - 2026-10-14
 
 ### Changed

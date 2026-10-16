@@ -1,0 +1,210 @@
+import { describe, expect, test } from 'claude-code/testing'
+import { contextReminder, parseTodos, todoAgeMs, todoBlock, todoListHash, todoPushLine, todoShortList } from '../hooks/register'
+import { makeWorld, probe } from './world'
+
+// 0.23.1 (PO 2026-10-16): a short todo list every prompt, the full text only when due, and a push line with the housekeeping counts
+const NOW = Date.UTC(2026, 9, 16, 2, 30)   // 16.10.2026 02:30 UTC
+const DAY = 24 * 3600 * 1000
+const stamp = (daysAgo: number) => {
+  const d = new Date(NOW - daysAgo * DAY)
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${p(d.getUTCDate())}.${p(d.getUTCMonth() + 1)}. ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`
+}
+// a memory-instruction body as the server renders it
+const body = (todos: { text: string; daysAgo: number; item?: number }[], exceptions: string[] = [], questions: string[] = []) =>
+  ['## Instructions', ...todos.map((t, i) => `${i + 1}. "${t.text}" (${stamp(t.daysAgo)})${t.item ? ` [item ${t.item}]` : ''}`),
+    '{{mx:cache-cut}}', '## Exceptions', ...exceptions, '## Questions', ...questions, ''].join('\n')
+const clean = (b: string) => b.split('\n').filter((l) => !l.includes('{{mx:cache-cut}}') && l.trim()).map((l) => l.replace('## Instructions', '## Todo (user-approved)')).filter((l, i, a) => !(/^## /.test(l) && (!a[i + 1] || /^## /.test(a[i + 1]!)))).join('\n')
+const text = (n: number, len: number) => `todo ${n} ` + 'x'.repeat(Math.max(0, len - 7 - String(n).length))
+
+describe('todo list: parsing, short form, push line', () => {
+  test('parse reads number, text and stamp; exceptions and questions are not todos', async () => {
+    const c = clean(body([{ text: 'first', daysAgo: 1, item: 3471 }, { text: 'second', daysAgo: 9 }], ['2 | RUNNING | second'], ['Which one?']))
+    const { items, sections } = parseTodos(c)
+    expect(items.map((i) => i.nr)).toEqual(['1', '2'])
+    expect(items[0]!.text).toBe('first')
+    expect(items[1]!.stamp).toBe(stamp(9))
+    expect(sections.map((s) => s.heading)).toEqual(['## Todo (user-approved)', '## Exceptions', '## Questions'])
+  })
+
+  test('short list: one line per todo, number plus the first 160 chars; every todo is there', async () => {
+    const todos = Array.from({ length: 12 }, (_, i) => ({ text: text(i + 1, 300 + i * 50), daysAgo: i }))
+    const c = clean(body(todos, ['3 | RUNNING | todo 3 xxx']))
+    const s = todoShortList(c)
+    const lines = s.split('\n')
+    expect(lines[0]).toBe('## Todo (user-approved)')
+    for (let i = 1; i <= 12; i++) expect(lines[i]!.startsWith(`${i}. todo ${i} `)).toBe(true)
+    expect(lines.slice(1, 13).every((l) => l.length <= 4 + 160 + 6)).toBe(true)
+    expect(lines[1]).toBe(`1. ${text(1, 300).slice(0, 160)} [...]`)
+    expect(lines).toContain('## Exceptions')
+    expect(lines).toContain('3 | RUNNING | todo 3 xxx')
+  })
+
+  test('push line names the oldest todo and every limit that is exceeded', async () => {
+    const todos = [
+      ...Array.from({ length: 9 }, (_, i) => ({ text: text(i + 1, 100), daysAgo: 1 })),
+      { text: text(10, 450), daysAgo: 8 }, { text: text(11, 500), daysAgo: 12 }, { text: text(12, 50), daysAgo: 20 },
+    ]
+    const p = todoPushLine(clean(body(todos)), NOW)
+    expect(p).toBe('Update your todos now if this turn changed anything: memory-append / memory-instruction-status. Oldest open todo: 20 days. '
+      + '3 todos older than 7 days, 12 todos open, more than 10, 2 over 400 chars: shorten or archive them (memory-instruction-status done or withdrawn keeps the full text in your notes).')
+  })
+
+  test('push line within the limits, for an empty list and for a failed read', async () => {
+    expect(todoPushLine(clean(body([{ text: 'a', daysAgo: 2 }, { text: 'b', daysAgo: 0 }])), NOW))
+      .toBe('Update your todos now if this turn changed anything: memory-append / memory-instruction-status. Oldest open todo: 2 days.')
+    expect(todoPushLine(undefined, NOW)).toBe('No open todos. Update your todos now if this turn changed anything: memory-append / memory-instruction-status.')
+    expect(todoPushLine(undefined, NOW, false)).toBe('Update your todos now if this turn changed anything: memory-append / memory-instruction-status.')
+  })
+
+  test('a stamp without a year is the latest such date not after now', async () => {
+    expect(Math.floor(todoAgeMs('30.12. 10:00', NOW)! / DAY)).toBe(289)   // 30.12.2025
+    expect(Math.floor(todoAgeMs('15.10. 02:30', NOW)! / DAY)).toBe(1)
+    expect(todoAgeMs('soon', NOW)).toBe(undefined)
+  })
+
+  test('full block keeps every todo text verbatim; the short block on a 12,000-char list is a fraction of it', async () => {
+    const todos = Array.from({ length: 24 }, (_, i) => ({ text: text(i + 1, 480), daysAgo: i }))
+    const c = clean(body(todos))
+    expect(c.length).toBeGreaterThan(11500)
+    const full = todoBlock(c, 'A1', true, NOW)
+    for (const t of todos) expect(full).toContain(`"${t.text}"`)
+    const short = todoBlock(c, 'A1', false, NOW)
+    expect(short.length).toBeLessThan(full.length / 2)
+    console.log(`measured: full block ${full.length} chars, short block ${short.length} chars, list ${c.length} chars`)
+  })
+})
+
+describe('todo list through prompt.submit', () => {
+  const mk = (on: any, todo: { get: () => string }, turns: { n: number }, seen: string[]) => {
+    on('session.turns', async () => ({ value: turns.n }))
+    on('prompt.submit', async (_$: any, e: any) => { seen.push((e.context ?? []).join('\n\n')); return { text: e.text } })
+    on('session.compact', async (_$: any, e: any) => ({ messages: e.messages.slice(-1), tokensBefore: 10, tokensAfter: 1 }))
+    return makeWorld(on, {
+      files: new Map([['/w/b/.kinitro-ai-domain', 'beta\n']]), cwd: '/w/b', root: '/w/b', sid: 'S7',
+      verbs: { 'load-node-content': (a: any) => ({ result: JSON.stringify({ contentTypeCode: a.contentTypeCode, body: a.contentTypeCode === 'memory-instruction' ? todo.get() : `${a.contentTypeCode} of ${a.nodeCode}` }) }) },
+    })
+  }
+  const LONG = (n: number) => `long todo ${n} ` + 'y'.repeat(300)
+  const list1 = body([{ text: LONG(1), daysAgo: 1 }, { text: LONG(2), daysAgo: 2 }])
+  const list2 = body([{ text: LONG(1), daysAgo: 1 }, { text: LONG(2), daysAgo: 2 }, { text: 'third, new', daysAgo: 0 }])
+
+  test('first turn full, then short while the list stays, full again when it changes, then short', async ($, on) => {
+    let cur = list1
+    const seen: string[] = [], turns = { n: 0 }
+    const w = mk(on, { get: () => cur }, turns, seen)
+    await probe($, 'reload')
+    await $.prompt.submit({ text: 'one' } as any)
+    expect(seen[0]).toContain(`"${LONG(1)}"`)
+    expect(seen[0]).toContain('full text')
+    turns.n = 1
+    await $.prompt.submit({ text: 'two' } as any)
+    expect(seen[1]).toContain('short form')
+    expect(seen[1]).toContain(`1. ${LONG(1).slice(0, 160)} [...]`)
+    expect(seen[1]).not.toContain(LONG(1))
+    expect(seen[1]).toContain('Update your todos now if this turn changed anything: memory-append / memory-instruction-status. Oldest open todo: ')
+    cur = list2; turns.n = 2
+    await $.prompt.submit({ text: 'three' } as any)
+    expect(seen[2]).toContain('full text')
+    expect(seen[2]).toContain('"third, new"')
+    turns.n = 3
+    await $.prompt.submit({ text: 'four' } as any)
+    expect(seen[3]).toContain('short form')
+    expect(seen[3]).toContain('3. third, new')
+    // the hash of the last full injection is persisted with the session id
+    const st = JSON.parse(w.files.get('/w/b/.kinitro-ai-state.json')!)
+    expect(st.todoHash).toBe(todoListHash(clean(list2)))
+    expect(st.todoSid).toBe('S7')
+    // nothing was written to the todo list: no todo text lost
+    expect(w.sent.filter((s) => /^memory-|update-content|delete-content/.test(s.verb) && s.verb !== 'memory-instruction').length).toBe(0)
+  })
+
+  test('after a compaction the full list comes again', async ($, on) => {
+    const seen: string[] = [], turns = { n: 0 }
+    mk(on, { get: () => list1 }, turns, seen)
+    await probe($, 'reload')
+    await $.prompt.submit({ text: 'one' } as any)
+    turns.n = 4
+    await $.prompt.submit({ text: 'two' } as any)
+    expect(seen[1]).toContain('short form')
+    await ($ as any).session.compact({ trigger: 'auto', messages: [{ role: 'user', text: 'hi', toolUses: [] }, { role: 'assistant', text: 'ho', toolUses: [] }] })
+    turns.n = 5
+    await $.prompt.submit({ text: 'three' } as any)
+    expect(seen[2]).toContain('full text')
+    expect(seen[2]).toContain(`"${LONG(2)}"`)
+  })
+
+  test('a restarted hook process reads the hash from the state file and stays short', async ($, on) => {
+    const seen: string[] = [], turns = { n: 6 }
+    const w = mk(on, { get: () => list1 }, turns, seen)
+    w.files.set('/w/b/.kinitro-ai-state.json', JSON.stringify({ todoHash: todoListHash(clean(list1)), todoSid: 'S7' }))
+    await ($ as any).session.start({ isInteractive: true, surface: 'terminal', cwd: '/w/b' }).catch(() => undefined)
+    await probe($, 'reload')
+    await $.prompt.submit({ text: 'after restart' } as any)
+    expect(seen[0]).toContain('short form')
+  })
+
+  test('an empty list still gets the push line', async ($, on) => {
+    const seen: string[] = [], turns = { n: 2 }
+    mk(on, { get: () => body([]) }, turns, seen)
+    await probe($, 'reload')
+    await $.prompt.submit({ text: 'x' } as any)
+    expect(seen[0]).toContain('No open todos. Update your todos now if this turn changed anything')
+  })
+})
+
+describe('compaction cycle (review of the agent 101 draft)', () => {
+  // a general briefing behind the domain's general-procedures edge, with every section
+  const G = '## Persona\nPERSONA-TEXT\n\n## Working rules\nRULES-TEXT\n\n## Every turn\nTURN-TEXT\n\n## Context nearly full\nFULL-TEXT\n\n## After compaction\nAFTER-TEXT\n\n## Compaction instruction\nKEEP-TEXT'
+  const mk = (on: any, ctx: { pct: number; turns: number }, seen: string[]) => {
+    on('session.turns', async () => ({ value: ctx.turns }))
+    on('session.usage', async () => ({ value: { context: { percent: ctx.pct } } }))
+    on('prompt.submit', async (_$: any, e: any) => { seen.push((e.context ?? []).join('\n\n')); return { text: e.text } })
+    on('session.compact', async (_$: any, e: any) => ({ messages: e.messages.slice(-1), tokensBefore: 10, tokensAfter: 1 }))
+    return makeWorld(on, {
+      files: new Map([['/w/b/.kinitro-ai-domain', 'beta\n']]), cwd: '/w/b', root: '/w/b', sid: 'S8',
+      verbs: {
+        'list-edges': () => ({ result: JSON.stringify({ edges: [{ node: { code: 'GLIB' } }] }) }),
+        'list-nodes': () => ({ result: JSON.stringify({ nodes: [{ name: 'Briefing: kinitro.ai agents in Claude', code: 'GDOC' }] }) }),
+        'load-node-content': (a: any) => ({ result: JSON.stringify(a.nodeCode === 'GDOC' ? { contentTypeCode: 'md', body: G } : { contentTypeCode: 'other', body: null }) }),
+      },
+    })
+  }
+  const compact = ($: any) => $.session.compact({ trigger: 'auto', messages: [{ role: 'user', text: 'a', toolUses: [] }, { role: 'assistant', text: 'b', toolUses: [] }] })
+
+  test('after a compaction persona and working rules come again with the After compaction section', async ($, on) => {
+    const seen: string[] = [], ctx = { pct: 10, turns: 0 }
+    mk(on, ctx, seen)
+    await probe($, 'reload')
+    await $.prompt.submit({ text: 'one' } as any)
+    ctx.turns = 3
+    await $.prompt.submit({ text: 'two' } as any)
+    expect(seen[1]).not.toContain('RULES-TEXT')
+    await compact($)
+    ctx.turns = 4
+    await $.prompt.submit({ text: 'three' } as any)
+    expect(seen[2]).toContain('PERSONA-TEXT')
+    expect(seen[2]).toContain('RULES-TEXT')
+    expect(seen[2]).toContain('AFTER-TEXT')
+    ctx.turns = 5
+    await $.prompt.submit({ text: 'four' } as any)
+    expect(seen[3]).not.toContain('RULES-TEXT')
+    expect(seen[3]).not.toContain('AFTER-TEXT')
+  })
+
+  test('Context nearly full: the section once per cycle at the first threshold, later thresholds one line', async ($, on) => {
+    const seen: string[] = [], ctx = { pct: 50, turns: 2 }
+    mk(on, ctx, seen)
+    await probe($, 'reload')
+    ctx.pct = 71; await $.prompt.submit({ text: 'a' } as any)
+    ctx.pct = 76; await $.prompt.submit({ text: 'b' } as any)
+    ctx.pct = 81; await $.prompt.submit({ text: 'c' } as any)
+    expect(seen[0]).toContain('FULL-TEXT')
+    expect(seen[1]).not.toContain('FULL-TEXT')
+    expect(seen[1]).toContain(contextReminder(76))
+    expect(seen[2]).toContain(contextReminder(81))
+    await compact($)
+    ctx.pct = 72; ctx.turns = 6; await $.prompt.submit({ text: 'd' } as any)
+    expect(seen[3]).toContain('FULL-TEXT')
+  })
+})
