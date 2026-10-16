@@ -27,7 +27,8 @@ test('the domain view asks for the shell of the bound domain and opens what the 
   expect(openPages(w)).toHaveLength(1)
   expect(openPages(w)[0]!.args.target).toBe('shell')
   expect(openPages(w)[0]!.args.domainRef).toBe('beta')
-  expect(view).toContain(SHELL_URL)
+  expect(view).toContain('https://methos.example/?domain=beta')
+  expect(view).not.toContain('SHELLPAYLOAD')
 })
 
 test('a server that does not know the shell target is asked once more without a target', async ($, on) => {
@@ -37,7 +38,8 @@ test('a server that does not know the shell target is asked once more without a 
   const view = await probe($, 'open-domain')
 
   expect(openPages(w).map((c) => c.args.target)).toEqual(['shell', undefined])
-  expect(view).toContain(PAGE_URL)
+  expect(view).toContain('https://methos.example/page/node')
+  expect(view).not.toContain('PAGEPAYLOAD')
   expect(w.files.get('/w/b/kinitro-ai.log')).toMatch(/target shell not known by the server; asking again without a target/)
 })
 

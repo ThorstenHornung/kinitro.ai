@@ -36,7 +36,7 @@ const FETCH_MS = 60000
 const MAX_TEXT = 50000     // chars per prompt / answer sent to the chat
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = 'kinitro-ai.log'
-const VERSION = '0.23.2'
+const VERSION = '0.23.3'
 // update notice (PO 2026-10-16): at the first prompt, compare with the published marketplace.json on the download page
 const UPDATE_BASE = 'https://methos.kinitro.ai/download/plugins/claude/'   // the download page; the environment variable KINITRO_AI_DOWNLOAD_BASE overrides it
 const UPDATE_TIMEOUT_MS = 2500
@@ -379,10 +379,22 @@ async function openDomainView($: any): Promise<string> {
     }
   } catch (err: any) { return `open-page failed: ${err?.message ?? err}` }
   if (!url) return 'open-page gave no url'
-  return openInPane($, url)
+  return openInPane($, url, readableLink(url))
 }
 
-async function openInPane($: any, url: string): Promise<string> {
+// 0.23.3: the link a person reads. The ?link= payload is no sign-in (the device cookie is); a domain view or node page
+// opens without it for the signed-in person. The pane still gets the full link (it ties the page to this session).
+// Only the seat selector and a single approval need the payload, so their links are shown as they are.
+export function readableLink(url: string): string {
+  try {
+    const u = new URL(url)
+    if (!u.searchParams.has('link')) return url
+    u.searchParams.delete('link')
+    return u.toString()
+  } catch { return url }
+}
+
+async function openInPane($: any, url: string, shown: string = url): Promise<string> {
   const errs: string[] = []
   for (const tool of BROWSER_TOOLS) {
     try {
@@ -394,7 +406,7 @@ async function openInPane($: any, url: string): Promise<string> {
     } catch (err: any) { errs.push(`${tool}: ${String(err?.message ?? err).slice(0, 160)}`) }
   }
   await log($, `pane not opened: ${errs.join(' | ')}`)
-  return `browser pane not reachable; link: ${url}`
+  return `browser pane not reachable; link: ${shown}`
 }
 
 // bind this session to a domain: files, module state, briefing, band
