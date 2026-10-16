@@ -213,7 +213,7 @@ describe('todo list through prompt.submit', () => {
 })
 
 describe('compaction cycle (review of the agent 101 draft)', () => {
-  // a general briefing behind the domain's general-procedures edge, with every section
+  // an Agent 101 with every section, served in the agent node's instruction set (0.23.5)
   const G = '## Persona\nPERSONA-TEXT\n\n## Working rules\nRULES-TEXT\n\n## Every turn\nTURN-TEXT\n\n## Context nearly full\nFULL-TEXT\n\n## After compaction\nAFTER-TEXT\n\n## Compaction instruction\nKEEP-TEXT'
   const mk = (on: any, ctx: { pct: number; turns: number }, seen: string[]) => {
     on('session.turns', async () => ({ value: ctx.turns }))
@@ -223,9 +223,8 @@ describe('compaction cycle (review of the agent 101 draft)', () => {
     return makeWorld(on, {
       files: new Map([['/w/b/.kinitro-ai-domain', 'beta\n']]), cwd: '/w/b', root: '/w/b', sid: 'S8',
       verbs: {
-        'list-edges': () => ({ result: JSON.stringify({ edges: [{ node: { code: 'GLIB' } }] }) }),
-        'list-nodes': () => ({ result: JSON.stringify({ nodes: [{ name: 'Briefing: kinitro.ai agents in Claude', code: 'GDOC' }] }) }),
-        'load-node-content': (a: any) => ({ result: JSON.stringify(a.nodeCode === 'GDOC' ? { contentTypeCode: 'md', body: G } : { contentTypeCode: 'other', body: null }) }),
+        'get-briefing': () => ({ result: JSON.stringify({ status: 'ok', instructions: [{ type: 'instruction-agent101', source: 'aiagent', text: G }] }) }),
+        'load-node-content': () => ({ result: JSON.stringify({ contentTypeCode: 'other', body: null }) }),
       },
     })
   }

@@ -3,9 +3,10 @@ import type { Register } from 'claude-code'
 import type { DomainChoice } from '../types'
 
 // kinitro-ai harness for Claude. All instruction TEXTS live in kinitro.ai; this file only decides WHEN
-// each section is injected. Layer S (0.23.4): the Agent 101 inside the System instruction every agent of every tenant carries,
-// served by get-briefing; layers G+M: an optional general briefing behind the domain's general-procedures edge, added after S;
-// layer A: the agent node's native instruction-* contents. Nothing is hard-wired to a domain.
+// each section is injected. 0.23.5 (PO 16.10.2026): the briefing is the agent node's instruction set and nothing else.
+// get-briefing returns it per instruction-* type: the AIAgent's text first (incl. the platform Agent 101 it references),
+// the agent node's appended; persona: the node's replaces the AIAgent's. A type missing on both is left out. No domain
+// edge is read. A domain without an agent node is refused with a plain message.
 
 // Todo housekeeping (0.23.1, PO 2026-10-16): the full todo list costs about 3,000 tokens on every prompt of a long list.
 // Every prompt gets a short list (one line per todo) and a push line; the full text only at the first turn, after a
@@ -25,8 +26,6 @@ const READ_TIMEOUT_MS = 3000       // the chat tail and the todo read in prompt.
 
 const SERVER = 'kinitro_ai'
 // Everything is resolved from the seat (current-seat): no domain codes are hard-wired.
-const GENERAL_EDGE = 'general-procedures'                 // association edge from the domain node to the general library section
-const GENERAL_BRIEFING_PREFIX = 'Briefing: kinitro.ai agents in Claude'  // Document in that section: layers G + M
 const WARN_PCT = 70        // auto-compaction fires at 80 % in this environment
 const REWARN_STEP = 5      // warn again when the fill rises this many more points
 const MIRROR_PLATFORM = 'claude-code'   // chat mirror (item 3413): turns go into the agent's kinitro.ai chat via mirror-messaging
@@ -37,7 +36,7 @@ const FETCH_MS = 60000
 const MAX_TEXT = 50000     // chars per prompt / answer sent to the chat
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = 'kinitro-ai.log'
-const VERSION = '0.23.4'
+const VERSION = '0.23.5'
 // update notice (PO 2026-10-16): at the first prompt, compare with the published marketplace.json on the download page
 const UPDATE_BASE = 'https://methos.kinitro.ai/download/plugins/claude/'   // the download page; the environment variable KINITRO_AI_DOWNLOAD_BASE overrides it
 const UPDATE_TIMEOUT_MS = 2500
@@ -406,31 +405,40 @@ function viewOfferText(name: string, link: string): string {
 // 0.23.3: the link a person reads. The ?link= payload is no sign-in (the device cookie is); a domain view or node page
 // opens without it for the signed-in person. The pane still gets the full link (it ties the page to this session).
 // Only the seat selector and a single approval need the payload, so their links are shown as they are.
-// 0.23.4 (PO 16.10.2026): the Agent 101 lives once in the System partition, inside the System instruction that every tenant's
-// agents carry (Default System Instruction). get-briefing returns that instruction at its head for any signed-in tenant user;
-// the plugin takes only the block between these markers, never the rest of the composed briefing (layer A stays its own).
-const SYSTEM_101 = /<!-- kinitro-agent-101[^>]*?begin -->([\s\S]*?)<!-- kinitro-agent-101[^>]*?end -->/
+// 0.23.5 (PO 16.10.2026): the agent node's instruction set, per type, from get-briefing `instructions`. The Agent 101 is a
+// platform template the AIAgent references; it opens the briefing and its own ## headings become sections.
+export const AGENT_101 = 'instruction-agent101'
+export type InstructionSet = Record<string, { text: string; source: string }>
 
-/** The Agent 101 block inside a get-briefing text, or undefined when the text carries none. */
-export function system101(text: unknown): string | undefined {
-  const m = typeof text === 'string' ? SYSTEM_101.exec(text) : null
-  const body = m?.[1]?.trim()
-  return body ? body : undefined
+/** The plain refusal for a domain without an agent node. */
+export function noAgentNodeText(domain: string): string {
+  return `this domain (${domain}) has no agent node; add one (provision-domain-agent or the domain page), then choose the domain again`
 }
 
-/** Adds the domain's optional briefing sections after the System ones: a new title is added; a title the System text already
- *  has gets the domain body appended, unless every line of it is already in the System body (a copy of the same 101). */
-export function addDomainSections(sections: Record<string, string>, extra: Record<string, string>): number {
-  let added = 0
-  for (const [title, body] of Object.entries(extra)) {
-    const have = sections[title]
-    if (have === undefined) { sections[title] = body; added++; continue }
-    const lines = new Set(have.split('\n').map((l) => l.trim()))
-    if (body.split('\n').every((l) => !l.trim() || lines.has(l.trim()))) continue
-    sections[title] = `${have}\n\n**Domain-specific:**\n${body}`
-    added++
+/** The instruction set out of a get-briefing answer, or undefined when the server does not send one (an older API). */
+export function instructionSet(answer: any): InstructionSet | undefined {
+  const list = answer?.instructions
+  if (!Array.isArray(list)) return undefined
+  const set: InstructionSet = {}
+  for (const i of list) {
+    const type = String(i?.type ?? ''), text = typeof i?.text === 'string' ? i.text.trim() : ''
+    if (type && text) set[type] = { text, source: String(i?.source ?? '') }
   }
-  return added
+  return set
+}
+
+/** The briefing sections of an instruction set: the Agent 101 first, then each type into its section (persona replaces,
+ *  the others are appended as "Agent-specific" when the 101 already has that section). A type with no text is left out. */
+export function composeSections(set: InstructionSet, parse: (body: string) => Record<string, string>): Record<string, string> {
+  const sections: Record<string, string> = {}
+  if (set[AGENT_101]) Object.assign(sections, parse(set[AGENT_101].text))
+  for (const [title, type] of Object.entries(A_TYPES)) {
+    const body = set[type]?.text
+    if (!body) continue
+    if (title === S.persona || !sections[title]) sections[title] = body
+    else sections[title] = `${sections[title]}\n\n**Agent-specific:**\n${body}`
+  }
+  return sections
 }
 
 export function readableLink(url: string): string {
@@ -499,49 +507,37 @@ async function loadBriefing($: any) {
       if (sessionRecord && sessionRecord.domain !== slug) await saveRecordDomain($, slug)   // from now on the session owns it
       try { await update($, boundA, () => slug) } catch { /* ignore */ }
       domainId = d.id; agentId = d.defaultAgentNodeId
-      if (!agentId) throw new Error(`domain '${slug}' has no default agent node`)
+      if (!agentId) throw new Error(noAgentNodeText(slug))
     }
+    if (!agentId) throw new Error(noAgentNodeText(seat?.domain?.name ?? 'bound domain'))
     const [dom, agent] = await Promise.all([mcp($, 'get-node', { nodeId: domainId }), mcp($, 'get-node', { nodeId: agentId })])
     const domainCode: string = dom?.code, agentCode: string = agent?.code
     if (!domainCode || !agentCode) throw new Error('domain or agent node code not resolvable')
-    const sections: Record<string, string> = {}
+    // the agent node's instruction set (server: AIAgent first, agent node appended, persona replaced)
     const layers: string[] = []
-    let gCode: string | undefined
-    // Layer S (0.23.4): the Agent 101 from the System instruction, for every session in every tenant; no edge needed
+    let set: InstructionSet | undefined
     try {
-      const s101 = system101((await mcp($, 'get-briefing', { moment: 'start' }))?.text)
-      if (s101) { Object.assign(sections, parseSections(s101)); layers.push('S system-101') }
-      else await log($, 'system 101 not found: get-briefing carries no kinitro-agent-101 block')
-    } catch (err: any) { await log($, `system 101 failed: ${err?.message ?? err}`) }
-    // Layers G + M (optional): general briefing behind the domain's general-procedures edge, added after layer S
-    try {
-      const ed = await mcp($, 'list-edges', { nodeCode: domainCode, relation: GENERAL_EDGE, direction: 'outgoing', limit: 5 })
-      const target = ed?.edges?.[0]?.node?.code
-      if (target) {
-        const kids = await mcp($, 'list-nodes', { parentNodeCode: target, limit: 100 })
-        const doc = (kids?.nodes ?? []).find((n: any) => String(n.name).startsWith(GENERAL_BRIEFING_PREFIX))
-        if (doc) {
-          const g = await mcp($, 'load-node-content', { nodeCode: doc.code, contentTypeCode: 'md' })
-          if (g?.body && g?.contentTypeCode === 'md') { const n = addDomainSections(sections, parseSections(g.body)); gCode = doc.code; layers.push(`G+M ${doc.code} (+${n})`) }
-        }
-      }
-    } catch (err: any) { await log($, `general briefing failed: ${err?.message ?? err}`) }
-    // Layer A: agent node
-    const aRes = await Promise.all(Object.entries(A_TYPES).map(async ([title, type]) => {
-      // the verb answers with ANOTHER row when the asked type is missing (platform G7): take the body only when the type matches
-      try { const r = await mcp($, 'load-node-content', { nodeCode: agentCode, contentTypeCode: type }); return [title, (r?.contentTypeCode === type ? r?.body : undefined) as string | undefined] as const }
-      catch { return [title, undefined] as const }
-    }))
-    for (const [title, body] of aRes) {
-      if (!body) continue
-      if (title === S.persona || !sections[title]) sections[title] = body
-      else sections[title] = `${sections[title]}\n\n**Agent-specific:**\n${body}`
-      layers.push(`A ${A_TYPES[title]}`)
+      const gb = await mcp($, 'get-briefing', { moment: 'start' })
+      set = instructionSet(gb)
+      if (gb?.agentNodeId && gb.agentNodeId !== agentId) await log($, `get-briefing served agent node ${gb.agentNodeId} (bound agent ${agentId})`)
+    } catch (err: any) { await log($, `get-briefing failed: ${err?.message ?? err}`) }
+    if (set) layers.push(...Object.entries(set).map(([t, v]) => `${t} (${v.source})`))
+    else {
+      // an API without `instructions`: the agent node's own contents only (no AIAgent tier until the API release)
+      await log($, 'get-briefing carries no instruction set: agent node contents only')
+      set = {}
+      await Promise.all([AGENT_101, ...Object.values(A_TYPES)].map(async (type) => {
+        // the verb answers with ANOTHER row when the asked type is missing (platform G7): take the body only when the type matches
+        try { const r = await mcp($, 'load-node-content', { nodeCode: agentCode, contentTypeCode: type }); if (r?.contentTypeCode === type && r?.body) set![type] = { text: String(r.body), source: 'node' } }
+        catch { /* missing = left out */ }
+      }))
+      layers.push(...Object.keys(set).map((t) => `${t} (node)`))
     }
-    personaSource = sections[S.persona] ? `${agentCode} instruction-persona` : 'none'
-    if (!Object.keys(sections).length) throw new Error(`no briefing found: no Agent 101 from get-briefing, no '${GENERAL_EDGE}' edge with a '${GENERAL_BRIEFING_PREFIX}' document on ${domainCode}, and no instruction-* on ${agentCode}`)
+    const sections = composeSections(set, parseSections)
+    personaSource = set['instruction-persona'] ? `${agentCode} instruction-persona (${set['instruction-persona'].source})` : 'none'
+    if (!Object.keys(sections).length) throw new Error(`agent ${agent?.name ?? agentCode} has no instructions yet: no instruction-* on its agent node or its AIAgent`)
     const raw = Object.entries(sections).map(([k, v]) => `## ${k}\n${v}`).join('\n\n')
-    briefing = { raw, sections, code: gCode ?? agentCode, loadedAt: new Date().toISOString(), source: 'kinitro.ai', domainCode, agentCode, domainRef, domainName: dom?.name, agentName: agent?.name, layers: layers.join(', ') }
+    briefing = { raw, sections, code: agentCode, loadedAt: new Date().toISOString(), source: 'kinitro.ai', domainCode, agentCode, domainRef, domainName: dom?.name, agentName: agent?.name, layers: layers.join(', ') }
     briefingError = undefined
     try { await update($, currentA, () => domainRef ?? '') } catch { /* ignore */ }
     try { await $.fs.write(await at($, CACHE_FILE), JSON.stringify(briefing)) } catch { /* ignore */ }

@@ -23,9 +23,9 @@ An **agent seat** ties your kinitro.ai account to a **domain** (your workspace i
 Ask your contact to confirm these points:
 
 1. Your account has an agent seat.
-2. The domain node is linked to the general procedure library with an association edge named `general-procedures`.
-3. The linked section holds a document whose name starts with `Briefing: kinitro.ai agents in Claude`.
-4. The agent node carries its own instructions, or the general briefing alone is enough for you.
+2. The domain has an agent node.
+3. The agent node names an AIAgent that points to the platform instruction templates (including the Agent 101).
+4. The agent node carries its own instructions where it needs more than the AIAgent's.
 
 Points 2 to 4 are explained in the [plugin reference](plugin-reference.md#what-must-be-configured-in-kinitroai). You do not need to do them yourself.
 
@@ -87,7 +87,7 @@ The `probe` status then shows `briefing: MISSING (...)` followed by a reason. Wo
 2. **Run `probe` with action `reload`.** This reads the briefing again.
 3. **Check the sign-in.** If the status says `kinitro.ai tools: none visible`, do step 3 above: open `/mcp`, choose `plugin:kinitro-ai:kinitro_ai` and Authenticate.
 4. **Read the reason in the status line.** The [troubleshooting table](plugin-reference.md#troubleshooting) maps typical messages to a fix.
-5. **Ask your contact** to check the `general-procedures` edge, the briefing document name and the agent instructions.
+5. **Ask your contact** to check the agent node, its AIAgent and the agent instructions.
 
 ## Next steps
 

@@ -37,13 +37,10 @@ The plugin hard-wires no domain. It resolves the domain and agent node from your
 1. `current-seat` is called first. If the connection is bound to one seat, it returns the domain and agent node directly.
 2. If the connection serves several domains, `current-seat` lists the approved domains instead. The plugin then takes this session's **domain slug** (see "Choosing the domain" below), looks it up with `list-domains` and uses that domain and its default agent node. From then on, every kinitro.ai call of the plugin carries `domainRef: <slug>`.
 3. The plugin reads both nodes to get their codes.
-3. **General layers.** It follows the association edge `general-procedures` from the domain node (outgoing, first edge). In the linked section it takes the first Document whose name starts with `Briefing: kinitro.ai agents in Claude` and loads its markdown content. The document is split into sections at each `## ` heading.
-4. **Agent layer.** It reads the agent node's instruction contents (table below) and merges them into the matching sections.
+4. **Agent instruction set (0.23.5).** `get-briefing` returns the agent node's instruction set, one entry per `instruction-*` type (`instruction-agent101`, persona, standing, coldstart, preturn-continue, postcompaction). For every type except persona the AIAgent's text comes first (including the platform Agent 101 template the AIAgent references) and the agent node's own text is appended. For persona the agent node's `instruction-persona` replaces the AIAgent's when it is set. A type missing on both is left out; with no persona there is no Persona section. The Agent 101 opens the briefing and is split into sections at each `## ` heading; the other types go into their sections (table below).
 5. It writes the result to the local cache and logs what was loaded.
 
-If neither the general briefing nor any agent instruction is found, the load fails and the `probe` status shows `MISSING` with the reason.
-
-A failed general briefing does not stop the load. The agent's own instructions are used alone.
+No domain edge is read. A domain without an agent node is refused: "this domain (<slug>) has no agent node; add one". If the agent node and its AIAgent carry no instruction at all, the load fails with "agent <name> has no instructions yet" and the `probe` status shows `MISSING`. Against an API that does not send the instruction set yet, the plugin loads the agent node's own contents only.
 
 ## Choosing the domain
 
@@ -86,9 +83,9 @@ When the persona or working rules changed, the next prompt carries them again.
 | Item | Requirement |
 |---|---|
 | Seat | Your account has an agent seat: a domain and an agent node. On a multi-domain connection the domain must be approved for the connection and have a default agent node. |
-| Edge | The domain node has an association edge with the relation name `general-procedures` to the section that holds the general library. |
-| Briefing document | That section holds a Document whose name **starts with** `Briefing: kinitro.ai agents in Claude`. Its markdown content has one `## ` heading per section (names below). |
-| Agent instructions | Optional, but something must exist: either the briefing or at least one agent instruction. |
+| Agent node | The domain has an agent node (its default agent node). Without one the plugin refuses the binding. |
+| AIAgent | The agent node names an AIAgent whose instruction node points to the platform `instruction-*` templates, including the Agent 101 (`instruction-agent101`). |
+| Agent instructions | Optional on the agent node: its own `instruction-*` contents are appended to the AIAgent's; its `instruction-persona` replaces the AIAgent's. |
 | MCP server | The plugin brings its own: `.mcp.json` declares the HTTP server `kinitro_ai` at `https://methos.kinitro.ai/mcp` (OAuth client `claude-code`, callback port 33418). It shows in `/mcp` as `plugin:kinitro-ai:kinitro_ai`; its tools are named `mcp__plugin_kinitro-ai_kinitro_ai__<verb>`. Sign in once there (Authenticate). Plugin hooks never start the sign-in. See [Server and tool lookup](#server-and-tool-lookup). |
 
 ### Section names
@@ -231,7 +228,8 @@ When no kinitro.ai tool is visible, the `probe` status shows `kinitro.ai tools: 
 | `domain: NOT SET` | The connection serves several domains and this session has no slug | Run `probe` with `set-domain` and the slug from `list-domains`. |
 | `domain_ref_required` in the log or in agent calls | A call without `domainRef` on a multi-domain connection | Update the plugin to 0.10.0 or later. Remind the agent to pass `domainRef`. |
 | `briefing: MISSING (... not approved ...)` | The slug is not approved for this connection | Approve the domain for the connector in kinitro.ai, or choose another slug. |
-| `briefing: MISSING (... no briefing found ...)` | No `general-procedures` edge with a `Briefing: kinitro.ai agents in Claude` document, and no agent instructions | Ask your contact to add the edge and document, or the agent instructions. Then run `probe` with `reload`. |
+| `briefing: MISSING (... has no agent node ...)` | The domain has no agent node | Add one (provision-domain-agent or the domain page), then choose the domain again. |
+| `briefing: MISSING (... has no instructions yet ...)` | Neither the agent node nor its AIAgent carries an `instruction-*` content | Ask your contact to configure the AIAgent's templates or the agent's instructions. Then run `probe` with `reload`. |
 | `kinitro.ai tools: none visible`, or `MISSING (no kinitro.ai tools are visible ...)` | The bundled server is not signed in yet | Open `/mcp`, choose `plugin:kinitro-ai:kinitro_ai` and Authenticate. Send a new message. |
 | The sign-in in `/mcp` fails with a redirect mismatch (redirect URI not registered) | Claude Code sends `http://localhost:33418/callback`; the server accepts only another form of the address | The kinitro.ai server must accept `http://localhost:33418/callback` for the client `claude-code`. Ask your contact at kinitro to register it. |
 | `MISSING` with a message about `tool.call` and `mcp.call`, tools are listed | The server is connected but the call fails | The `probe` status shows the tool prefix and source the plugin found; check that server's sign-in. Send a new message. |

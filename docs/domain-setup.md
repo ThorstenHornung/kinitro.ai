@@ -77,7 +77,7 @@ The domain owner:
 
 1. Sets the purpose and the first Index.
 2. Decides who may see and edit what, including Design mode.
-3. Links the general procedure library with the `general-procedures` edge. See the [plugin reference](plugin-reference.md#what-must-be-configured-in-kinitroai).
+3. Makes sure the domain has an agent node with a configured AIAgent. See the [plugin reference](plugin-reference.md#what-must-be-configured-in-kinitroai).
 4. Reviews the agent's instructions from time to time.
 
 ## Checklist for a new domain
@@ -85,7 +85,7 @@ The domain owner:
 - [ ] Seven sections created, with the lifetimes above
 - [ ] `purpose` written on the domain node
 - [ ] Index on the domain node and in each section
-- [ ] `general-procedures` edge set
+- [ ] Agent node with a configured AIAgent
 - [ ] Agent node has its own instructions
 - [ ] Cloud folder with `00_INDEX.md` in each key folder
 - [ ] Access rights reviewed ([Security and privacy](security-and-privacy.md))

@@ -2,6 +2,17 @@
 
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.5] - 2026-10-16
+
+### Changed
+- The binding loads only the agent node's instruction set (PO 16.10.2026). `get-briefing` returns it per `instruction-*` type (`instruction-agent101`, persona, standing, coldstart, preturn-continue, postcompaction): the AIAgent's text first (including the platform Agent 101 template it references), the agent node's appended; persona: the agent node's replaces the AIAgent's. A type missing on both is left out; no persona means no Persona section.
+- No domain edge is read any more: the `general-procedures` layer and the 0.23.4 marker filter on the composed briefing are gone.
+- A domain without an agent node is refused with "this domain (<slug>) has no agent node; add one ...". An agent with no instruction on either tier: "agent <name> has no instructions yet". No message names an edge.
+- Against an API without the instruction set the plugin loads the agent node's own contents only.
+
+### Tests
+- `tests/agent-node-briefing.test.ts` (7) replaces `tests/system-101.test.ts`; `todo-housekeeping` serves its sections through the Agent 101.
+
 ## [0.23.2] - 2026-10-16
 
 ### Added
