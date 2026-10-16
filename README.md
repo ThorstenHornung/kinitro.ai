@@ -2,11 +2,15 @@
 
 <p align="center"><strong>The agentic collaboration and solution platform.</strong></p>
 
-<p align="center">Beta 0.8</p>
+<p align="center">Beta 0.8 · plugin <code>kinitro-ai</code> 0.23.2</p>
 
 ---
 
 **kinitro.ai lets business users work with AI agents that know their business, follow their procedures and keep their results in one governed place. This repository holds what you need to run a kinitro.ai agent in Claude.**
+
+## About kinitro.ai
+
+kinitro.ai is an AI-native workspace for teams that work with AI agents. Each team or project gets its own **domain**: a governed place where its agents, knowledge, data and work management (tasks, todos, documents) live together. **Agents** in a domain carry a persona, working rules and procedures that the domain owner maintains, so they know the business and act the same way every time. **Knowledge** and memory stay in the domain instead of in a single chat, and every conversation is mirrored back into it. The `kinitro-ai` plugin for Claude Desktop and Claude Code connects Claude to your kinitro.ai tenant through MCP (`https://methos.kinitro.ai/mcp`), briefs Claude as your domain agent and keeps the work in kinitro.ai.
 
 ## What kinitro.ai is
 
@@ -20,7 +24,7 @@
 
 | Path | What it is |
 |---|---|
-| `plugins/kinitro-ai/` | The Claude Code plugin `kinitro-ai` (version 0.23.1). It briefs your agent from kinitro.ai and mirrors each conversation turn into your domain. |
+| `plugins/kinitro-ai/` | The Claude Code plugin `kinitro-ai` (version 0.23.2). It briefs your agent from kinitro.ai and mirrors each conversation turn into your domain. |
 | `.claude-plugin/marketplace.json` | The marketplace entry that lets Claude Code install the plugin. |
 | `docs/` | Guides for users, setup people and partners. |
 | `assets/` | The kinitro ai logo. |
@@ -47,6 +51,27 @@ The plugin is active at once and in every later session. Choose your domain with
 ```
 
 It opens the kinitro.ai domain selection and binds the session to the domain you choose (`/kinitro verum` binds directly). Step-by-step help: [Getting started](docs/getting-started.md).
+
+### Other ways to install
+
+- **Download page (Claude Desktop, Cowork and Claude Code):** [kinitro.ai/download/plugins/claude](https://kinitro.ai/download/plugins/claude/) has the plugin zip for upload under Customize, Plugins, and the step-by-step guide. In Claude Code you can add the served marketplace instead of GitHub:
+
+  ```
+  /plugin marketplace add https://methos.kinitro.ai/download/plugins/claude/marketplace.json
+  /plugin install kinitro-ai@kinitro-ai
+  ```
+
+- **GitHub (Claude Code):** `/plugin marketplace add ThorstenHornung/kinitro.ai`, as in the quick start above.
+
+## Updating the plugin
+
+From 0.23.2 the plugin checks once a day, at the first prompt of a session, whether the download page publishes a newer version, and tells you in one line. In Claude Code, run:
+
+```
+/kinitro update
+```
+
+It runs `claude plugin marketplace update kinitro-ai` and then `claude plugin update kinitro-ai@kinitro-ai`. Claude Code **asks for your permission** before these commands run, so nothing changes without your approval. Then run `/reload-plugins` to load the new version. In Cowork and the Claude desktop app, download the new zip from the download page and upload it again.
 
 ## How the plugin briefs your agent
 
