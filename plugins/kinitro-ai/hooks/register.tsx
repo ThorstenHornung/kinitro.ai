@@ -37,7 +37,7 @@ const FETCH_MS = 60000
 const MAX_TEXT = 50000     // chars per prompt / answer sent to the chat
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = 'kinitro-ai.log'
-const VERSION = '0.23.6'
+const VERSION = '0.24.0'
 // update notice (PO 2026-10-16): at the first prompt, compare with the published marketplace.json on the download page
 const UPDATE_BASE = 'https://methos.kinitro.ai/download/plugins/claude/'   // the download page; the environment variable KINITRO_AI_DOWNLOAD_BASE overrides it
 const UPDATE_TIMEOUT_MS = 2500
@@ -57,7 +57,19 @@ const SNAPSHOT_FILE = '.kinitro-ai-selection.json'   // approved slugs when the 
 const DOMAIN_FILE = '.kinitro-ai-domain'               // folder default: the last domain chosen in this folder; a NEW session starts with it
 const SESSION_DOMAIN_PREFIX = '.kinitro-ai-domain.'    // + session id: written up to 0.19.x, still read once to adopt an older session's choice
 const SESSIONS_DIR = '.kinitro-ai/sessions'            // under the user's home directory: one record per session id
-const NO_DOMAIN_ARG = new Set(['current-seat', 'list-domains'])   // verbs that take no arguments
+const NO_DOMAIN_ARG = new Set(['current-seat', 'list-domains', 'open-domain'])   // a server without session keys: verbs that take no domainRef
+// 0.24.0 (item 4.2.1-3590, PO 19.10.2026): the session key is mandatory. The plugin obtains it with open-domain when the
+// session binds, keeps it in $.state only (per Claude session; never in a file, the outbox, the log or $.store), adds it as
+// domainRef to every call of its own kinitro.ai server, the model's calls included, and never shows it to the model.
+const SESSION_KEY_PREFIX = 'kss_'
+const SESSION_KEY_RX = /kss_[A-Za-z0-9_-]+/g
+const KEY_HELD_TEXT = '[session key held by the kinitro-ai plugin]'
+const KEY_NOTE = 'The kinitro-ai plugin holds this session and passes it on every kinitro.ai call; never pass domainRef yourself.'
+const KEYLESS_VERBS = new Set(['open-domain', 'list-domains', 'current-seat'])   // answer without a key; never re-bound on their refusal
+const REBIND_MS = 30000                    // a refused key is replaced at most this often (one re-bind, no loop)
+const AGENT_ENV = 'KINITRO_AI_AGENT'       // part 6: the agent node (id) this seat works as, set per seat
+const AGENT_FILE = '.kinitro-ai-agent'     // else this file in the session's home folder
+const BUNDLED_RX = /^mcp__plugin_kinitro-ai_.+?__/   // the plugin's own server, under any server name
 // Each user message may start a fresh engine process while the kinitro.ai
 // connector is still connecting: the briefing and the hook state therefore
 // live in files that survive the restart, refreshed from kinitro.ai in the background.
@@ -127,6 +139,152 @@ const testModeA = atom({ plugin: 'kinitro-ai', key: 'testMode' } as const, false
 const startPackA = atom({ plugin: 'kinitro-ai', key: 'startPack' } as const, false)          // inject the session-start package on the next prompt (after binding a domain)
 const contextKeyA = atom({ plugin: 'kinitro-ai', key: 'contextKey' } as const, '')            // domain + hash of persona/rules the agent last received
 const boundA = atom({ plugin: 'kinitro-ai', key: 'bound' } as const, null as string | null)   // this session's slug, held by the host: survives reloads and a changed working folder
+const sessionKeyA = atom({ plugin: 'kinitro-ai', key: 'sessionKey' } as const, null as string | null)   // 0.24.0: this Claude session's kinitro.ai session key, host-held for this session only
+const secondNoticeA = atom({ plugin: 'kinitro-ai', key: 'secondNotice' } as const, false)                // 0.24.0: the second connection was told in this session
+
+// ---- session key (0.24.0) -----------------------------------------------------
+let legacy = false            // open-domain gave no session key: a server older than session keys; the slug goes in domainRef as before
+let binding = false           // the plugin itself opens the session now (its own open-domain is no change by the agent)
+let keySlug: string | undefined   // the domain the key's session works in, as far as this module knows
+let followSeat = false        // the agent called open-domain itself: the binding follows the session's working domain
+let reloadDue = false         // ... at the next prompt
+let pendingApproval: { slug: string; request: string; link: string } | undefined
+let rebindP: Promise<boolean> | undefined
+let lastRebind = 0
+let bindLock: Promise<unknown> = Promise.resolve()
+
+// $.state holds the key for the Claude session (it survives a reload and a compaction); the module keeps a mirror, because
+// every $.state read of one dispatch sees one moment and would miss a key written earlier in the same dispatch.
+let keyMirror: string | null | undefined   // undefined = not read since this module loaded
+async function heldKey($: any): Promise<string | undefined> {
+  if (keyMirror !== undefined) return keyMirror ?? undefined
+  try { keyMirror = (await read($, sessionKeyA)) ?? null } catch { return undefined }
+  return keyMirror ?? undefined
+}
+async function keepKey($: any, key: string | null) {
+  keyMirror = key
+  try { await update($, sessionKeyA, () => key) } catch { /* ignore */ }
+}
+
+/** The session key of an open-domain answer, or undefined. */
+export function sessionKeyOf(text: string): string | undefined {
+  try { const k = JSON.parse(text)?.sessionKey; return typeof k === 'string' && k.startsWith(SESSION_KEY_PREFIX) ? k : undefined } catch { return undefined }
+}
+
+/** The answer as the model may read it: no sessionKey, no sessionKeyMessage, no slug instruction, no kss_ value anywhere. */
+export function scrubKey(text: string): string {
+  let out = text
+  try {
+    const j = JSON.parse(text)
+    if (j && typeof j === 'object' && !Array.isArray(j) && j.status !== 'error' && ('sessionKey' in j || 'sessionKeyMessage' in j || /domainRef/.test(String(j.message ?? '')))) {
+      const { sessionKey: _k, sessionKeyMessage: _m, ...rest } = j
+      if (/domainRef/.test(String(rest.message ?? ''))) delete rest.message
+      out = JSON.stringify({ ...rest, session: KEY_NOTE })
+    }
+  } catch { /* not JSON: the pattern below still applies */ }
+  return out.replace(SESSION_KEY_RX, KEY_HELD_TEXT)
+}
+
+/** A refusal that means: this call has no valid session key (none, a slug in its place, unknown, of another sign-in). */
+export function isKeyRefusal(text: string): boolean {
+  return /session_key_required/.test(text) || (/domain_ref_unknown/.test(text) && /session key/i.test(text))
+}
+
+// a tool result as text, whatever its shape
+function resultText(r: any): string {
+  if (typeof r?.text === 'string') return r.text
+  if (typeof r?.result === 'string') return r.result
+  if (typeof r?.deny === 'string') return r.deny
+  return r?.result === undefined ? '' : JSON.stringify(r.result)
+}
+
+// the arguments of one call: the key on every call (current-seat and list-domains too); a server without keys: the slug as before
+function withSession(e: any, verb: string, key: string | undefined): any {
+  if (key) return { ...e, domainRef: key }
+  if (legacy && domainRef && e.domainRef === undefined && !NO_DOMAIN_ARG.has(verb)) return { ...e, domainRef }
+  return e
+}
+
+// part 6: the agent node this seat works as, from the seat's own setting; undefined = the domain's default
+async function seatAgent($: any): Promise<string | undefined> {
+  let v: string | undefined
+  try { v = await $.env.get('KINITRO_AI_AGENT') } catch { /* ignore */ }
+  v = (v ?? '').trim() || (await readFileTrim($, await at($, AGENT_FILE)))
+  if (!v) return undefined
+  if (/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(v)) return v
+  await log($, `seat setting ${AGENT_ENV} / ${AGENT_FILE} is not an agent node id: ignored`)
+  return undefined
+}
+
+function serial<T>(f: () => Promise<T>): Promise<T> {
+  const p = bindLock.then(f, f)
+  bindLock = p.catch(() => undefined)
+  return p
+}
+
+function approvalText(slug: string): string {
+  return `kinitro.ai asks the person to approve ${slug} for this session. Show the user this link as it is: ${pendingApproval?.link || '(no link given)'} . After the approval bind again: mcp__kinitro-ai__probe with action "set-domain" and domain "${slug}"`
+}
+
+// P1/P5: start this Claude session's kinitro.ai session in a domain (no key yet: open-domain mints one), or add the domain
+// to the session (with the key: no new key). A domain the sign-in has not approved goes through the approval link first.
+async function openSession($: any, pick: { slug?: string; id?: string }): Promise<any> {
+  return serial(async () => {
+    binding = true
+    try {
+      const doms = await mcp($, 'list-domains', {})
+      const d = (doms?.domains ?? []).find((x: any) => (pick.id ? String(x.id) === pick.id : x.slug === pick.slug))
+      if (!d) throw new Error(pick.id ? `domain ${pick.id} not found in list-domains` : `domain slug '${pick.slug}' not found in list-domains`)
+      const slug = String(d.slug)
+      const held = await heldKey($)
+      if (held && keySlug === slug) return d
+      const agent = await seatAgent($)
+      const pend = pendingApproval?.slug === slug ? pendingApproval : undefined
+      let r: any
+      try {
+        r = await mcp($, 'open-domain', pend ? { request: pend.request } : { domain: String(d.id), ...(agent ? { agent } : {}) })
+      } catch (err: any) {
+        const a = err?.answer
+        if (a?.code === 'seat_approval_required' && a?.request) {
+          pendingApproval = { slug, request: String(a.request), link: String(a.approvalLink ?? a.approvalUrl ?? '') }
+          throw new Error(approvalText(slug))
+        }
+        if (pend) pendingApproval = undefined
+        throw err
+      }
+      if (r?.status === 'pending') throw new Error(approvalText(slug))
+      if (pend) pendingApproval = undefined
+      if (r?.status === 'denied' || r?.status === 'expired') throw new Error(`the person did not approve ${slug} (${r.status})`)
+      const key = await heldKey($)
+      legacy = !key
+      keySlug = key ? slug : undefined
+      await log($, key ? `session ${held ? 'now also works in' : 'started in'} ${slug}${agent ? ' at the agent node of the seat setting' : ''}` : `open-domain gave no session key: a server without session keys; the domain goes on every call as before`)
+      return d
+    } finally { binding = false }
+  })
+}
+
+// P7: a refused key (or none) is replaced once by a new session in the session's domain; at most once per REBIND_MS
+async function rebindOnce($: any): Promise<boolean> {
+  if (binding) return false
+  if (rebindP) return rebindP
+  const now = Date.now()
+  if (now - lastRebind < REBIND_MS) return false
+  lastRebind = now
+  rebindP = (async () => {
+    try {
+      const slug = domainRef ?? (await readDomainFile($))
+      if (!slug) return false
+      await keepKey($, null); keySlug = undefined
+      await openSession($, { slug })
+      const ok = !!(await heldKey($))
+      await log($, ok ? `re-bound: a new session in ${slug}` : `re-bind in ${slug} gave no session key`)
+      return ok
+    } catch (err: any) { await log($, `re-bind failed: ${String(err?.message ?? err).slice(0, 300)}`); return false }
+    finally { rebindP = undefined }
+  })()
+  return rebindP
+}
 
 // ---- the session's home folder and record (0.20.0) ---------------------------
 type SessionRecord = { sessionId: string; home: string; domain?: string | null; startedAt: string; updatedAt?: string }
@@ -221,21 +379,41 @@ export function resolveKinitroTools(names: string[]): { prefix: string; source: 
   return undefined
 }
 
+/** 0.24.0 (criterion 8, choice 1b): the prefixes of kinitro.ai servers in the session that are not the plugin's own. */
+export function secondConnections(names: string[]): string[] {
+  const seats = names.filter((n) => n.endsWith(`__${SEAT_VERB}`) && !BUNDLED_RX.test(n))
+  const found = seats.filter((n) => n.startsWith(USER_PREFIX) || n.startsWith(CONNECTOR_PREFIX) || /kinitro|methos/i.test(n))
+  return [...new Set(found.map((n) => n.slice(0, -SEAT_VERB.length)))]
+}
+
+/** The one sentence that tells the person about a second connection and how to remove it. */
+export function secondConnectionText(prefixes: string[]): string {
+  const how = prefixes.map((p) => (p === USER_PREFIX ? 'claude mcp remove kinitro_ai' : p === CONNECTOR_PREFIX ? 'disconnect the kinitro.ai connector in the claude.ai settings' : `remove ${p.slice(5, -2)} in /mcp`))
+  return `A second kinitro.ai connection is present in this session (${prefixes.map((p) => p.slice(5, -2)).join(', ')}); the kinitro-ai plugin uses only its own connection, so remove the other one (${how.join('; ')}).`
+}
+
+// 0.24.0: the plugin works only with its own server (choice 1b); the fallback to a user server, the claude.ai connector or
+// any other server is withdrawn. Until the bundled server is listed, the list is read again at every call.
 let toolPrefix: string | undefined
 let toolSource: KinitroSource | undefined
-let toolResolvedAt = 0
-const RESOLVE_AGAIN_MS = 60000   // a fallback source is looked at again after this long: the bundled server may have been authenticated meanwhile
+let seconds: string[] = []
+let secondChecked = false
 async function kinitroTools($: any): Promise<{ prefix: string | undefined; source: KinitroSource | undefined }> {
-  let now = Date.now()
-  try { now = await $.clock.now() } catch { /* the wall clock */ }
-  const fresh = now - toolResolvedAt < RESOLVE_AGAIN_MS
-  if (toolPrefix && (toolSource === 'bundled' || fresh)) return { prefix: toolPrefix, source: toolSource }
+  if (toolPrefix) return { prefix: toolPrefix, source: toolSource }
   try {
     const names: string[] = (await $.tool.list()).map((t: any) => String(t.name))
     const found = resolveKinitroTools(names)
-    toolPrefix = found?.prefix; toolSource = found?.source; toolResolvedAt = now
-  } catch { /* keep what was found before; else nothing is visible */ }
+    toolPrefix = found?.source === 'bundled' ? found.prefix : undefined
+    toolSource = toolPrefix ? 'bundled' : undefined
+    seconds = secondConnections(names)
+  } catch { /* nothing is visible */ }
   return { prefix: toolPrefix, source: toolSource }
+}
+
+// the second connections in the session now (for the notice; read until it was told)
+async function secondConnectionsNow($: any): Promise<string[]> {
+  try { seconds = secondConnections((await $.tool.list()).map((t: any) => String(t.name))) } catch { /* keep the last */ }
+  return seconds
 }
 
 // the prefix to show or to name in texts: the resolved one, else the bundled name
@@ -243,34 +421,47 @@ async function kinitroPrefix($: any): Promise<string> {
   return (await kinitroTools($)).prefix ?? BUNDLED_PREFIX
 }
 
-async function mcp($: any, tool: string, args0: Record<string, unknown>) {
-  const args = domainRef && !NO_DOMAIN_ARG.has(tool) && args0.domainRef === undefined ? { ...args0, domainRef } : args0
+// one call through the plugin's own server: the tool path (its tool.call hook adds the key), else the direct MCP route
+// (which no hook sees, so the key is added and an answer's key adopted here too). An error answer is final, not retried
+// on the other route; the thrown error carries the parsed answer.
+async function mcpOnce($: any, tool: string, args: Record<string, unknown>): Promise<{ text: string; isError: boolean }> {
   const { prefix, source } = await kinitroTools($)
-  // nothing visible (the server may still be connecting or not signed in): try the bundled name, then the user server name
-  const prefixes = prefix ? [prefix] : [BUNDLED_PREFIX, USER_PREFIX]
-  const errs1: string[] = [], errs2: string[] = []
-  let text: string | undefined
-  for (const p of prefixes) {
-    try {
-      const r: any = await $.tool.call({ tool: `${p}${tool}`, ...args })
-      if (r.deny) throw new Error(`denied: ${r.deny}`)
-      const t = r.text ?? (typeof r.result === 'string' ? r.result : JSON.stringify(r.result))
-      if (r.isError) throw new Error(`${tool}: ${String(t).slice(0, 300)}`)
-      text = t; route = 'tool.call'; break
-    } catch (err: any) { errs1.push(String(err?.message ?? err)) }
+  const p = prefix ?? BUNDLED_PREFIX   // nothing visible yet (connecting, not signed in): the bundled name
+  const errs: string[] = []
+  try {
+    const r: any = await $.tool.call({ tool: `${p}${tool}`, ...args })
+    if (r.deny) throw new Error(`denied: ${r.deny}`)
+    route = 'tool.call'
+    const t = resultText(r)
+    if (tool === 'open-domain' && !r.isError) { const k = sessionKeyOf(t); if (k) await keepKey($, k) }   // where no hook stripped it first
+    return { text: scrubKey(t), isError: !!r.isError }
+  } catch (err: any) { errs.push(`tool.call: ${String(err?.message ?? err)}`) }
+  try {
+    const r = await $.mcp.call(p.slice(5, -2), tool, args)
+    const t = (r.content ?? []).map((b: any) => (b.type === 'text' ? b.text : '')).join('')
+    route = 'mcp.call'
+    if (tool === 'open-domain' && !r.isError) { const k = sessionKeyOf(t); if (k) await keepKey($, k) }
+    return { text: scrubKey(t), isError: !!r.isError }
+  } catch (err: any) { errs.push(`mcp.call: ${String(err?.message ?? err)}`) }
+  throw new Error(`${source ? '' : NO_TOOLS + ' '}${errs.join(' | ')}`)
+}
+
+async function mcp($: any, tool: string, args0: Record<string, unknown>) {
+  const callArgs = async () => {
+    const { domainRef: given, ...rest } = args0 as Record<string, unknown>
+    const key = await heldKey($)
+    if (key) return { ...rest, domainRef: key }
+    if (legacy) { const slug = given ?? (NO_DOMAIN_ARG.has(tool) ? undefined : domainRef); return slug ? { ...rest, domainRef: slug } : rest }
+    return given !== undefined ? { ...rest, domainRef: given } : rest
   }
-  if (text === undefined) {
-    for (const p of prefixes) {
-      try {
-        const r = await $.mcp.call(p.slice(5, -2), tool, args)
-        const t = (r.content ?? []).map((b: any) => (b.type === 'text' ? b.text : '')).join('')
-        if (r.isError) throw new Error(`${tool}: ${t.slice(0, 300)}`)
-        text = t; route = 'mcp.call'; break
-      } catch (err: any) { errs2.push(String(err?.message ?? err)) }
-    }
+  let out = await mcpOnce($, tool, await callArgs())
+  if (out.isError && !binding && !KEYLESS_VERBS.has(tool) && isKeyRefusal(out.text) && (await rebindOnce($))) out = await mcpOnce($, tool, await callArgs())
+  if (out.isError) {
+    const err: any = new Error(`${tool}: ${out.text.slice(0, 300)}`)
+    try { err.answer = JSON.parse(out.text) } catch { /* not JSON */ }
+    throw err
   }
-  if (text === undefined) throw new Error(`${source ? '' : NO_TOOLS + ' '}tool.call: ${errs1.join(' ; ')} | mcp.call: ${errs2.join(' ; ')}`)
-  try { return JSON.parse(text) } catch { return { text } }
+  try { return JSON.parse(out.text) } catch { return { text: out.text } }
 }
 
 function parseSections(body: string): Record<string, string> {
@@ -342,7 +533,7 @@ async function refreshChoices($: any) {
     if (!approved.length && seat?.domain?.id) approved.push({ slug: '', name: String(seat.domain.name ?? 'seat-bound') })
     await update($, approvedA, () => approved)
     const anySlug = domainRef ?? approved.find((d) => d.slug)?.slug
-    if (anySlug) {
+    if (anySlug && (legacy || (await heldKey($)))) {   // 0.24.0: the page is asked for within the session only
       const r = await mcp($, 'open-page', { target: 'selector', domainRef: anySlug })
       if (r?.url) await update($, selectorUrlA, () => String(r.url))
     }
@@ -487,11 +678,42 @@ async function loadBriefing($: any) {
   lastLoadTry = Date.now()
   await noteCwd($)
   try {
-    const seat = await mcp($, 'current-seat', {})
-    let domainId: string | undefined = seat?.domain?.id, agentId: string | undefined = seat?.agentNode?.id
-    if (domainId && agentId) domainRef = undefined   // legacy: the connection is bound to one seat
-    else {
-      // multi-domain connection: the session names its domain by slug
+    // 0.24.0: the session key decides the seat. A held key is asked first; a refused one is dropped and a new session started.
+    let key = await heldKey($)
+    let seat: any
+    if (key) {
+      try { seat = await mcp($, 'current-seat', {}) } catch (err: any) {
+        if (!isKeyRefusal(String(err?.message ?? err))) throw err
+        await log($, 'the session key was refused: a new session is started'); await keepKey($, null); key = undefined; keySlug = undefined
+      }
+    }
+    if (!key) seat = await mcp($, 'current-seat', {})
+    const owned = async (slug: string) => {   // from now on the session owns this domain
+      domainRef = slug; needsDomain = undefined
+      if (sessionRecord && sessionRecord.domain !== slug) await saveRecordDomain($, slug)
+      try { await update($, boundA, () => slug) } catch { /* ignore */ }
+    }
+    const domainById = async (id: unknown) => (id ? ((await mcp($, 'list-domains', {}))?.domains ?? []).find((x: any) => String(x.id) === String(id)) : undefined)
+    let domainId: string | undefined, agentId: string | undefined
+    if (key) {
+      // a session: its working domain is the seat of the key's row; another chosen domain is added to it (no new key)
+      const want = followSeat ? undefined : await readDomainFile($)
+      followSeat = false
+      let cur = await domainById(seat?.domain?.id)
+      if (want && cur?.slug !== want) { await openSession($, { slug: want }); seat = await mcp($, 'current-seat', {}); cur = await domainById(seat?.domain?.id) }
+      const slug = cur?.slug ? String(cur.slug) : want
+      if (!slug || !seat?.domain?.id) throw new Error('current-seat with the session key names no domain')
+      await owned(slug); keySlug = slug; legacy = false
+      domainId = seat.domain.id; agentId = seat.agentNode?.id
+    } else if (seat?.domain?.id && seat?.agentNode?.id) {
+      // a connection bound to one seat (pinned address): its session starts in that domain too
+      try {
+        const d = await openSession($, { id: String(seat.domain.id) })
+        if (await heldKey($)) { await owned(String(d.slug)); seat = await mcp($, 'current-seat', {}) } else domainRef = undefined
+      } catch (err: any) { await log($, `seat-bound connection without a session: ${String(err?.message ?? err).slice(0, 300)}`); domainRef = undefined }
+      domainId = seat?.domain?.id; agentId = seat?.agentNode?.id
+    } else {
+      // the session names its domain: its own choice, else the one approved domain
       const approved: any[] = seat?.approved ?? []
       const slug = (await readDomainFile($)) ?? (approved.length === 1 ? approved[0].slug : undefined)
       if (!slug) {
@@ -499,14 +721,10 @@ async function loadBriefing($: any) {
         try { await update($, approvedA, () => approved.map((x: any) => ({ slug: String(x.slug), name: String(x.name) }))); await update($, chooserA, () => true); await update($, currentA, () => null) } catch { /* ignore */ }
         throw new Error(needsDomain)
       }
-      const doms = await mcp($, 'list-domains', {})
-      const d = (doms?.domains ?? []).find((x: any) => x.slug === slug)
-      if (!d) throw new Error(`domain slug '${slug}' not found in list-domains`)
-      if (!d.approved) throw new Error(`domain '${slug}' is not approved for this connection`)
-      domainRef = slug; needsDomain = undefined
-      if (sessionRecord && sessionRecord.domain !== slug) await saveRecordDomain($, slug)   // from now on the session owns it
-      try { await update($, boundA, () => slug) } catch { /* ignore */ }
-      domainId = d.id; agentId = d.defaultAgentNodeId
+      const d = await openSession($, { slug })
+      await owned(slug)
+      if (await heldKey($)) { seat = await mcp($, 'current-seat', {}); domainId = seat?.domain?.id ?? d.id; agentId = seat?.agentNode?.id ?? d.defaultAgentNodeId }
+      else { domainId = d.id; agentId = d.defaultAgentNodeId }   // a server without session keys
       if (!agentId) throw new Error(noAgentNodeText(slug))
     }
     if (!agentId) throw new Error(noAgentNodeText(seat?.domain?.name ?? 'bound domain'))
@@ -678,8 +896,12 @@ async function flushOutbox($: any) {
   try {
     const box = await readJson<OutEntry[]>($, OUTBOX_FILE, [])
     let changed = false
+    let sid = ''
+    try { sid = await $.session.id() } catch { /* ignore */ }
+    const keyed = !!(await heldKey($))
     for (const o of box) {
       if (o.sent) continue
+      if (keyed && o.sessionId !== sid) continue   // P8: the outbox is shared by the sessions of one folder; each sends its own turns with its own key
       const ref = o.domainRef ?? domainRef
       if (!ref && needsDomain) break       // no domain yet: send after binding
       try {
@@ -759,7 +981,14 @@ async function contextPercent($: any): Promise<number | undefined> {
 
 async function toolsLine($: any): Promise<string> {
   const { prefix, source } = await kinitroTools($)
-  return source ? `kinitro.ai tools: ${prefix}* (source: ${SOURCE_LABEL[source]})` : `kinitro.ai tools: none visible (${AUTH_HINT})`
+  const other = seconds.length ? ` · not used: ${seconds.map((p) => p.slice(5, -2)).join(', ')} (a second kinitro.ai connection)` : ''
+  return (source ? `kinitro.ai tools: ${prefix}* (source: ${SOURCE_LABEL[source]})` : `kinitro.ai tools: none visible (${AUTH_HINT})`) + other
+}
+
+async function sessionLine($: any): Promise<string> {
+  if (await heldKey($)) return `session: session key held for this Claude session (never shown)${keySlug ? `, working domain ${keySlug}` : ''}`
+  if (legacy) return 'session: the server gives no session key (older server): the domain goes on every call'
+  return `session: none yet${pendingApproval ? ` (waiting for the approval of ${pendingApproval.slug})` : ''}`
 }
 
 async function statusText($: any): Promise<string> {
@@ -769,6 +998,7 @@ async function statusText($: any): Promise<string> {
     `briefing: ${briefing ? `domain ${briefing.domainCode ?? '?'} / agent ${briefing.agentCode ?? '?'} (${briefing.raw.length} chars, source ${briefing.source}, loaded ${briefing.loadedAt}, route ${route})` : `MISSING (${briefingError})`}`,
     `domain: ${domainRef ?? (needsDomain ? 'NOT SET - ' + needsDomain : 'seat-bound connection')} · session home ${homeDir ?? '-'} · record ${recordPath ?? 'none (no user home or session id)'}`,
     await toolsLine($),
+    await sessionLine($),
     `refresh: ${(await read($, testModeA)) ? 'test mode, every 2 min' : 'daily'} · instructions loaded ${briefing?.loadedAt ?? '-'}`,
     `layers: ${briefing?.layers ?? '-'}`,
     `sections: ${briefing ? Object.keys(briefing.sections).join(' | ') : '-'} · persona from ${personaSource}`,
@@ -1122,6 +1352,31 @@ export const register: Register = (on) => {
     return next(e)
   })
 
+  // 0.24.0 (P3, P4, P6, P7): every call of the plugin's own kinitro.ai server, the model's included. The session key goes in
+  // domainRef (a slug the model passes is replaced); a refused key is replaced once by a new session and the call repeated
+  // once; a key in an answer is kept and stripped before the model reads it. Other kinitro.ai connections do not match the
+  // matcher, so no key ever goes through them.
+  on('tool.call', { tool: BUNDLED_RX }, async ($, e: any, next) => {
+    const verb = String(e.tool).replace(BUNDLED_RX, '')
+    if (!verb || verb === 'authenticate' || verb === 'complete_authentication') return next(e)
+    let key = await heldKey($)
+    if (!key && !legacy && !binding && !KEYLESS_VERBS.has(verb) && (await rebindOnce($))) key = await heldKey($)
+    let r: any = await next(withSession(e, verb, key))
+    if (r?.isError && !binding && !KEYLESS_VERBS.has(verb) && isKeyRefusal(resultText(r)) && (await rebindOnce($))) {
+      key = await heldKey($)
+      if (key) r = await next(withSession(e, verb, key))
+    }
+    const text = resultText(r)
+    if (verb === 'open-domain' && !r?.isError && !r?.deny) {
+      const k = sessionKeyOf(text)
+      if (k) { await keepKey($, k); legacy = false }
+      if (!binding) { followSeat = true; reloadDue = true; await log($, 'open-domain called by the agent: the binding follows the session at the next prompt') }
+    }
+    const clean = scrubKey(text)
+    if (clean === text) return r
+    return r?.isError ? { deny: clean } : { result: clean }
+  }).catch(($, e: any, next) => (next.called ? next(e) : { deny: 'kinitro-ai: the session check failed; try the call again.' }))
+
   on('tool.call', { tool: 'mcp__kinitro-ai__probe' }, async ($, e: any) => {
     const action = e.action ?? 'status'
     if (action === 'open-domain') return { result: await openDomainView($) }
@@ -1221,7 +1476,14 @@ export const register: Register = (on) => {
         if (slug) { await bindDomain($, slug); viewOfferPending = true; await log($, `pending binding finished for ${slug}`); break }
       }
     } catch (err: any) { await log($, `pending binding failed: ${err?.message ?? err}`) }
-    if (briefing && !needsDomain) {
+    if (reloadDue) {
+      // 0.24.0: the agent called open-domain itself; the binding follows the session's working domain
+      reloadDue = false
+      const was = domainRef, kept = briefing
+      await loadBriefing($)
+      if (!briefing) briefing = kept
+      else if (domainRef !== was) await update($, startPackA, () => true)
+    } else if (briefing && !needsDomain) {
       const age = Date.now() - Date.parse(briefing.loadedAt ?? '1970-01-01')
       const limit = (await read($, testModeA)) ? TEST_REFRESH_MS : REFRESH_MS
       // a local copy (plugin restarted while the connector was still connecting) is replaced at the next prompt, not only after a day
@@ -1241,6 +1503,17 @@ export const register: Register = (on) => {
     const injected: string[] = ['marker']
     // update notice: first prompt only; one line when the download page publishes a newer version
     if (turns === 0 && !(e as any).agentId) { const note = await updateCheck($); if (note) { blocks.push(note); injected.push('Update notice') } }
+    // 0.24.0 (criterion 8): a second kinitro.ai connection is told once per Claude session; the plugin never uses it
+    if (!(e as any).agentId && !secondChecked && !(await read($, secondNoticeA))) {
+      secondChecked = true   // looked at once per module load; told once per Claude session
+      const others = await secondConnectionsNow($)
+      if (others.length) {
+        blocks.push(`Tell the user once, in this sentence: "${secondConnectionText(others)}" Do not use that connection for kinitro.ai work in this session.`)
+        injected.push('Second connection')
+        await update($, secondNoticeA, () => true)
+        await log($, `second kinitro.ai connection told: ${others.join(', ')}`)
+      }
+    }
     if (needsDomain) {
       const approved = await read($, approvedA)
       const url = await read($, selectorUrlA)
@@ -1260,7 +1533,7 @@ export const register: Register = (on) => {
       if (msgs.length) { blocks.push(`New messages in your kinitro.ai chat (${msgs.length}), sent there since your last turn - read them and answer in your reply where they concern the work:\n${msgs.map((m) => `- ${m.at ? String(m.at).slice(0, 16).replace('T', ' ') + ' ' : ''}${m.from ? '(' + m.from + ') ' : ''}${m.text.slice(0, 2000)}`).join('\n')}`); injected.push('Chat inbox') }
     }
     if (needsDomain) { /* domain block above */ }
-    else if (domainRef) blocks[0] += ` · domain ${domainRef} (pass domainRef:'${domainRef}' on every ${await kinitroPrefix($)}* call)`
+    else if (domainRef) blocks[0] += ` · domain ${domainRef} (the plugin passes this session on every ${await kinitroPrefix($)}* call; never pass domainRef yourself and never ask for a session key)`
     const add = (key: string, title: string, why: string) => {
       const t = sec(title)
       if (!t) return

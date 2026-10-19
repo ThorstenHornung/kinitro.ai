@@ -29,11 +29,11 @@ describe('update notice', () => {
     expect(updateNotice('0.23.2', '0.23.2', PAGE)).toBeUndefined()
   })
   test('higher: one line at the first prompt, from the download page', async ($, on) => {
-    const { seen, fetched } = mk(on, ok('0.24.0'))
+    const { seen, fetched } = mk(on, ok('0.25.0'))
     await probe($, 'reload')
     await $.prompt.submit({ text: 'a', origin: { kind: 'composer' } } as any)
     expect(fetched).toEqual([PAGE + 'marketplace.json'])
-    expect(seen[0]).toContain(`kinitro-ai 0.24.0 is available (you run 0.23.6). Claude Code: run /kinitro update. Cowork/Desktop: re-upload the plugin from ${PAGE}.`)
+    expect(seen[0]).toContain(`kinitro-ai 0.25.0 is available (you run 0.24.0). Claude Code: run /kinitro update. Cowork/Desktop: re-upload the plugin from ${PAGE}.`)
   })
   test('equal: no notice', async ($, on) => {
     const { seen, fetched } = mk(on, ok('0.23.2'))
@@ -76,12 +76,12 @@ describe('update notice', () => {
     expect(w.files.get('/w/b/kinitro-ai.log')).toMatch(/update check failed: HTTP 404/)
   })
   test('at most once per 24 h: a recent check is not repeated, its version still gives the notice', async ($, on) => {
-    const { seen, fetched } = mk(on, ok('0.30.0'), [[STATE, JSON.stringify({ updateCheckedAt: Date.now() - 3600_000, updateLatest: '0.24.0' })]])
+    const { seen, fetched } = mk(on, ok('0.30.0'), [[STATE, JSON.stringify({ updateCheckedAt: Date.now() - 3600_000, updateLatest: '0.25.0' })]])
     await start($)
     await probe($, 'reload')
     await $.prompt.submit({ text: 'a' } as any)
     expect(fetched).toEqual([])
-    expect(seen[0]).toContain('kinitro-ai 0.24.0 is available')
+    expect(seen[0]).toContain('kinitro-ai 0.25.0 is available')
   })
   test('a check older than 24 h fetches again and stores the time and version', async ($, on) => {
     const { w, fetched } = mk(on, ok('0.23.2'), [[STATE, JSON.stringify({ updateCheckedAt: Date.now() - 25 * 3600_000, updateLatest: '0.24.0' })]])
@@ -94,7 +94,7 @@ describe('update notice', () => {
     expect(Math.abs(Date.now() - st.updateCheckedAt)).toBeLessThan(3600_000)
   })
   test('not at a later prompt', async ($, on) => {
-    const { seen, fetched } = mk(on, ok('0.24.0'), [], 3)
+    const { seen, fetched } = mk(on, ok('0.25.0'), [], 3)
     await probe($, 'reload')
     await $.prompt.submit({ text: 'a' } as any)
     expect(fetched).toEqual([])

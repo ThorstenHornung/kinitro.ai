@@ -2,6 +2,23 @@
 
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.24.0] - 2026-10-19
+
+### Changed (item 4.2.1-3590, PO 19.10.2026: the session key is mandatory)
+- The plugin obtains this Claude session's kinitro.ai session key itself: at the binding it looks the domain up with `list-domains` and calls `open-domain` with the domain id (P1). The key is kept in the session-scoped host state (`$.state`, value `sessionKey`) only: it survives a compaction and a reload, a new Claude session gets a new key, and it is never written to the session record, `.kinitro-ai-domain`, the state file, the cache, the outbox, the log or `$.store` (P2).
+- A `tool.call` hook on the plugin's own server (`mcp__plugin_kinitro-ai_<server>__*`, matcher by RegExp) adds the key as `domainRef` to every call, the agent's own calls included and `current-seat` and `list-domains` too; a `domainRef` the agent passes is replaced (P3). The key in an `open-domain` answer is kept and stripped, with `sessionKeyMessage` and any "Pass domainRef=" instruction, before the agent reads the answer (P4).
+- `/kinitro <domain>`, the band buttons, `set-domain` and `selection-done` call `open-domain` with the key: the domain is added to the session, no new key (P5). A domain this sign-in has not approved answers with the approval link; after the approval the binding waits with `request=`.
+- The plugin works only with its own server (criterion 8, choice 1b): the fallback to a user `kinitro_ai` server, the claude.ai connector or any other server is withdrawn. A second kinitro.ai connection is told once per Claude session in one sentence, with how to remove it, and never gets the key (P6).
+- `session_key_required` or an unknown session key: the plugin starts a new session once (at most once per 30 seconds) and repeats the call once. Against a server whose `open-domain` gives no session key (older than session keys) the domain slug goes on every call as before (P7).
+- The outbox keeps the slug only; with a session key each Claude session sends only its own turns, since the outbox file is shared by the sessions of one folder (P8).
+- Seat choice (part 6): the agent node id from `KINITRO_AI_AGENT` or `.kinitro-ai-agent` in the session's home folder is passed as `agent` to `open-domain`.
+- Withdrawn texts that taught the slug: the marker line now says "the plugin passes this session on every ... call; never pass domainRef yourself", `/kinitro` step 5 and its fallback no longer call kinitro.ai tools with a slug.
+- `probe` status: a `session:` line (key held, never shown; older server; none yet or waiting for approval) and `not used: ...` for a second connection.
+
+### Tests
+- `tests/session-key.test.ts` (13): pure parts (`sessionKeyOf`, `scrubKey`, `isKeyRefusal`, `secondConnections`); against a server that mints keys and refuses every verb without one: the key from `open-domain` at the binding and on every later call; the key in no file, log, probe answer or prompt block; the agent's call rewritten and its `open-domain` answer stripped and adopted; a further domain without a new key; a refused key replaced once, no loop; the slug against an older server; the second connection told once and never given the key; another session's outbox turn not sent; the seat setting passed as `agent`. Red on 0.23.6: 9 of 9 behaviour tests fail, the file does not load (the pure functions do not exist).
+- `tests/tool-resolution.test.ts`: the claude.ai connector alone is no longer used. `tests/ui-comments.test.ts`: the mock moved to the bundled server name. `tests/update-notice.test.ts`: the newer published version is 0.25.0.
+
 ## [0.23.6] - 2026-10-16
 
 ### Changed

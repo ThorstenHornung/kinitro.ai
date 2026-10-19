@@ -34,17 +34,22 @@ The marker line and every injected block start from the sections of the briefing
 
 The plugin hard-wires no domain. It resolves the domain and agent node from your connection:
 
-1. `current-seat` is called first. If the connection is bound to one seat, it returns the domain and agent node directly.
-2. If the connection serves several domains, `current-seat` lists the approved domains instead. The plugin then takes this session's **domain slug** (see "Choosing the domain" below), looks it up with `list-domains` and uses that domain and its default agent node. From then on, every kinitro.ai call of the plugin carries `domainRef: <slug>`.
-3. The plugin reads both nodes to get their codes.
-4. **Agent instruction set (0.23.6).** `get-briefing` returns the agent node's instruction set, one entry per `instruction-*` type (persona, standing, coldstart, preturn-continue, postcompaction), composed by the server: the AIAgent's text first, then the agent node's; the agent node's `instruction-persona` replaces the AIAgent's. A type missing on both is empty and left out; with no persona there is no Persona section. The Agent 101 reaches the agent through `{{mx:include "<nodeGuid>:<contentType>"}}` in the coldstart and postcompaction templates, expanded by the server. The plugin injects each text as given into its section (table below); "Context nearly full" and "Compaction instruction" are read from a `## ` heading of that name inside a given text.
-5. It writes the result to the local cache and logs what was loaded.
+1. **Session key (0.24.0).** kinitro.ai runs a verb only for a call that carries a valid session key (item 4.2.1-3590). The plugin obtains the key itself: it looks the session's domain up with `list-domains` and calls `open-domain` with that domain (and the agent node of the seat setting, below). The answer carries the session key. The plugin keeps it for this Claude session only, in the session-scoped host state (`$.state`): it survives a compaction and a reload of the plugin, and a new Claude session gets a new key. The key is never written to a file (not the session record, `.kinitro-ai-domain`, the state file, the cache, the outbox or the log), never kept across sessions and never shown to the agent.
+2. `current-seat` with the key returns the domain and agent node of the session. Without a key, `current-seat` lists the approved domains; the plugin then takes this session's **domain** (see "Choosing the domain" below) and starts the session there. A connection bound to one seat (a pinned address) starts its session in that seat's domain.
+3. From then on the plugin adds the key as `domainRef` to **every** call of its own kinitro.ai server, `current-seat` and `list-domains` included, and to every call the agent makes through it. A `domainRef` the agent passes is replaced by the key. The key in an `open-domain` answer is removed before the agent reads the answer.
+4. A call that kinitro.ai refuses with `session_key_required`, or with an unknown session key (the sign-in was renewed, the session ended), makes the plugin start a new session once and repeat the call once.
+5. **Older server.** When `open-domain` answers without a session key (a server older than session keys), the plugin passes the domain as before.
+6. The plugin reads both nodes to get their codes.
+7. **Agent instruction set (0.23.6).** `get-briefing` returns the agent node's instruction set, one entry per `instruction-*` type (persona, standing, coldstart, preturn-continue, postcompaction), composed by the server: the AIAgent's text first, then the agent node's; the agent node's `instruction-persona` replaces the AIAgent's. A type missing on both is empty and left out; with no persona there is no Persona section. The Agent 101 reaches the agent through `{{mx:include "<nodeGuid>:<contentType>"}}` in the coldstart and postcompaction templates, expanded by the server. The plugin injects each text as given into its section (table below); "Context nearly full" and "Compaction instruction" are read from a `## ` heading of that name inside a given text.
+8. It writes the result to the local cache and logs what was loaded.
 
 No domain edge is read. A domain without an agent node is refused: "this domain (<slug>) has no agent node; add one". If the agent node and its AIAgent carry no instruction at all, the load fails with "agent <name> has no instructions yet" and the `probe` status shows `MISSING`. Against an API that does not send the instruction set yet, the plugin loads the agent node's own contents only.
 
 ## Choosing the domain
 
-One kinitro.ai connection can serve several domains, for example two agents of the same person. Each Claude session works for exactly one domain, named by its slug (`list-domains` shows the slugs, for example `verum`).
+One kinitro.ai connection can serve several domains, for example two agents of the same person. Each Claude session has its own kinitro.ai session (its own key) and works in one domain at a time, named by its slug (`list-domains` shows the slugs, for example `verum`). Choosing another domain adds it to the same session with the same key; the domains opened before stay open. Two Claude sessions in the same domain are two kinitro.ai sessions.
+
+**Seat setting (0.24.0, part 6).** A seat that works as one particular agent node of the domain names its id in the environment variable `KINITRO_AI_AGENT`, or in the file `.kinitro-ai-agent` (one line, the id) in the session's home folder. The plugin passes it as `agent` to `open-domain`. Without the setting the domain's default agent node is used.
 
 | Situation | What the plugin does |
 |---|---|
@@ -61,7 +66,7 @@ How you choose:
 - **In the chat** (where no row can be drawn, for example a cloud session in the Claude app): the agent asks you with selection buttons, gives you the selection link if your domain is missing, and binds the session.
 - **By hand:** ask the agent to call `probe` with action `set-domain` and the slug.
 
-Choosing writes the session record and the folder default of the session's home folder. The agent must pass `domainRef` on its own kinitro.ai calls too; the plugin reminds it in the marker line of every prompt.
+Choosing writes the session record and the folder default of the session's home folder (the slug only) and calls `open-domain` with the session key: the domain is added to the session and becomes its working domain; no new key is made. A domain this sign-in has not approved yet answers with an approval link: the agent shows it to you, and after your approval the binding is repeated. The agent never passes `domainRef` itself; the marker line of every prompt says so. If the agent calls `open-domain` itself, the plugin follows the session's working domain at the next prompt.
 
 Run two agents at the same time in two Claude sessions, each with its own working directory and its own `.kinitro-ai-domain`.
 
@@ -116,7 +121,8 @@ The plugin keeps its files in the session's **home folder** (see [Choosing the d
 | `.kinitro-ai-domain.<session id>` | Written up to 0.19.x. Read once to take over an older session's domain. | Yes. |
 | `.kinitro-ai-domain` | The folder default: the last slug chosen in this folder. | Yes. |
 | `.kinitro-ai-state.json` | Hook state: test flag, chat mirroring switch (`mirror`), last update check (`updateCheckedAt`, `updateLatest`, 0.23.2), last context warning, compaction flag, counters. | Yes. Counters restart; the next first prompt checks for an update again. |
-| `.kinitro-ai-outbox.json` | Turns not yet confirmed by kinitro.ai (prompt and answer text). At most 200 entries. | Yes, but unsent turns are lost. |
+| `.kinitro-ai-outbox.json` | Turns not yet confirmed by kinitro.ai (prompt and answer text, the domain slug; never a session key). Each Claude session sends only its own turns. At most 200 entries. | Yes, but unsent turns are lost. |
+| `.kinitro-ai-agent` | Optional seat setting: the agent node id this seat works as (0.24.0). | Yes. The domain's default agent node is used. |
 | `.kinitro-ai-inbox.json` | New messages fetched from the agent's chat, and the fetch cursor. | Yes. |
 
 The cache holds the briefing text. Do not commit these files to a repository. The `.gitignore` of this repository already excludes them.
@@ -190,7 +196,7 @@ Every prompt carries the agent's todo list (the `memory-instruction` set of its 
 
 People can comment on a control of a kinitro.ai page: a question or a remark on a grid, a chart or a field. The plugin tells the agent about the open ones.
 
-- At every prompt the plugin calls `list-ui-comments` once, with the session's `domainRef` and `limit: 20` (open comments only). The call runs alongside the todo read and is cut off after 10 seconds. Errors are logged, never shown.
+- At every prompt the plugin calls `list-ui-comments` once, with the session key and `limit: 20` (open comments only). The call runs alongside the todo read and is cut off after 10 seconds. Errors are logged, never shown.
 - When comments are open, the prompt gets the block `## Open UI comments (N)`: one line per comment with time, author, page title and code, control id and type, the text (one line, at most 500 characters) and the comment id. A last line asks the agent to read the comment's session state when it needs the user's view, to act within the approved todos or ask, and to answer with `answer-ui-comment`.
 - The block is sent only when the set of open comment ids changed since the last time in this session, every 30 minutes as a reminder, and on the first prompt, after a compaction and after choosing a domain. The last set and time are kept in `.kinitro-ai-state.json`.
 - `probe` action `comments` checks now; the `probe` status shows `ui comments: N open`.
@@ -204,20 +210,13 @@ People can comment on a control of a kinitro.ai page: a question or a remark on 
 
 ## Server and tool lookup
 
-The plugin finds the kinitro.ai tools in the session's tool list: a server counts when it has a `current-seat` tool. It uses the first source that exists:
+From 0.24.0 the plugin works **only with its own bundled server**, `mcp__plugin_kinitro-ai_kinitro_ai__<verb>` (`probe` status: `source: bundled plugin server`). A second kinitro.ai connection in the same Claude session (a `kinitro_ai` server of yours, `mcp__kinitro_ai__<verb>`, the claude.ai connector, `mcp__claude_ai_Kinitro__<verb>`, or any other server with `current-seat` and "kinitro" or "methos" in its name) is not used, and the plugin never adds the session key to its calls. The plugin tells you once per Claude session, in one sentence, that a second connection is present and how to remove it (`claude mcp remove kinitro_ai`, or disconnect the connector in the claude.ai settings); the `probe` status lists it as `not used`. Calls the agent makes through such a connection are plain connector calls: kinitro.ai asks them for their own session key.
 
-| Order | Source | Tool names | `probe` status says |
-|---|---|---|---|
-| 1 | The plugin's bundled server | `mcp__plugin_kinitro-ai_kinitro_ai__<verb>` | `source: bundled plugin server` |
-| 2 | A `kinitro_ai` server of the user (user, project or local scope) | `mcp__kinitro_ai__<verb>` | `source: user server` |
-| 3 | The claude.ai connector inside Claude Code | `mcp__claude_ai_Kinitro__<verb>` | `source: claude.ai connector` |
-| 4 | Any other server with `current-seat` and "kinitro" or "methos" in its name | `mcp__<name>__<verb>` | `source: other server` |
-
-Claude Code itself decides which servers are connected: a server of yours at the same address as the plugin's is used instead of the plugin's copy (precedence local, project, user, plugin, claude.ai connectors), and a claude.ai connector at the same address is hidden in favour of the plugin's server. The plugin only chooses among what is listed. A fallback source is looked at again after 60 seconds, so the bundled server is taken as soon as it is signed in.
+Claude Code itself decides which servers are connected: a server of yours at the same address as the plugin's is used instead of the plugin's copy (precedence local, project, user, plugin, claude.ai connectors), so the plugin then finds no server of its own until you remove yours.
 
 When no kinitro.ai tool is visible, the `probe` status shows `kinitro.ai tools: none visible (Open /mcp, choose plugin:kinitro-ai:kinitro_ai and Authenticate)`, a failed binding returns the same instruction as `sayToUser`, and the `MISSING (...)` reason begins with it.
 
-**Claude Code cloud sessions do not load plugins**, so the bundled server is not available there. A `kinitro_ai` server in the session configuration or the claude.ai connector is used instead.
+**Claude Code cloud sessions do not load plugins**, so the bundled server is not available there. A `kinitro_ai` server in the session configuration or the claude.ai connector works there as a plain connection: the agent calls `open-domain` once and passes the returned session key on every call, as the connector's own texts say.
 
 ## Troubleshooting
 
@@ -226,14 +225,15 @@ When no kinitro.ai tool is visible, the `probe` status shows `kinitro.ai tools: 
 | `/kinitro` is not found | Plugin not installed or not active in this session | Run the install command again. Choose user scope. Start a new session. |
 | Install fails | `git` missing, github.com not reachable, or an SSH attempt fails | Install `git`; check the network; set `CLAUDE_CODE_PLUGIN_PREFER_HTTPS=1` and retry. |
 | `domain: NOT SET` | The connection serves several domains and this session has no slug | Run `probe` with `set-domain` and the slug from `list-domains`. |
-| `domain_ref_required` in the log or in agent calls | A call without `domainRef` on a multi-domain connection | Update the plugin to 0.10.0 or later. Remind the agent to pass `domainRef`. |
+| `session_key_required` in the log or in agent calls | A call without a session key (an older plugin, or a second connection) | Update the plugin to 0.24.0 or later (`/kinitro update`). Remove a second kinitro.ai connection. |
+| `session: none yet (waiting for the approval of ...)` | The domain needs your approval for this sign-in | Open the approval link the agent showed, approve, then choose the domain again. |
 | `briefing: MISSING (... not approved ...)` | The slug is not approved for this connection | Approve the domain for the connector in kinitro.ai, or choose another slug. |
 | `briefing: MISSING (... has no agent node ...)` | The domain has no agent node | Add one (provision-domain-agent or the domain page), then choose the domain again. |
 | `briefing: MISSING (... has no instructions yet ...)` | Neither the agent node nor its AIAgent carries an `instruction-*` content | Ask your contact to configure the AIAgent's templates or the agent's instructions. Then run `probe` with `reload`. |
 | `kinitro.ai tools: none visible`, or `MISSING (no kinitro.ai tools are visible ...)` | The bundled server is not signed in yet | Open `/mcp`, choose `plugin:kinitro-ai:kinitro_ai` and Authenticate. Send a new message. |
 | The sign-in in `/mcp` fails with a redirect mismatch (redirect URI not registered) | Claude Code sends `http://localhost:33418/callback`; the server accepts only another form of the address | The kinitro.ai server must accept `http://localhost:33418/callback` for the client `claude-code`. Ask your contact at kinitro to register it. |
 | `MISSING` with a message about `tool.call` and `mcp.call`, tools are listed | The server is connected but the call fails | The `probe` status shows the tool prefix and source the plugin found; check that server's sign-in. Send a new message. |
-| The status shows `source: claude.ai connector` or `user server` although the plugin is installed | Your own server or connector is used, or the bundled one is not signed in | Harmless. To use the bundled server, remove the other one or sign in to `plugin:kinitro-ai:kinitro_ai` in `/mcp`. |
+| The status shows `not used: ... (a second kinitro.ai connection)` | Your own server or the claude.ai connector is in the session | Remove it (`claude mcp remove kinitro_ai`, or disconnect the connector in the claude.ai settings) and sign in to `plugin:kinitro-ai:kinitro_ai` in `/mcp`. |
 | Briefing source stays `cache` | Connector was not up in time, or loading keeps failing | Run `probe` with `reload`. Read `kinitro-ai.log`. |
 | A section never arrives | Heading missing or misspelled in the briefing document | Use the exact names above. Run `probe` with `arm-test`. |
 | Persona does not change after editing in kinitro.ai | The old briefing is cached | Run `probe` with `reload`, then `invalidate-context`. |

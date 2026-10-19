@@ -12,6 +12,8 @@ declare module 'claude-code' {
       testMode: boolean
       startPack: boolean
       contextKey: string
+      sessionKey: string | null
+      secondNotice: boolean
     }
   }
 }

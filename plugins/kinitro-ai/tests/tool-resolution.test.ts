@@ -27,7 +27,7 @@ describe('which kinitro.ai tools the plugin uses', () => {
 })
 
 // The module's state persists in a file, so the integration cases are one test: the session changes as the user acts.
-test('the session follows the tool list: nothing visible, then authenticated bundled server, with the source in the status', async ($, on) => {
+test('the session follows the tool list: nothing visible, a second connection only (not used), then the authenticated bundled server', async ($, on) => {
   const clock = mock.clock(on)
   const w = makeWorld(on, { files: new Map([['/w/.kinitro-ai-domain', 'beta\n']]), cwd: '/w', root: '/w', sid: 'T1', tools: [] })
 
@@ -38,14 +38,14 @@ test('the session follows the tool list: nothing visible, then authenticated bun
   const set: any = await ($ as any).tool.call({ tool: 'mcp__kinitro-ai__probe', action: 'set-domain', domain: 'beta' })
   expect(String(set.text ?? set.result)).toContain(`"sayToUser":"No kinitro.ai tools are visible. ${AUTH_HINT}."`)
 
-  // only the claude.ai connector: used, and named as such
+  // 0.24.0 (criterion 8, choice 1b): only the claude.ai connector: never used by the plugin, named as a second connection
   w.tools = [seat(C)]; w.prefixes.length = 0
   const conn = await probe($, 'reload')
-  expect(conn).toContain(`kinitro.ai tools: ${C}* (source: claude.ai connector)`)
-  expect(conn).toContain('domain: beta')
-  expect(new Set(w.prefixes)).toEqual(new Set([C]))
+  expect(conn).toContain(`kinitro.ai tools: none visible (${AUTH_HINT}) · not used: claude_ai_Kinitro (a second kinitro.ai connection)`)
+  expect(conn).not.toContain('domain: beta')
+  expect(w.prefixes).toEqual([])
 
-  // the user authenticates the bundled server: it is preferred as soon as it is listed (the fallback is looked at again)
+  // the user authenticates the bundled server: it is used as soon as it is listed
   w.tools = [seat(C), seat(U), seat(B)]; w.prefixes.length = 0
   await clock.advance(61_000)
   const bundled = await probe($, 'reload')

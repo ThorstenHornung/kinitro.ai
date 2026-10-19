@@ -54,7 +54,7 @@ The plugin ships the kinitro.ai MCP server, so there is no separate connector to
 
 Plugin hooks never start a sign-in, so until you have done this the plugin finds no kinitro.ai tools and tells you: "Open /mcp, choose plugin:kinitro-ai:kinitro_ai and Authenticate".
 
-**You already have the kinitro.ai connector or a `kinitro_ai` server of your own?** No harm. A `kinitro_ai` server of yours at the same address is used instead of the plugin's copy. The claude.ai connector at the same address is hidden in favour of the plugin's server. The plugin finds the tools under any of these names, and the `probe` status says which one it uses (bundled plugin server, user server or claude.ai connector).
+**You already have the kinitro.ai connector or a `kinitro_ai` server of your own?** From 0.24.0 the plugin works only with its own server: it keeps this session's kinitro.ai session key and passes it on every call, and it never sends the key through another connection. Remove the other one (`claude mcp remove kinitro_ai`, or disconnect the connector in the claude.ai settings); the plugin tells you once per session when it sees one.
 
 **Claude Code cloud sessions do not load plugins.** Use the terminal or the Code tab of the desktop app.
 

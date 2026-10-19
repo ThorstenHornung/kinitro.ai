@@ -2,7 +2,7 @@
 
 <p align="center"><strong>The agentic collaboration and solution platform.</strong></p>
 
-<p align="center">Beta 0.8 · plugin <code>kinitro-ai</code> 0.23.6</p>
+<p align="center">Beta 0.8 · plugin <code>kinitro-ai</code> 0.24.0</p>
 
 ---
 
@@ -24,7 +24,7 @@ kinitro.ai is an AI-native workspace for teams that work with AI agents. Each te
 
 | Path | What it is |
 |---|---|
-| `plugins/kinitro-ai/` | The Claude Code plugin `kinitro-ai` (version 0.23.6). It briefs your agent from kinitro.ai and mirrors each conversation turn into your domain. |
+| `plugins/kinitro-ai/` | The Claude Code plugin `kinitro-ai` (version 0.24.0). It briefs your agent from kinitro.ai and mirrors each conversation turn into your domain. |
 | `.claude-plugin/marketplace.json` | The marketplace entry that lets Claude Code install the plugin. |
 | `docs/` | Guides for users, setup people and partners. |
 | `assets/` | The kinitro ai logo. |

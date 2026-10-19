@@ -47,7 +47,7 @@ describe('open UI comments', () => {
 
 test('probe comments calls list-ui-comments once and returns the open list and check time', async ($, on) => {
   const calls: any[] = []
-  on('tool.call', { tool: 'mcp__kinitro_ai__list-ui-comments' } as any, async (_$: any, e: any) => {
+  on('tool.call', { tool: 'mcp__plugin_kinitro-ai_kinitro_ai__list-ui-comments' } as any, async (_$: any, e: any) => {
     calls.push(e)
     return { result: JSON.stringify({ status: 'ok', data: { comments: FAKE, truncated: false } }) }
   })
@@ -67,7 +67,7 @@ test('probe comments calls list-ui-comments once and returns the open list and c
 test('a connector that does not answer within 10 s is cut off silently', async ($, on) => {
   const waits: number[] = []
   on('clock.sleep', async (_$, e) => { waits.push(e.ms); return { value: undefined } })   // the wait resolves at once
-  on('tool.call', { tool: 'mcp__kinitro_ai__list-ui-comments' } as any, async () => new Promise(() => {}))
+  on('tool.call', { tool: 'mcp__plugin_kinitro-ai_kinitro_ai__list-ui-comments' } as any, async () => new Promise(() => {}))
   const r: any = await ($ as any).tool.call({ tool: 'mcp__kinitro-ai__probe', action: 'comments' })
   const out = JSON.parse(String(r.text ?? r.result))
   expect(waits).toContain(10000)
