@@ -66,6 +66,7 @@ const SESSION_KEY_RX = /kss_[A-Za-z0-9_-]+/g
 const KEY_HELD_TEXT = '[session key held by the kinitro-ai plugin]'
 const KEY_NOTE = 'The kinitro-ai plugin holds this session and passes it on every kinitro.ai call; never pass domainRef yourself.'
 const KEYLESS_VERBS = new Set(['open-domain', 'list-domains', 'current-seat'])   // answer without a key; never re-bound on their refusal
+const MAY_HAVE_RUN = 'The call may have run; check before repeating a write.'   // confirmation review N2
 const REBIND_MS = 30000                    // a refused key is replaced at most this often (one re-bind, no loop)
 const AGENT_FILE = '.kinitro-ai/agent'     // part 6: the agent node (id) this seat works as, in the PERSON's home folder only (fix round M3:
                                            // never the project folder, never an environment variable a project's settings can set)
@@ -465,7 +466,7 @@ async function mcpOnce($: any, tool: string, args: Record<string, unknown>): Pro
     return { text: scrubKey(t), isError: !!r.isError }
   } catch (err: any) {
     const msg = String(err?.message ?? err)
-    if (prefix) return { text: scrubKey(`${tool}: ${msg}`), isError: true }
+    if (prefix) return { text: scrubKey(`${tool}: ${msg} ${MAY_HAVE_RUN}`), isError: true }
     errs.push(`tool.call: ${msg}`)
   }
   try {
@@ -1411,7 +1412,7 @@ export const register: Register = (on) => {
     return r?.deny !== undefined || r?.isError ? { deny: clean } : { result: clean }
   // fix round M2: fail closed. A failure anywhere in this path answers an error; the call is never run again (not without
   // the key, never a write twice) and nothing of a raw answer reaches the model.
-  }).catch(() => ({ deny: 'kinitro-ai: the call failed in the plugin session check and was not run again. Try it once more.' }))
+  }).catch(() => ({ deny: `kinitro-ai: the call failed in the plugin session check and was not run again. ${MAY_HAVE_RUN}` }))
 
   on('tool.call', { tool: 'mcp__kinitro-ai__probe' }, async ($, e: any) => {
     const action = e.action ?? 'status'

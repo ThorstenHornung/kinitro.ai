@@ -310,3 +310,31 @@ describe('session key, fix round', () => {
     expect(w.sent.filter((s) => s.args.domainRef === 'beta')).toEqual([])
   })
 })
+
+// confirmation review (N2, N3): a deny on the own server is final; a host error that carries a key is scrubbed
+describe('session key, confirmation round', () => {
+  test('L4: a deny on the own server does not fall through to the direct MCP route, and says the call may have run', async ($, on) => {
+    const srv = newSrv()
+    const direct: string[] = []
+    on('mcp.call', async (_$: any, e: any) => { direct.push(e.tool); return { value: { content: [{ type: 'text', text: '{"status":"ok"}' }], isError: false } } })
+    const w = mk(on, srv, [['/w/b/.kinitro-ai-domain', 'beta\n']], [`${B}current-seat`, `${B}list-ui-comments`])
+    await probe($, 'reload')
+    let runs = 0
+    w.verbs = { ...w.verbs!, 'list-ui-comments': () => { runs++; throw new Error('transport broke') } }
+    const r: any = await ($ as any).tool.call({ tool: 'mcp__kinitro-ai__probe', action: 'comments' })
+    expect(runs).toBe(1)
+    expect(direct.filter((t) => t === 'list-ui-comments')).toEqual([])
+    expect(textOf(r)).toContain('The call may have run; check before repeating a write.')
+  })
+
+  test('L2: a host error that carries a key is scrubbed before the probe status and the log', async ($, on) => {
+    const srv = newSrv()
+    // the test kit hands a hook's thrown error on as its own text, so the host error comes as the direct route's error answer
+    on('mcp.call', async () => ({ value: { content: [{ type: 'text', text: 'host broke while sending domainRef=kss_HOSTLEAKVALUE' }], isError: true } }))
+    const w = mk(on, srv, [['/w/b/.kinitro-ai-domain', 'beta\n']], [])   // nothing listed: the direct route answers with the host error
+    const st = await probe($, 'reload')
+    expect(st).toContain('host broke')
+    expect(st).not.toContain('kss_')
+    expect(noKeyInFiles(w)).toEqual([])
+  })
+})
