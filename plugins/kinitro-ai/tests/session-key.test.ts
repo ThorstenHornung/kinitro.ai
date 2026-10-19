@@ -15,7 +15,8 @@ const AGENT_ID = '0f0e0d0c-0b0a-4909-8807-060504030201'
 type Srv = { minted: string[]; working: Record<string, string>; refuseAll?: boolean; agents: unknown[]; legacy?: boolean }
 const ok = (v: unknown) => ({ result: JSON.stringify(v) })
 const refuse = (code: string, message: string) => ({ result: JSON.stringify({ status: 'error', code, message }), isError: true })
-const slugOf = (id: string) => id.replace(/^dom-/, '')
+const refuse2 = (v: unknown) => ({ result: JSON.stringify(v), isError: true })
+const slugOf =(id: string) => id.replace(/^dom-/, '')
 
 function keyedServer(srv: Srv): Record<string, (a: Record<string, unknown>) => unknown> {
   const valid = (a: Record<string, unknown>) => !srv.refuseAll && typeof a.domainRef === 'string' && srv.minted.includes(a.domainRef)
@@ -204,10 +205,108 @@ describe('session key', () => {
     expect(noKeyInFiles(w)).toEqual([])
   })
 
-  test('part 6: the seat setting names the agent node passed to open-domain', async ($, on) => {
+  test('part 6 (M3): the seat setting of the person (user home) names the agent node passed to open-domain', async ($, on) => {
+    const srv = newSrv()
+    mk(on, srv, [['/w/b/.kinitro-ai-domain', 'beta\n'], ['/u/.kinitro-ai/agent', AGENT_ID + '\n']])
+    await probe($, 'reload')
+    expect(srv.agents[0]).toBe(AGENT_ID)
+  })
+})
+
+// fix round (SECREVIEW_3590_plugin_2026-10-19.md): M1, M2, M3, L1-L5
+describe('session key, fix round', () => {
+  test('M3: a seat file in the project folder is refused (a cloned repository cannot pick the agent)', async ($, on) => {
     const srv = newSrv()
     mk(on, srv, [['/w/b/.kinitro-ai-domain', 'beta\n'], ['/w/b/.kinitro-ai-agent', AGENT_ID + '\n']])
     await probe($, 'reload')
-    expect(srv.agents[0]).toBe(AGENT_ID)
+    expect(srv.minted).toHaveLength(1)
+    expect(srv.agents[0]).toBeUndefined()
+  })
+
+  test('M3: the approval text names the agent and the domain', async ($, on) => {
+    const srv = newSrv()
+    const w = mk(on, srv)
+    await probe($, 'reload')
+    w.verbs = { ...w.verbs!, 'open-domain': () => refuse2({ status: 'error', code: 'seat_approval_required', request: 'REQ1', to: { domain: 'GAMMA', agentNode: 'Agent G' }, approvalLink: '[Switch domain to GAMMA](https://x/approve)' }) }
+    const set: any = await ($ as any).tool.call({ tool: 'mcp__kinitro-ai__probe', action: 'set-domain', domain: 'gamma' })
+    expect(textOf(set)).toContain('Agent G')
+    expect(textOf(set)).toContain('GAMMA')
+  })
+
+  test('M1: a new Claude session id never sees the key of the session before', async ($, on) => {
+    const srv = newSrv()
+    const w = mk(on, srv)
+    await probe($, 'reload')
+    const first = srv.minted[0]!
+    w.sid = 'K2'   // /clear, or a second session in the same engine process
+    await ($ as any).tool.call({ tool: `${B}list-nodes` })
+    const last = w.sent[w.sent.length - 1]!
+    expect(last.verb).toBe('list-nodes')
+    expect(last.args.domainRef).not.toBe(first)
+  })
+
+  test('M2: a call that fails in the hook path is not run again and answers an error without a key', async ($, on) => {
+    const srv = newSrv()
+    const w = mk(on, srv)
+    await probe($, 'reload')
+    let runs = 0
+    w.verbs = { ...w.verbs!, 'write-thing': () => { runs++; throw new Error('transport broke') } }
+    const r: any = await ($ as any).tool.call({ tool: `${B}write-thing`, value: 1 })
+    expect(runs).toBe(1)
+    expect(r?.deny ?? (r?.isError ? r.text : undefined)).toBeTruthy()
+    let opens = 0
+    w.verbs = { ...w.verbs!, 'open-domain': () => { opens++; throw new Error('minted kss_LEAKEDKEYVALUE then broke') } }
+    const o: any = await ($ as any).tool.call({ tool: `${B}open-domain`, domain: 'dom-gamma' })
+    expect(opens).toBe(1)
+    expect(JSON.stringify(o)).not.toContain('kss_')
+  })
+
+  test('L3: an error answer that carries a key keeps its error shape and loses the key', async ($, on) => {
+    const srv = newSrv()
+    const w = mk(on, srv)
+    await probe($, 'reload')
+    w.verbs = { ...w.verbs!, 'list-nodes': () => refuse2({ status: 'error', code: 'odd', message: 'echo kss_ECHOEDVALUE' }) }
+    const r: any = await ($ as any).tool.call({ tool: `${B}list-nodes` })
+    expect(JSON.stringify(r)).not.toContain('kss_')
+    expect(r?.result).toBeUndefined()
+  })
+
+  test('L1: a lookalike server name never gets the key', async ($, on) => {
+    const srv = newSrv()
+    const w = mk(on, srv)
+    await probe($, 'reload')
+    await ($ as any).tool.call({ tool: 'mcp__plugin_kinitro-ai_kinitro_ai_evil__list-nodes' })
+    const last = w.sent[w.sent.length - 1]!
+    expect(w.prefixes[w.prefixes.length - 1]).toBe('mcp__plugin_kinitro-ai_kinitro_ai_evil__')
+    expect(last.args.domainRef).toBeUndefined()
+  })
+
+  test('the mcp.call route: the key is adopted, passed and never shown; host errors are scrubbed', async ($, on) => {
+    const srv = newSrv()
+    const verbs = keyedServer(srv)
+    const viaMcp: Array<{ tool: string; args: Record<string, unknown> }> = []
+    on('mcp.call', async (_$: any, e: any) => {
+      viaMcp.push({ tool: e.tool, args: e.args })
+      const r: any = (verbs[e.tool] ?? (() => ok({ status: 'ok' })))(e.args ?? {})
+      return { value: { content: [{ type: 'text', text: String(r.result) }], isError: !!r.isError } }
+    })
+    const w = mk(on, srv, [['/w/b/.kinitro-ai-domain', 'beta\n']], [])   // no tool listed: the tool path fails, the direct MCP route answers
+    expect(await probe($, 'reload')).toContain('domain: beta')
+    expect(srv.minted).toHaveLength(1)
+    const after = viaMcp.slice(viaMcp.findIndex((c) => c.tool === 'open-domain') + 1)
+    expect(after.length).toBeGreaterThan(0)
+    expect(after.every((c) => c.args.domainRef === srv.minted[0])).toBe(true)
+    expect(await probe($, 'status')).not.toContain('kss_')
+    expect(noKeyInFiles(w)).toEqual([])
+  })
+
+  test('L5: once a key was held, an answer without a key never switches the session to the slug', async ($, on) => {
+    const srv = newSrv()
+    const w = mk(on, srv)
+    await probe($, 'reload')
+    srv.minted.length = 0; srv.legacy = true   // the key is refused and the next open-domain gives none
+    await ($ as any).tool.call({ tool: `${B}list-nodes` })
+    await ($ as any).tool.call({ tool: `${B}find-nodes` })
+    expect(w.sent.filter((s) => s.args.domainRef === 'beta')).toEqual([])
   })
 })

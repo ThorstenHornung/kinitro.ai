@@ -34,7 +34,7 @@ The marker line and every injected block start from the sections of the briefing
 
 The plugin hard-wires no domain. It resolves the domain and agent node from your connection:
 
-1. **Session key (0.24.0).** kinitro.ai runs a verb only for a call that carries a valid session key (item 4.2.1-3590). The plugin obtains the key itself: it looks the session's domain up with `list-domains` and calls `open-domain` with that domain (and the agent node of the seat setting, below). The answer carries the session key. The plugin keeps it for this Claude session only, in the session-scoped host state (`$.state`): it survives a compaction and a reload of the plugin, and a new Claude session gets a new key. The key is never written to a file (not the session record, `.kinitro-ai-domain`, the state file, the cache, the outbox or the log), never kept across sessions and never shown to the agent.
+1. **Session key (0.24.0).** kinitro.ai runs a verb only for a call that carries a valid session key (item 4.2.1-3590). The plugin obtains the key itself: it looks the session's domain up with `list-domains` and calls `open-domain` with that domain (and the agent node of the seat setting, below). The answer carries the session key. The plugin keeps it for this Claude session only, in the session-scoped host state (`$.state`), tied to the Claude session id: it survives a compaction and a reload of the plugin, and a new Claude session (also after `/clear`) never sees the old key and gets a new one. The key is never written to a file (not the session record, `.kinitro-ai-domain`, the state file, the cache, the outbox or the log), never kept across sessions and never shown to the agent.
 2. `current-seat` with the key returns the domain and agent node of the session. Without a key, `current-seat` lists the approved domains; the plugin then takes this session's **domain** (see "Choosing the domain" below) and starts the session there. A connection bound to one seat (a pinned address) starts its session in that seat's domain.
 3. From then on the plugin adds the key as `domainRef` to **every** call of its own kinitro.ai server, `current-seat` and `list-domains` included, and to every call the agent makes through it. A `domainRef` the agent passes is replaced by the key. The key in an `open-domain` answer is removed before the agent reads the answer.
 4. A call that kinitro.ai refuses with `session_key_required`, or with an unknown session key (the sign-in was renewed, the session ended), makes the plugin start a new session once and repeat the call once.
@@ -49,7 +49,7 @@ No domain edge is read. A domain without an agent node is refused: "this domain 
 
 One kinitro.ai connection can serve several domains, for example two agents of the same person. Each Claude session has its own kinitro.ai session (its own key) and works in one domain at a time, named by its slug (`list-domains` shows the slugs, for example `verum`). Choosing another domain adds it to the same session with the same key; the domains opened before stay open. Two Claude sessions in the same domain are two kinitro.ai sessions.
 
-**Seat setting (0.24.0, part 6).** A seat that works as one particular agent node of the domain names its id in the environment variable `KINITRO_AI_AGENT`, or in the file `.kinitro-ai-agent` (one line, the id) in the session's home folder. The plugin passes it as `agent` to `open-domain`. Without the setting the domain's default agent node is used.
+**Seat setting (0.24.0, part 6).** A seat that works as one particular agent node of the domain names its id in the file `~/.kinitro-ai/agent` (one line, the id; `%USERPROFILE%\.kinitro-ai\agent` on Windows). Only the person's own home folder counts: a file in the project folder and environment variables are not read, so a repository cannot choose the agent. The plugin passes the id as `agent` to `open-domain`; an approval it needs names the agent and the domain. Without the setting the domain's default agent node is used.
 
 | Situation | What the plugin does |
 |---|---|
@@ -122,7 +122,7 @@ The plugin keeps its files in the session's **home folder** (see [Choosing the d
 | `.kinitro-ai-domain` | The folder default: the last slug chosen in this folder. | Yes. |
 | `.kinitro-ai-state.json` | Hook state: test flag, chat mirroring switch (`mirror`), last update check (`updateCheckedAt`, `updateLatest`, 0.23.2), last context warning, compaction flag, counters. | Yes. Counters restart; the next first prompt checks for an update again. |
 | `.kinitro-ai-outbox.json` | Turns not yet confirmed by kinitro.ai (prompt and answer text, the domain slug; never a session key). Each Claude session sends only its own turns. At most 200 entries. | Yes, but unsent turns are lost. |
-| `.kinitro-ai-agent` | Optional seat setting: the agent node id this seat works as (0.24.0). | Yes. The domain's default agent node is used. |
+| `~/.kinitro-ai/agent` | Optional seat setting in the person's home folder: the agent node id this seat works as (0.24.0). | Yes. The domain's default agent node is used. |
 | `.kinitro-ai-inbox.json` | New messages fetched from the agent's chat, and the fetch cursor. | Yes. |
 
 The cache holds the briefing text. Do not commit these files to a repository. The `.gitignore` of this repository already excludes them.

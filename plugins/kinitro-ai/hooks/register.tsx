@@ -67,9 +67,9 @@ const KEY_HELD_TEXT = '[session key held by the kinitro-ai plugin]'
 const KEY_NOTE = 'The kinitro-ai plugin holds this session and passes it on every kinitro.ai call; never pass domainRef yourself.'
 const KEYLESS_VERBS = new Set(['open-domain', 'list-domains', 'current-seat'])   // answer without a key; never re-bound on their refusal
 const REBIND_MS = 30000                    // a refused key is replaced at most this often (one re-bind, no loop)
-const AGENT_ENV = 'KINITRO_AI_AGENT'       // part 6: the agent node (id) this seat works as, set per seat
-const AGENT_FILE = '.kinitro-ai-agent'     // else this file in the session's home folder
-const BUNDLED_RX = /^mcp__plugin_kinitro-ai_.+?__/   // the plugin's own server, under any server name
+const AGENT_FILE = '.kinitro-ai/agent'     // part 6: the agent node (id) this seat works as, in the PERSON's home folder only (fix round M3:
+                                           // never the project folder, never an environment variable a project's settings can set)
+const BUNDLED_RX = /^mcp__plugin_kinitro-ai_kinitro_ai__/   // the plugin's own server, exactly (fix round L1)
 // Each user message may start a fresh engine process while the kinitro.ai
 // connector is still connecting: the briefing and the hook state therefore
 // live in files that survive the restart, refreshed from kinitro.ai in the background.
@@ -139,7 +139,7 @@ const testModeA = atom({ plugin: 'kinitro-ai', key: 'testMode' } as const, false
 const startPackA = atom({ plugin: 'kinitro-ai', key: 'startPack' } as const, false)          // inject the session-start package on the next prompt (after binding a domain)
 const contextKeyA = atom({ plugin: 'kinitro-ai', key: 'contextKey' } as const, '')            // domain + hash of persona/rules the agent last received
 const boundA = atom({ plugin: 'kinitro-ai', key: 'bound' } as const, null as string | null)   // this session's slug, held by the host: survives reloads and a changed working folder
-const sessionKeyA = atom({ plugin: 'kinitro-ai', key: 'sessionKey' } as const, null as string | null)   // 0.24.0: this Claude session's kinitro.ai session key, host-held for this session only
+const sessionKeyA = atom({ plugin: 'kinitro-ai', key: 'sessionKey' } as const, null as { sid: string; key: string } | null)   // 0.24.0: this Claude session's kinitro.ai session key, host-held for this session only
 const secondNoticeA = atom({ plugin: 'kinitro-ai', key: 'secondNotice' } as const, false)                // 0.24.0: the second connection was told in this session
 
 // ---- session key (0.24.0) -----------------------------------------------------
@@ -148,22 +148,44 @@ let binding = false           // the plugin itself opens the session now (its ow
 let keySlug: string | undefined   // the domain the key's session works in, as far as this module knows
 let followSeat = false        // the agent called open-domain itself: the binding follows the session's working domain
 let reloadDue = false         // ... at the next prompt
-let pendingApproval: { slug: string; request: string; link: string } | undefined
+let pendingApproval: { slug: string; request: string; link: string; domainName: string; agentName: string } | undefined
+let keyEverHeld = false       // fix round L5: once this session held a key it never falls back to the slug
 let rebindP: Promise<boolean> | undefined
 let lastRebind = 0
 let bindLock: Promise<unknown> = Promise.resolve()
 
 // $.state holds the key for the Claude session (it survives a reload and a compaction); the module keeps a mirror, because
 // every $.state read of one dispatch sees one moment and would miss a key written earlier in the same dispatch.
-let keyMirror: string | null | undefined   // undefined = not read since this module loaded
+// Fix round M1: the key is tied to the Claude session id, in $.state and in the mirror. A new session id (/clear, a second
+// session in the same engine process) resets every session-key value of the module and never sees the old key.
+let keyMirror: { sid: string; key: string | null } | undefined
+let stateSid: string | undefined
+function resetSessionKeyState() {
+  keyMirror = undefined; legacy = false; keyEverHeld = false; keySlug = undefined; pendingApproval = undefined
+  lastRebind = 0; followSeat = false; reloadDue = false; secondChecked = false
+}
+async function syncSession($: any): Promise<string> {
+  let sid = ''
+  try { sid = String(await $.session.id()) } catch { /* no session id */ }
+  if (stateSid !== undefined && sid !== stateSid) resetSessionKeyState()
+  stateSid = sid
+  return sid
+}
 async function heldKey($: any): Promise<string | undefined> {
-  if (keyMirror !== undefined) return keyMirror ?? undefined
-  try { keyMirror = (await read($, sessionKeyA)) ?? null } catch { return undefined }
-  return keyMirror ?? undefined
+  const sid = await syncSession($)
+  if (keyMirror?.sid === sid) return keyMirror.key ?? undefined
+  let v: any = null
+  try { v = await read($, sessionKeyA) } catch { return undefined }
+  const key = v && v.sid === sid && typeof v.key === 'string' ? v.key : null
+  keyMirror = { sid, key }
+  if (key) keyEverHeld = true
+  return key ?? undefined
 }
 async function keepKey($: any, key: string | null) {
-  keyMirror = key
-  try { await update($, sessionKeyA, () => key) } catch { /* ignore */ }
+  const sid = await syncSession($)
+  keyMirror = { sid, key }
+  if (key) keyEverHeld = true
+  try { await update($, sessionKeyA, () => (key ? { sid, key } : null)) } catch { /* ignore */ }
 }
 
 /** The session key of an open-domain answer, or undefined. */
@@ -207,12 +229,13 @@ function withSession(e: any, verb: string, key: string | undefined): any {
 
 // part 6: the agent node this seat works as, from the seat's own setting; undefined = the domain's default
 async function seatAgent($: any): Promise<string | undefined> {
-  let v: string | undefined
-  try { v = await $.env.get('KINITRO_AI_AGENT') } catch { /* ignore */ }
-  v = (v ?? '').trim() || (await readFileTrim($, await at($, AGENT_FILE)))
+  let userHome: string | undefined
+  try { userHome = (await $.env.get('HOME')) || (await $.env.get('USERPROFILE')) } catch { /* ignore */ }
+  if (!userHome) return undefined
+  const v = await readFileTrim($, joinPath(userHome, AGENT_FILE))
   if (!v) return undefined
   if (/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(v)) return v
-  await log($, `seat setting ${AGENT_ENV} / ${AGENT_FILE} is not an agent node id: ignored`)
+  await log($, `seat setting ~/${AGENT_FILE} is not an agent node id: ignored`)
   return undefined
 }
 
@@ -223,7 +246,8 @@ function serial<T>(f: () => Promise<T>): Promise<T> {
 }
 
 function approvalText(slug: string): string {
-  return `kinitro.ai asks the person to approve ${slug} for this session. Show the user this link as it is: ${pendingApproval?.link || '(no link given)'} . After the approval bind again: mcp__kinitro-ai__probe with action "set-domain" and domain "${slug}"`
+  const p = pendingApproval
+  return `kinitro.ai asks the person to approve the agent ${p?.agentName || "the domain's default agent"} in the domain ${p?.domainName || slug} for this session. Show the user this link as it is: ${p?.link || '(no link given)'} . After the approval bind again: mcp__kinitro-ai__probe with action "set-domain" and domain "${slug}"`
 }
 
 // P1/P5: start this Claude session's kinitro.ai session in a domain (no key yet: open-domain mints one), or add the domain
@@ -246,7 +270,7 @@ async function openSession($: any, pick: { slug?: string; id?: string }): Promis
       } catch (err: any) {
         const a = err?.answer
         if (a?.code === 'seat_approval_required' && a?.request) {
-          pendingApproval = { slug, request: String(a.request), link: String(a.approvalLink ?? a.approvalUrl ?? '') }
+          pendingApproval = { slug, request: String(a.request), link: String(a.approvalLink ?? a.approvalUrl ?? ''), domainName: String(a.to?.domain ?? slug), agentName: String(a.to?.agentNode ?? '') }
           throw new Error(approvalText(slug))
         }
         if (pend) pendingApproval = undefined
@@ -256,7 +280,8 @@ async function openSession($: any, pick: { slug?: string; id?: string }): Promis
       if (pend) pendingApproval = undefined
       if (r?.status === 'denied' || r?.status === 'expired') throw new Error(`the person did not approve ${slug} (${r.status})`)
       const key = await heldKey($)
-      legacy = !key
+      if (!key && keyEverHeld) throw new Error(`open-domain gave no session key although this session held one: not switched to the domain slug`)
+      legacy = !key   // LEGACY (remove in the release after the server enforces the key): a server older than session keys
       keySlug = key ? slug : undefined
       await log($, key ? `session ${held ? 'now also works in' : 'started in'} ${slug}${agent ? ' at the agent node of the seat setting' : ''}` : `open-domain gave no session key: a server without session keys; the domain goes on every call as before`)
       return d
@@ -344,7 +369,7 @@ async function noteCwd($: any) {
 
 // ---- helpers: top level, because the engine only lets $ flow into these ----
 async function log($: any, line: string) {
-  logLines.push(`${new Date().toISOString()} ${line}`)
+  logLines.push(`${new Date().toISOString()} ${scrubKey(line)}`)   // fix round L2: no key in the log, whatever the line carries
   try { await $.fs.write(await at($, LOG_FILE), logLines.join('\n') + '\n') } catch { /* ignore */ }
 }
 
@@ -403,7 +428,7 @@ async function kinitroTools($: any): Promise<{ prefix: string | undefined; sourc
   try {
     const names: string[] = (await $.tool.list()).map((t: any) => String(t.name))
     const found = resolveKinitroTools(names)
-    toolPrefix = found?.source === 'bundled' ? found.prefix : undefined
+    toolPrefix = found?.prefix === BUNDLED_PREFIX ? found.prefix : undefined   // fix round L1: the exact own server, no lookalike
     toolSource = toolPrefix ? 'bundled' : undefined
     seconds = secondConnections(names)
   } catch { /* nothing is visible */ }
@@ -428,6 +453,9 @@ async function mcpOnce($: any, tool: string, args: Record<string, unknown>): Pro
   const { prefix, source } = await kinitroTools($)
   const p = prefix ?? BUNDLED_PREFIX   // nothing visible yet (connecting, not signed in): the bundled name
   const errs: string[] = []
+  // fix round L4/M2: once the own server is listed, the tool path is the only route and a deny or a failure there is final
+  // (the call may have run; it is never repeated on the direct route). Only while no own tool is listed (nothing can have
+  // run) the direct MCP route is tried.
   try {
     const r: any = await $.tool.call({ tool: `${p}${tool}`, ...args })
     if (r.deny) throw new Error(`denied: ${r.deny}`)
@@ -435,7 +463,11 @@ async function mcpOnce($: any, tool: string, args: Record<string, unknown>): Pro
     const t = resultText(r)
     if (tool === 'open-domain' && !r.isError) { const k = sessionKeyOf(t); if (k) await keepKey($, k) }   // where no hook stripped it first
     return { text: scrubKey(t), isError: !!r.isError }
-  } catch (err: any) { errs.push(`tool.call: ${String(err?.message ?? err)}`) }
+  } catch (err: any) {
+    const msg = String(err?.message ?? err)
+    if (prefix) return { text: scrubKey(`${tool}: ${msg}`), isError: true }
+    errs.push(`tool.call: ${msg}`)
+  }
   try {
     const r = await $.mcp.call(p.slice(5, -2), tool, args)
     const t = (r.content ?? []).map((b: any) => (b.type === 'text' ? b.text : '')).join('')
@@ -443,7 +475,7 @@ async function mcpOnce($: any, tool: string, args: Record<string, unknown>): Pro
     if (tool === 'open-domain' && !r.isError) { const k = sessionKeyOf(t); if (k) await keepKey($, k) }
     return { text: scrubKey(t), isError: !!r.isError }
   } catch (err: any) { errs.push(`mcp.call: ${String(err?.message ?? err)}`) }
-  throw new Error(`${source ? '' : NO_TOOLS + ' '}${errs.join(' | ')}`)
+  throw new Error(scrubKey(`${source ? '' : NO_TOOLS + ' '}${errs.join(' | ')}`))   // fix round L2
 }
 
 async function mcp($: any, tool: string, args0: Record<string, unknown>) {
@@ -761,7 +793,7 @@ async function loadBriefing($: any) {
     try { await $.fs.write(await at($, CACHE_FILE), JSON.stringify(briefing)) } catch { /* ignore */ }
     await log($, `briefing loaded for domain ${domainCode} / agent ${agentCode} via ${route}: ${raw.length} chars, layers ${briefing.layers}`)
   } catch (err: any) {
-    briefingError = String(err?.message ?? err)
+    briefingError = scrubKey(String(err?.message ?? err))
     await log($, `briefing FAILED: ${briefingError}`)
   }
 }
@@ -1372,10 +1404,14 @@ export const register: Register = (on) => {
       if (k) { await keepKey($, k); legacy = false }
       if (!binding) { followSeat = true; reloadDue = true; await log($, 'open-domain called by the agent: the binding follows the session at the next prompt') }
     }
+    // fix round L3: the whole result is looked at; with anything to strip, the answer is built from the scrubbed text only,
+    // and a deny or an error stays an error
     const clean = scrubKey(text)
-    if (clean === text) return r
-    return r?.isError ? { deny: clean } : { result: clean }
-  }).catch(($, e: any, next) => (next.called ? next(e) : { deny: 'kinitro-ai: the session check failed; try the call again.' }))
+    if (clean === text && !/kss_/.test(JSON.stringify(r ?? null))) return r
+    return r?.deny !== undefined || r?.isError ? { deny: clean } : { result: clean }
+  // fix round M2: fail closed. A failure anywhere in this path answers an error; the call is never run again (not without
+  // the key, never a write twice) and nothing of a raw answer reaches the model.
+  }).catch(() => ({ deny: 'kinitro-ai: the call failed in the plugin session check and was not run again. Try it once more.' }))
 
   on('tool.call', { tool: 'mcp__kinitro-ai__probe' }, async ($, e: any) => {
     const action = e.action ?? 'status'
