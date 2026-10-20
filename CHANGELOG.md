@@ -2,6 +2,22 @@
 
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.24.1] - 2026-10-20
+
+### Fixed (item 4.2.1-3764: "approval needed" is no error)
+- A domain that needs the person's approval is a state, not a failure (R1): the plugin keeps the server's plain `approvalUrl` (the Markdown `approvalLink` only as a fallback), the domain and the agent, and builds the label "Approve <Domain>" itself. The approval is held per Claude session in the host state, so a reload never asks the server again.
+- `set-domain` answers at once with `{status: "approval_needed", domain, agent, approvalLink, label, sayToUser, next}`; for a domain already pending without any network call. A binding answers within 8 seconds, else `{status: "binding"}` while it goes on in the background (R3).
+- No retry loop while an approval is pending (R2): the 20-second retry, the start-up refresh and the first-message wait stop. A single background re-check (`open-domain` with the request, never awaited on a tool or turn path) runs at each user turn, on "I approved it" in the band and on `set-domain`/`selection-done` for the pending domain; approved binds, denied or expired clears it with a band note. No second approval request for the same domain (R4).
+- The band shows "<Domain> needs your approval.", the link "Approve <Domain>" and the button "I approved it"; the picker lists the pending domain with that link. The server's prose and Markdown never reach the band; a failed binding shows "kinitro.ai could not bind <domain>. Run /kinitro status for details." (R6).
+- `selection-start` always returns `selectorUrl`, also when the browser pane opened, and the approval link while one is pending; `/kinitro` shows them as links and says the pane was tried too (R7).
+- The per-turn context, while an approval is pending, tells the agent to give the "Approve <Domain>" link as a Markdown link in its first reply and to ask for confirmation; the marker says `briefing pending approval (<slug>)` (R8).
+- A failed Refresh list shows "Refresh failed: <message>" in the band (R9); a later success clears it.
+- The chat mirror holds turns while an approval is pending instead of sending them without a domain (`mirror append failed: domain_ref_required`, R5).
+
+### Tests
+- `tests/approval-flow.test.ts` (14): pure parts; A1 approval_needed with the plain link (control: an approved domain binds); A2 a second set-domain sends nothing new (control: after the yes the bind reads the agent node); A3 five prompts send no `current-seat`, `list-domains` or `{domain}`; A4 the 8-second budget on set-domain and selection-done; A5/A6 the pending entry and no raw text in the band note; A7 `selectorUrl` and the approval link from selection-start; A8 the exact per-turn sentence (control: gone after the yes); A9 the refresh note and its clearing; A10 no mirror call while pending, the queued turn sent with the key after binding; A11 approved and denied from the re-check.
+- `tests/session-key.test.ts` M3 now asserts the `approval_needed` object instead of the thrown prose; the version strings in `session-key` and `update-notice` move to 0.24.1.
+
 ## [0.24.0] - 2026-10-19
 
 ### Changed (item 4.2.1-3590, PO 19.10.2026: the session key is mandatory)

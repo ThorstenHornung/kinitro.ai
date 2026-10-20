@@ -13,6 +13,7 @@ declare module 'claude-code' {
       startPack: boolean
       contextKey: string
       sessionKey: { sid: string; key: string } | null
+      approval: { sid: string; slug: string; request: string; url: string; domainName: string; agentName: string; expiresAt: string } | null
       secondNotice: boolean
     }
   }

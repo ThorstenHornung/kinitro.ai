@@ -37,7 +37,7 @@ const FETCH_MS = 60000
 const MAX_TEXT = 50000     // chars per prompt / answer sent to the chat
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = 'kinitro-ai.log'
-const VERSION = '0.24.0'
+const VERSION = '0.24.1'
 // update notice (PO 2026-10-16): at the first prompt, compare with the published marketplace.json on the download page
 const UPDATE_BASE = 'https://methos.kinitro.ai/download/plugins/claude/'   // the download page; the environment variable KINITRO_AI_DOWNLOAD_BASE overrides it
 const UPDATE_TIMEOUT_MS = 2500
@@ -142,6 +142,8 @@ const contextKeyA = atom({ plugin: 'kinitro-ai', key: 'contextKey' } as const, '
 const boundA = atom({ plugin: 'kinitro-ai', key: 'bound' } as const, null as string | null)   // this session's slug, held by the host: survives reloads and a changed working folder
 const sessionKeyA = atom({ plugin: 'kinitro-ai', key: 'sessionKey' } as const, null as { sid: string; key: string } | null)   // 0.24.0: this Claude session's kinitro.ai session key, host-held for this session only
 const secondNoticeA = atom({ plugin: 'kinitro-ai', key: 'secondNotice' } as const, false)                // 0.24.0: the second connection was told in this session
+// 0.24.1 (item 4.2.1-3764): the approval this Claude session waits for, host-held so a reload never asks the server again
+const approvalA = atom({ plugin: 'kinitro-ai', key: 'approval' } as const, null as Approval | null)
 
 // ---- session key (0.24.0) -----------------------------------------------------
 let legacy = false            // open-domain gave no session key: a server older than session keys; the slug goes in domainRef as before
@@ -149,7 +151,13 @@ let binding = false           // the plugin itself opens the session now (its ow
 let keySlug: string | undefined   // the domain the key's session works in, as far as this module knows
 let followSeat = false        // the agent called open-domain itself: the binding follows the session's working domain
 let reloadDue = false         // ... at the next prompt
-let pendingApproval: { slug: string; request: string; link: string; domainName: string; agentName: string } | undefined
+// 0.24.1 (item 4.2.1-3764): "approval needed" is a normal outcome. The plugin keeps the server's link and label as fields
+// (approvalUrl, approvalLinkText), never the server's prose, and calls open-domain again only when list-domains says the
+// domain is approved (then the approved domain opens at once) or the request ran out. No request= wait (up to 25 s on the
+// server) and no new approval request per retry.
+export type Approval = { sid: string; slug: string; request: string; url: string; domainName: string; agentName: string; expiresAt: string }
+const APPROVAL_FALLBACK_MS = 15 * 60 * 1000   // an answer without expiresAt: ask anew after this long
+let pendingApproval: Approval | undefined
 let keyEverHeld = false       // fix round L5: once this session held a key it never falls back to the slug
 let rebindP: Promise<boolean> | undefined
 let lastRebind = 0
@@ -246,9 +254,90 @@ function serial<T>(f: () => Promise<T>): Promise<T> {
   return p
 }
 
-function approvalText(slug: string): string {
-  const p = pendingApproval
-  return `kinitro.ai asks the person to approve the agent ${p?.agentName || "the domain's default agent"} in the domain ${p?.domainName || slug} for this session. Show the user this link as it is: ${p?.link || '(no link given)'} . After the approval bind again: mcp__kinitro-ai__probe with action "set-domain" and domain "${slug}"`
+/** The approval out of a seat_approval_required answer (R1): the plain approvalUrl; the URL inside a Markdown approvalLink
+ *  only when approvalUrl is absent. The label is built from to.domain, never from approvalLinkText. */
+export function approvalFromAnswer(a: any, slug: string, sid: string, now = Date.now()): Approval {
+  const md = /\]\((\S+?)\)/.exec(String(a?.approvalLink ?? ''))
+  const url = String(a?.approvalUrl ?? md?.[1] ?? '')
+  const exp = Date.parse(String(a?.expiresAt ?? ''))
+  return { sid, slug, request: String(a?.request ?? ''), url, domainName: String(a?.to?.domain ?? slug), agentName: String(a?.to?.agentNode ?? ''), expiresAt: new Date(Number.isNaN(exp) ? now + APPROVAL_FALLBACK_MS : exp).toISOString() }
+}
+
+/** The label of the approval link the person sees in the band and the chat. */
+export function approveLabel(a: Pick<Approval, 'domainName'>): string { return `Approve ${a.domainName}` }
+
+/** What set-domain and selection-done answer while the approval is pending (R3). */
+export function approvalResult(a: Approval) {
+  return {
+    status: 'approval_needed', bound: false, domain: a.domainName, agent: a.agentName || null, approvalLink: a.url || null, label: approveLabel(a),
+    sayToUser: `kinitro.ai needs your approval for ${a.domainName}. I also tried to open it in the browser pane; it may stay hidden.`,
+    next: 'After the approval, confirm here; then call set-domain again.',
+  }
+}
+
+/** The per-turn block while an approval is pending (R8, exact text). */
+export function approvalContextBlock(a: Approval): string {
+  return `kinitro.ai: ${a.domainName} waits for the user's approval. In your first reply give the link [${approveLabel(a)}](${a.url}) as a Markdown link, say the plugin also tried the browser pane, and ask the user to confirm here after approving.`
+}
+
+class ApprovalNeeded extends Error {
+  name = 'ApprovalNeeded'
+  constructor(public approval: Approval) { super(`waiting for the approval of ${approval.domainName}`) }
+}
+
+function approvalExpired(a: Approval, now = Date.now()): boolean { return Date.parse(a.expiresAt) <= now }
+
+// the pending approval of this Claude session (module mirror, else the host); a new session id never sees the old one
+async function heldApproval($: any): Promise<Approval | undefined> {
+  const sid = await syncSession($)
+  if (pendingApproval?.sid === sid) return pendingApproval
+  let v: Approval | null = null
+  try { v = await read($, approvalA) } catch { /* ignore */ }
+  pendingApproval = v && v.sid === sid ? v : undefined
+  return pendingApproval
+}
+async function keepApproval($: any, a: Approval | null) {
+  pendingApproval = a ?? undefined
+  try { await update($, approvalA, () => a) } catch { /* ignore */ }
+}
+
+// R3: a binding probe action answers within this budget; the binding goes on in the background
+const TOOL_BUDGET_MS = 8000
+const OVER = Symbol('over')
+const STILL_BINDING = { status: 'binding', message: 'Still binding in the background; the band shows the result. Call set-domain again in a moment.' }
+async function withBudget<T>($: any, p: Promise<T>, ms: number): Promise<T | typeof OVER> {
+  const stop = new AbortController()
+  try {
+    return await Promise.race([p, $.clock.sleep(ms, { signal: stop.signal }).then(() => OVER, () => new Promise<never>(() => {}))])
+  } finally { stop.abort() }
+}
+
+// R2: the re-check of a pending approval. Single-flight, outside serial, started and never awaited on a tool or turn path:
+// open-domain {request} answers within a second of the yes, else pending after up to 25 s on the server.
+let checkP: Promise<void> | undefined
+function checkApproval($: any): Promise<void> {
+  if (checkP) return checkP
+  checkP = (async () => {
+    try {
+      const ap = await heldApproval($)
+      if (!ap?.request) return
+      let r: any
+      binding = true
+      try { r = await mcp($, 'open-domain', { request: ap.request }) } finally { binding = false }
+      const st = String(r?.status ?? '')
+      if (st === 'approved' || st === 'moved') {
+        await keepApproval($, null)
+        await log($, `approval for ${ap.slug}: ${st}; binding`)
+        await bindDomain($, ap.slug)
+      } else if (st === 'denied' || st === 'expired') {
+        await keepApproval($, null)
+        await update($, bandNoteA, () => `Approval for ${ap.domainName} was ${st}. Choose the domain again.`)
+        await log($, `approval for ${ap.slug}: ${st}`)
+      }
+    } catch (err: any) { await log($, `approval check failed: ${String(err?.message ?? err).slice(0, 200)}`) }
+    finally { checkP = undefined }
+  })()
+  return checkP
 }
 
 // P1/P5: start this Claude session's kinitro.ai session in a domain (no key yet: open-domain mints one), or add the domain
@@ -264,22 +353,27 @@ async function openSession($: any, pick: { slug?: string; id?: string }): Promis
       const held = await heldKey($)
       if (held && keySlug === slug) return d
       const agent = await seatAgent($)
-      const pend = pendingApproval?.slug === slug ? pendingApproval : undefined
+      // R4: the pending request is reused ({request}); a new {domain} is never sent for the pending slug, and never while
+      // checkApproval asks for the same request (no two open-domain calls at once)
+      const held0 = await heldApproval($)
+      const pend = held0?.slug === slug ? held0 : undefined
+      if (pend && checkP) throw new ApprovalNeeded(pend)
       let r: any
       try {
         r = await mcp($, 'open-domain', pend ? { request: pend.request } : { domain: String(d.id), ...(agent ? { agent } : {}) })
       } catch (err: any) {
         const a = err?.answer
         if (a?.code === 'seat_approval_required' && a?.request) {
-          pendingApproval = { slug, request: String(a.request), link: String(a.approvalLink ?? a.approvalUrl ?? ''), domainName: String(a.to?.domain ?? slug), agentName: String(a.to?.agentNode ?? '') }
-          throw new Error(approvalText(slug))
+          const ap = approvalFromAnswer(a, slug, await syncSession($))
+          await keepApproval($, ap)
+          throw new ApprovalNeeded(ap)
         }
-        if (pend) pendingApproval = undefined
+        if (pend) await keepApproval($, null)
         throw err
       }
-      if (r?.status === 'pending') throw new Error(approvalText(slug))
-      if (pend) pendingApproval = undefined
-      if (r?.status === 'denied' || r?.status === 'expired') throw new Error(`the person did not approve ${slug} (${r.status})`)
+      if (r?.status === 'pending' && pend) throw new ApprovalNeeded(pend)
+      if (pend) await keepApproval($, null)
+      if (r?.status === 'denied' || r?.status === 'expired' || r?.status === 'pending') throw new Error(`the person did not approve ${slug} (${r.status})`)
       const key = await heldKey($)
       if (!key && keyEverHeld) throw new Error(`open-domain gave no session key although this session held one: not switched to the domain slug`)
       legacy = !key   // LEGACY (remove in the release after the server enforces the key): a server older than session keys
@@ -544,7 +638,9 @@ async function readDomainFile($: any): Promise<string | undefined> {
 }
 
 // what the agent tells the user: names only, no codes, ids or paths
-function confirmation(slug: string, message: string) {
+function confirmation(slug: string, bound: { text: string; approval?: Approval }) {
+  if (bound.approval) return approvalResult(bound.approval)
+  const message = bound.text
   const ok = domainRef === slug && !!briefing
   return ok
     ? { bound: true, domain: briefing?.domainName ?? slug, agent: briefing?.agentName ?? null, domainView: message.split('domain view: ')[1] ?? null, sayToUser: `This session now works for ${briefing?.domainName ?? slug}${briefing?.agentName && briefing.agentName !== briefing.domainName ? ` with the agent ${briefing.agentName}` : ''}.` }
@@ -558,8 +654,14 @@ async function writeDomainFiles($: any, slug: string) {
   await $.fs.write(await at($, DOMAIN_FILE), slug + '\n')
 }
 
+/** R9: the band note of a failed refresh: the message, key scrubbed, at most 160 chars. */
+export function refreshErrorNote(err: any): string {
+  return `Refresh failed: ${scrubKey(String(err?.message ?? err)).replace(/\s+/g, ' ').trim().slice(0, 160)}`
+}
+const REFRESH_NOTE_RX = /^Refresh failed:/
+
 // approved domains of the connection, and the address of the seat picker (approve more domains)
-async function refreshChoices($: any) {
+export async function refreshChoices($: any) {
   try {
     const seat = await mcp($, 'current-seat', {})
     const approved: DomainChoice[] = (seat?.approved ?? []).map((d: any) => ({ slug: String(d.slug), name: String(d.name) }))
@@ -570,7 +672,12 @@ async function refreshChoices($: any) {
       const r = await mcp($, 'open-page', { target: 'selector', domainRef: anySlug })
       if (r?.url) await update($, selectorUrlA, () => String(r.url))
     }
-  } catch (err: any) { await log($, `refreshChoices failed: ${err?.message ?? err}`) }
+    const prev = await read($, bandNoteA)
+    if (prev && REFRESH_NOTE_RX.test(prev)) await update($, bandNoteA, () => null)
+  } catch (err: any) {
+    await log($, `refreshChoices failed: ${err?.message ?? err}`)
+    try { await update($, bandNoteA, () => refreshErrorNote(err)) } catch { /* ignore */ }
+  }
 }
 
 // what the user switched to on the selection page, read from the browser pane ("This connection may now work in <Domain> as <Agent>")
@@ -690,21 +797,31 @@ async function openInPane($: any, url: string, shown: string = url): Promise<str
 }
 
 // bind this session to a domain: files, module state, briefing, band
-async function bindDomain($: any, slug: string): Promise<string> {
+type BindResult = { text: string; approval?: Approval }
+async function bindDomain($: any, slug: string): Promise<BindResult> {
   await writeDomainFiles($, slug)
   briefing = undefined; needsDomain = undefined; domainRef = undefined
   await writeState($)
   await loadBriefing($)
   const ok = briefing && domainRef === slug
+  const ap = ok ? undefined : await heldApproval($)
+  if (ap && ap.slug === slug) {
+    // R3: a normal outcome, no failure note; the band offers the approval link
+    await update($, currentA, () => null)
+    await update($, chooserA, () => true)
+    await update($, bandNoteA, () => null)
+    return { text: `approval needed for ${slug}`, approval: ap }
+  }
   await update($, currentA, () => (ok ? slug : null))
   await update($, chooserA, () => !ok)
-  await update($, bandNoteA, () => (ok ? null : `could not bind ${slug}: ${briefingError ?? 'unknown'}`))
-  if (!ok) return `binding ${slug} failed: ${briefingError}`
+  // 0.24.1: the band never shows the server's text (criterion 2); the detail is in /kinitro status and the log
+  await update($, bandNoteA, () => (ok ? null : `kinitro.ai could not bind ${slug}. Run /kinitro status for details.`))
+  if (!ok) return { text: `binding ${slug} failed: ${briefingError}` }
   await update($, startPackA, () => true)
   try { $.ui.toast(`kinitro.ai: this session works for ${slug}`) } catch { /* ignore */ }
   // 0.23.3: no automatic open; the readable link goes back for the offer
   const view = await domainViewLink($)
-  return `bound to ${slug}; domain view: ${view ?? 'no link'}`
+  return { text: `bound to ${slug}; domain view: ${view ?? 'no link'}` }
 }
 
 async function loadBriefing($: any) {
@@ -795,13 +912,21 @@ async function loadBriefing($: any) {
     await log($, `briefing loaded for domain ${domainCode} / agent ${agentCode} via ${route}: ${raw.length} chars, layers ${briefing.layers}`)
   } catch (err: any) {
     briefingError = scrubKey(String(err?.message ?? err))
-    await log($, `briefing FAILED: ${briefingError}`)
+    // R1: an approval is a state, not a failure; logged once per request
+    if (err instanceof ApprovalNeeded) {
+      briefingError = undefined
+      const a = err.approval
+      try { await update($, chooserA, () => true); await update($, bandNoteA, () => null) } catch { /* ignore */ }
+      if (lastApprovalLogged !== a.request) { lastApprovalLogged = a.request; await log($, `approval needed for ${a.slug} (request ${a.request.slice(0, 8)})`) }
+    } else await log($, `briefing FAILED: ${briefingError}`)
   }
 }
+let lastApprovalLogged = ''
 
-// the connector may not be up yet at session start: retry lazily
+// the connector may not be up yet at session start: retry lazily; never while an approval is pending (0.24.1: the next
+// prompt and the person's confirmation look again)
 async function ensureBriefing($: any) {
-  if (!briefing && !needsDomain && Date.now() - lastLoadTry > RETRY_MS) await loadBriefing($)
+  if (!briefing && !needsDomain && Date.now() - lastLoadTry > RETRY_MS && !(await heldApproval($))) await loadBriefing($)
 }
 
 async function loadCache($: any) {
@@ -878,9 +1003,11 @@ async function refreshTick($: any) {
 
 // first message of a brand-new container: nothing cached, wait for the connector
 async function waitForBriefing($: any) {
+  if (await heldApproval($)) return   // R2: no loadBriefing while an approval is pending
   const until = Date.now() + WAIT_FIRST_MS
   while (!briefing && !needsDomain && Date.now() < until) {
     await loadBriefing($)
+    if (!briefing && pendingApproval) break   // 0.24.1: an approval is waited for by the person, not by a loop
     if (!briefing) await $.clock.sleep(1000)
   }
 }
@@ -936,7 +1063,7 @@ async function flushOutbox($: any) {
       if (o.sent) continue
       if (keyed && o.sessionId !== sid) continue   // P8: the outbox is shared by the sessions of one folder; each sends its own turns with its own key
       const ref = o.domainRef ?? domainRef
-      if (!ref && needsDomain) break       // no domain yet: send after binding
+      if (!ref && (needsDomain || pendingApproval)) break   // R5: also while an approval is pending (domain_ref_required);        // no domain yet: send after binding
       try {
         const r = await mcp($, 'mirror-messaging', { action: 'append', platform: MIRROR_PLATFORM, sessionId: o.sessionId, turnId: o.turnId, prompt: o.prompt, ...(o.promptFrom ? { promptFrom: o.promptFrom } : {}), answer: o.answer, eventTs: o.eventTs, ...(ref ? { domainRef: ref } : {}) })
         if (r?.status && r.status !== 'ok') throw new Error(JSON.stringify(r).slice(0, 200))
@@ -1021,17 +1148,19 @@ async function toolsLine($: any): Promise<string> {
 async function sessionLine($: any): Promise<string> {
   if (await heldKey($)) return `session: session key held for this Claude session (never shown)${keySlug ? `, working domain ${keySlug}` : ''}`
   if (legacy) return 'session: the server gives no session key (older server): the domain goes on every call'
-  return `session: none yet${pendingApproval ? ` (waiting for the approval of ${pendingApproval.slug})` : ''}`
+  const ap = await heldApproval($)
+  return ap ? `session: waiting for approval of ${ap.slug}` : 'session: none yet'
 }
 
 async function statusText($: any): Promise<string> {
   const pct = await contextPercent($)
   return [
     `kinitro-ai ${VERSION}`,
-    `briefing: ${briefing ? `domain ${briefing.domainCode ?? '?'} / agent ${briefing.agentCode ?? '?'} (${briefing.raw.length} chars, source ${briefing.source}, loaded ${briefing.loadedAt}, route ${route})` : `MISSING (${briefingError})`}`,
+    `briefing: ${!briefing && pendingApproval ? `pending approval (${pendingApproval.slug})` : briefing ? `domain ${briefing.domainCode ?? '?'} / agent ${briefing.agentCode ?? '?'} (${briefing.raw.length} chars, source ${briefing.source}, loaded ${briefing.loadedAt}, route ${route})` : `MISSING (${briefingError})`}`,
     `domain: ${domainRef ?? (needsDomain ? 'NOT SET - ' + needsDomain : 'seat-bound connection')} · session home ${homeDir ?? '-'} · record ${recordPath ?? 'none (no user home or session id)'}`,
     await toolsLine($),
     await sessionLine($),
+    `band note: ${(await read($, bandNoteA)) ?? '-'}`,
     `refresh: ${(await read($, testModeA)) ? 'test mode, every 2 min' : 'daily'} · instructions loaded ${briefing?.loadedAt ?? '-'}`,
     `layers: ${briefing?.layers ?? '-'}`,
     `sections: ${briefing ? Object.keys(briefing.sections).join(' | ') : '-'} · persona from ${personaSource}`,
@@ -1371,7 +1500,7 @@ export const register: Register = (on) => {
       tries++
       refreshTick($).then((done) => {
         refreshing = false
-        if (done || tries > 40 || needsDomain) { refreshDone = true; timer.cancel(); log($, `refresh ${done ? 'done' : 'gave up'} after ${tries} tries`) }
+        if (done || tries > 40 || needsDomain || pendingApproval) { refreshDone = true; timer.cancel(); log($, `refresh ${done ? 'done' : 'gave up'} after ${tries} tries`) }
       })
     })
     // /kinitro is a static command file (commands/kinitro.md): the Claude app lists only those
@@ -1425,21 +1554,32 @@ export const register: Register = (on) => {
       const seat = await mcp($, 'current-seat', {})
       const approved: DomainChoice[] = (seat?.approved ?? []).map((d: any) => ({ slug: String(d.slug), name: String(d.name) }))
       await update($, approvedA, () => approved)
-      return { result: JSON.stringify({ approved, current: domainRef ? (briefing?.domainName ?? domainRef) : null }) }
+      const ap = await heldApproval($)
+      return { result: JSON.stringify({ approved, current: domainRef ? (briefing?.domainName ?? domainRef) : null, ...(ap ? { pending: { slug: ap.slug, ...approvalResult(ap) } } : {}) }) }
     }
     if (action === 'selection-start') {
+      // R7: selectorUrl is returned also when the pane opened (the Desktop pane may open hidden); the approval link while pending
       const seat = await mcp($, 'current-seat', {})
       const approved: DomainChoice[] = (seat?.approved ?? []).map((d: any) => ({ slug: String(d.slug), name: String(d.name) }))
       const anySlug = domainRef ?? approved[0]?.slug
-      const page = anySlug ? await mcp($, 'open-page', { target: 'selector', domainRef: anySlug }) : undefined
+      let page: any
+      if (anySlug) { try { page = await mcp($, 'open-page', { target: 'selector', domainRef: anySlug }) } catch (err: any) { await log($, `selection-start: open-page failed: ${String(err?.message ?? err).slice(0, 200)}`) } }
       await $.fs.write(await at($, SNAPSHOT_FILE), JSON.stringify({ at: new Date().toISOString(), approved }))
       await update($, approvedA, () => approved)
       if (page?.url) await update($, selectorUrlA, () => String(page.url))
       const opened = page?.url ? await openInPane($, String(page.url)) : 'no selection page address'
       await log($, `selection-start: ${approved.map((d) => d.slug).join(',')}; ${opened}`)
-      return { result: JSON.stringify({ selectionPage: opened, selectorUrl: opened.startsWith('opened') ? undefined : page?.url ?? null }) }
+      const ap = await heldApproval($)
+      return { result: JSON.stringify({ selectionPage: opened, selectorUrl: page?.url ?? null, ...(ap ? { approvalLink: ap.url, label: approveLabel(ap) } : {}) }) }
     }
     if (action === 'selection-done') {
+      const apd = await heldApproval($)
+      if (apd) {   // P3.11: the pending slug: look again, answer R3 while it is still pending
+        await withBudget($, checkApproval($), TOOL_BUDGET_MS)
+        const still = await heldApproval($)
+        if (still) return { result: JSON.stringify(approvalResult(still)) }
+        if (domainRef === apd.slug && briefing) return { result: JSON.stringify(confirmation(apd.slug, { text: `bound to ${apd.slug}` })) }
+      }
       let before: DomainChoice[] = []
       try { before = JSON.parse(await $.fs.read(await at($, SNAPSHOT_FILE))).approved ?? [] } catch { /* no snapshot */ }
       const seat = await mcp($, 'current-seat', {})
@@ -1457,7 +1597,16 @@ export const register: Register = (on) => {
     if (action === 'set-domain') {
       const slug = String(e.domain ?? '').trim()
       if (!slug) return { result: 'set-domain needs domain: "<slug>" (see list-domains)' }
-      const r = await bindDomain($, slug)
+      // R3: an already pending slug answers at once from the held approval (no network), and looks again in the background
+      const ap = await heldApproval($)
+      if (ap && ap.slug === slug) {
+        checkApproval($)
+        openInPane($, ap.url).catch(() => undefined)
+        return { result: JSON.stringify(approvalResult(ap)) }
+      }
+      const r = await withBudget($, bindDomain($, slug), TOOL_BUDGET_MS)
+      if (r === OVER) return { result: JSON.stringify(STILL_BINDING) }
+      if (r.approval) openInPane($, r.approval.url).catch(() => undefined)
       return { result: JSON.stringify(confirmation(slug, r)) }
     }
     if (action === 'reload') { needsDomain = undefined; await loadBriefing($) }
@@ -1497,6 +1646,9 @@ export const register: Register = (on) => {
   // EVERY USER PROMPT: marker, start (first prompt), per-turn, 70 %, post-compaction
   on('prompt.submit', async ($, e, next) => {
     if (!briefing) await waitForBriefing($)
+    // R2: each user turn looks at a pending approval again, in the background (the hot path awaits no network call)
+    const apNow = await heldApproval($)
+    if (apNow) checkApproval($)
     const turns0 = await $.session.turns().catch(() => -1)
     // freshness: a new session always starts from kinitro.ai, later the copy is renewed daily (test mode: every 2 minutes)
     // the /kinitro fallback bound the domain while the plugin was still starting: finish it now (start package, domain view)
@@ -1536,7 +1688,7 @@ export const register: Register = (on) => {
     const pct = await contextPercent($)
     const turns = await $.session.turns().catch(() => -1)
     const tag = testArmed ? '[TEST] ' : ''
-    const blocks: string[] = [`[kinitro-ai ${VERSION}] context ${pct ?? '?'} % · briefing ${briefing ? briefing.code : 'MISSING (' + briefingError + ')'}`]
+    const blocks: string[] = [`[kinitro-ai ${VERSION}] context ${pct ?? '?'} % · briefing ${briefing ? briefing.code : apNow ? `pending approval (${apNow.slug})` : 'MISSING (' + briefingError + ')'}`]
     const injected: string[] = ['marker']
     // update notice: first prompt only; one line when the download page publishes a newer version
     if (turns === 0 && !(e as any).agentId) { const note = await updateCheck($); if (note) { blocks.push(note); injected.push('Update notice') } }
@@ -1551,7 +1703,8 @@ export const register: Register = (on) => {
         await log($, `second kinitro.ai connection told: ${others.join(', ')}`)
       }
     }
-    if (needsDomain) {
+    if (apNow) { blocks.push(approvalContextBlock(apNow)); injected.push('Approval pending') }   // R8: replaces the domain block
+    else if (needsDomain) {
       const approved = await read($, approvedA)
       const url = await read($, selectorUrlA)
       blocks.push([
@@ -1694,8 +1847,10 @@ export const register: Register = (on) => {
     const chooser = await read($, chooserA)
     const url = await read($, selectorUrlA)
     const note = await read($, bandNoteA)
+    const ap = await read($, approvalA)   // R6: the pending approval (this session's only)
+    const pend = ap && ap.sid === (await syncSession($)) ? ap : null
     const name = (slug: string | null) => approved.find((d) => d.slug === slug)?.name ?? slug
-    if (!chooser && current) {
+    if (!chooser && current && !pend) {
       return (
         <Box>
           <Text dimColor>kinitro.ai · {name(current)} ({current}) </Text>
@@ -1705,9 +1860,11 @@ export const register: Register = (on) => {
     }
     return (
       <Box flexDirection="column">
-        <Text>{current ? `kinitro.ai · this session works for ${name(current)}. Switch to:` : 'kinitro.ai · choose the domain for this session:'}</Text>
+        {pend ? <Text>kinitro.ai · {pend.domainName} needs your approval.</Text> : <Text>{current ? `kinitro.ai · this session works for ${name(current)}. Switch to:` : 'kinitro.ai · choose the domain for this session:'}</Text>}
         <Box>
-          {approved.filter((d) => d.slug && d.slug !== current).map((d) => (
+          {pend ? <Link key={'kin-approve-' + pend.slug} href={pend.url} label={approveLabel(pend)} /> : null}
+          {pend ? <Button key="kin-approved" label="I approved it" variant="primary" onPress={() => { checkApproval($) }} /> : null}
+          {approved.filter((d) => d.slug && d.slug !== current && d.slug !== pend?.slug).map((d) => (
             <Button key={'kin-' + d.slug} label={d.name} variant={approved.length === 1 ? 'primary' : undefined} onPress={() => { bindDomain($, d.slug) }} />
           ))}
           <Button key="kin-refresh" label="Refresh list" dimColor onPress={() => { refreshChoices($) }} />

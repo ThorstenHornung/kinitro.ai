@@ -116,7 +116,7 @@ describe('session key', () => {
     expect(srv.minted).toHaveLength(1)
     expect(noKeyInFiles(w)).toEqual([])
     expect(await probe($, 'status')).not.toContain('kss_')
-    expect(r).toContain('kinitro-ai 0.24.0')
+    expect(r).toContain('kinitro-ai 0.24.1')
     expect(r).not.toContain('kss_')
     expect(r).not.toContain("pass domainRef:'beta'")
   })
@@ -223,14 +223,17 @@ describe('session key, fix round', () => {
     expect(srv.agents[0]).toBeUndefined()
   })
 
-  test('M3: the approval text names the agent and the domain', async ($, on) => {
+  test('M3 (0.24.1, criterion 1): the approval_needed answer names the agent and the domain', async ($, on) => {
     const srv = newSrv()
     const w = mk(on, srv)
     await probe($, 'reload')
     w.verbs = { ...w.verbs!, 'open-domain': () => refuse2({ status: 'error', code: 'seat_approval_required', request: 'REQ1', to: { domain: 'GAMMA', agentNode: 'Agent G' }, approvalLink: '[Switch domain to GAMMA](https://x/approve)' }) }
     const set: any = await ($ as any).tool.call({ tool: 'mcp__kinitro-ai__probe', action: 'set-domain', domain: 'gamma' })
-    expect(textOf(set)).toContain('Agent G')
-    expect(textOf(set)).toContain('GAMMA')
+    const res = JSON.parse(textOf(set))   // 0.24.1 (item 4.2.1-3764): the R3 object, no thrown prose
+    expect(res.status).toBe('approval_needed')
+    expect(res.agent).toBe('Agent G')
+    expect(res.domain).toBe('GAMMA')
+    expect(res.approvalLink).toBe('https://x/approve')
   })
 
   test('M1: a new Claude session id never sees the key of the session before', async ($, on) => {
