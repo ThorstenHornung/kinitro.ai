@@ -10,7 +10,7 @@ import { makeWorld, probe } from './world'
 const APPROVE_URL = 'https://methos.example/page/approvals/HANDLE1'
 const SELECTOR_URL = 'https://methos.example/page/selector?link=SEL'
 const PROSE = 'The person must approve this move. Show approvalLink to the person as it is'
-type Srv = { minted: string[]; working: Record<string, string>; approved: boolean; decision: 'pending' | 'approved' | 'denied' | 'hang' | 'manual'; release?: (v: unknown) => void; requests: number; failSeat?: boolean; hangDomain?: boolean }
+type Srv = { expiresAt?: string; minted: string[]; working: Record<string, string>; approved: boolean; decision: 'pending' | 'approved' | 'denied' | 'hang' | 'manual'; release?: (v: unknown) => void; requests: number; failSeat?: boolean; hangDomain?: boolean }
 const ok = (v: unknown) => ({ result: JSON.stringify(v) })
 const refuse = (v: unknown) => ({ result: JSON.stringify(v), isError: true })
 
@@ -39,7 +39,7 @@ function server(srv: Srv): Record<string, (a: Record<string, unknown>) => unknow
       if (slug === 'gamma' && srv.hangDomain) return new Promise(() => {})
       if (slug === 'gamma' && !srv.approved) {
         srv.requests++
-        return refuse({ status: 'error', code: 'seat_approval_required', message: PROSE, request: `REQ${srv.requests}HANDLE`, to: { domain: 'Gamma', agentNode: 'Coach' }, approvalUrl: APPROVE_URL, approvalLinkText: 'Switch domain to Gamma', approvalLink: `[Switch domain to Gamma](${APPROVE_URL})`, expiresAt: new Date(Date.now() + 3600_000).toISOString() })
+        return refuse({ status: 'error', code: 'seat_approval_required', message: PROSE, request: `REQ${srv.requests}HANDLE`, to: { domain: 'Gamma', agentNode: 'Coach' }, approvalUrl: APPROVE_URL, approvalLinkText: 'Switch domain to Gamma', approvalLink: `[Switch domain to Gamma](${APPROVE_URL})`, expiresAt: srv.expiresAt ?? new Date(Date.now() + 3600_000).toISOString() })
       }
       if (keyed(a)) { srv.working[String(a.domainRef)] = slug; return ok({ status: 'moved', domain: { id: a.domain } }) }
       return mint(slug)
@@ -272,5 +272,31 @@ describe('round 2', () => {
     srv.release!(ok({ status: 'pending' }))
     await probe($, 'status')
     expect(json(await probe($, 'set-domain', { domain: 'alpha' })).bound).toBe(true)   // control: a bind after the check
+  })
+})
+
+describe('round 3 (review)', () => {
+  test('F1: binding another domain while one is pending drops the pending approval from the band state and the context', async ($, on) => {
+    const srv = newSrv()
+    const w = mk(on, srv, 'beta')
+    await probe($, 'reload')
+    expect(json(await probe($, 'set-domain', { domain: 'gamma' })).status).toBe('approval_needed')
+    expect(json(await probe($, 'set-domain', { domain: 'alpha' })).bound).toBe(true)
+    expect(json(await probe($, 'choices')).pending).toBeUndefined()
+    expect(await probe($, 'status')).not.toContain('waiting for approval')
+    await submit($, 'after')
+    const last = w.ctx[w.ctx.length - 1]!
+    expect(last).not.toContain('waits for the user')
+    expect(last).not.toContain('Approve Gamma')
+  })
+
+  test('F2: an expired approval is dropped: no approval block, the band note says expired', async ($, on) => {
+    const srv = newSrv({ expiresAt: new Date(Date.now() - 60_000).toISOString() })
+    const w = mk(on, srv)
+    await probe($, 'reload')
+    await submit($, 'hello')
+    expect(w.ctx[0]).not.toContain('waits for the user')
+    expect(json(await probe($, 'choices')).pending).toBeUndefined()
+    expect(await probe($, 'status')).toContain('band note: Approval for Gamma was expired. Choose the domain again.')
   })
 })
