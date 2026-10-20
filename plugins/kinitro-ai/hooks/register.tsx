@@ -315,6 +315,10 @@ async function withBudget<T>($: any, p: Promise<T>, ms: number): Promise<T | typ
 // R2: the re-check of a pending approval. Single-flight, outside serial, started and never awaited on a tool or turn path:
 // open-domain {request} answers within a second of the yes, else pending after up to 25 s on the server.
 let checkP: Promise<void> | undefined
+// round 2: the check never touches `binding` (openSession's flag, under serial). Sharing it made an agent's own open-domain
+// during an open check count as the plugin's, and a check ending during a bind cleared that bind's flag. The hook knows the
+// check's own call by its request handle instead (ownRequests), so only that one call is the plugin's.
+const ownRequests = new Set<string>()
 function checkApproval($: any): Promise<void> {
   if (checkP) return checkP
   checkP = (async () => {
@@ -322,8 +326,8 @@ function checkApproval($: any): Promise<void> {
       const ap = await heldApproval($)
       if (!ap?.request) return
       let r: any
-      binding = true
-      try { r = await mcp($, 'open-domain', { request: ap.request }) } finally { binding = false }
+      ownRequests.add(ap.request)
+      try { r = await mcp($, 'open-domain', { request: ap.request }) } finally { ownRequests.delete(ap.request) }
       const st = String(r?.status ?? '')
       if (st === 'approved' || st === 'moved') {
         await keepApproval($, null)
@@ -1484,6 +1488,34 @@ async function updateCheck($: any): Promise<string | undefined> {
   return updateNotice(updateLatest, VERSION, base)
 }
 
+// ---- the domain band as a pure model (round 2: testable without a renderer) ----
+export type BandItem =
+  | { kind: 'link'; key: string; label: string; href: string }
+  | { kind: 'button'; key: string; label: string; act: 'change' | 'approved' | 'bind' | 'refresh' | 'close'; slug?: string; primary?: boolean; dim?: boolean }
+export type BandModel = { compact: boolean; title: string; items: BandItem[]; selector?: string; note?: string }
+export type BandState = { approved: DomainChoice[]; current: string | null; chooser: boolean; url: string | null; note: string | null; pend: Approval | null }
+
+/** R6: what the band shows. With a pending approval: the "Approve <Domain>" link (the picker entry of the pending domain)
+ *  and "I approved it"; never the server's prose or Markdown. */
+export function bandModel(s: BandState): BandModel {
+  const name = (slug: string | null) => s.approved.find((d) => d.slug === slug)?.name ?? slug
+  if (!s.chooser && s.current && !s.pend) {
+    return { compact: true, title: `kinitro.ai · ${name(s.current)} (${s.current}) `, items: [{ kind: 'button', key: 'kin-change', label: 'Change domain', act: 'change', dim: true }] }
+  }
+  const items: BandItem[] = []
+  if (s.pend) {
+    items.push({ kind: 'link', key: 'kin-approve-' + s.pend.slug, label: approveLabel(s.pend), href: s.pend.url })
+    items.push({ kind: 'button', key: 'kin-approved', label: 'I approved it', act: 'approved', primary: true })
+  }
+  for (const d of s.approved.filter((x) => x.slug && x.slug !== s.current && x.slug !== s.pend?.slug)) {
+    items.push({ kind: 'button', key: 'kin-' + d.slug, label: d.name, act: 'bind', slug: d.slug, primary: s.approved.length === 1 })
+  }
+  items.push({ kind: 'button', key: 'kin-refresh', label: 'Refresh list', act: 'refresh', dim: true })
+  if (s.current) items.push({ kind: 'button', key: 'kin-close', label: 'Close', act: 'close' })
+  const title = s.pend ? `kinitro.ai · ${s.pend.domainName} needs your approval.` : s.current ? `kinitro.ai · this session works for ${name(s.current)}. Switch to:` : 'kinitro.ai · choose the domain for this session:'
+  return { compact: false, title, items, ...(s.url ? { selector: s.url } : {}), ...(s.note ? { note: s.note } : {}) }
+}
+
 // ---- hooks -----------------------------------------------------------------
 export const register: Register = (on) => {
   on('session.start', async ($, e, next) => {
@@ -1532,7 +1564,7 @@ export const register: Register = (on) => {
     if (verb === 'open-domain' && !r?.isError && !r?.deny) {
       const k = sessionKeyOf(text)
       if (k) { await keepKey($, k); legacy = false }
-      if (!binding) { followSeat = true; reloadDue = true; await log($, 'open-domain called by the agent: the binding follows the session at the next prompt') }
+      if (!binding && !(e.request !== undefined && ownRequests.has(String(e.request)))) { followSeat = true; reloadDue = true; await log($, 'open-domain called by the agent: the binding follows the session at the next prompt') }
     }
     // fix round L3: the whole result is looked at; with anything to strip, the answer is built from the scrubbed text only,
     // and a deny or an error stays an error
@@ -1849,29 +1881,24 @@ export const register: Register = (on) => {
     const note = await read($, bandNoteA)
     const ap = await read($, approvalA)   // R6: the pending approval (this session's only)
     const pend = ap && ap.sid === (await syncSession($)) ? ap : null
-    const name = (slug: string | null) => approved.find((d) => d.slug === slug)?.name ?? slug
-    if (!chooser && current && !pend) {
-      return (
-        <Box>
-          <Text dimColor>kinitro.ai · {name(current)} ({current}) </Text>
-          <Button key="kin-change" label="Change domain" dimColor onPress={() => { update($, chooserA, () => true); refreshChoices($) }} />
-        </Box>
-      )
+    const m = bandModel({ approved, current, chooser, url, note, pend })
+    const press = (b: Extract<BandItem, { kind: 'button' }>) => () => {
+      if (b.act === 'change') { update($, chooserA, () => true); refreshChoices($) }
+      else if (b.act === 'approved') checkApproval($)
+      else if (b.act === 'bind') bindDomain($, b.slug!)
+      else if (b.act === 'refresh') refreshChoices($)
+      else update($, chooserA, () => false)
     }
+    const el = (it: BandItem) => (it.kind === 'link'
+      ? <Link key={it.key} href={it.href} label={it.label} />
+      : <Button key={it.key} label={it.label} variant={it.primary ? 'primary' : undefined} dimColor={it.dim} role={it.act === 'close' ? 'dismiss' : undefined} onPress={press(it)} />)
+    if (m.compact) return <Box><Text dimColor>{m.title}</Text>{m.items.map(el)}</Box>
     return (
       <Box flexDirection="column">
-        {pend ? <Text>kinitro.ai · {pend.domainName} needs your approval.</Text> : <Text>{current ? `kinitro.ai · this session works for ${name(current)}. Switch to:` : 'kinitro.ai · choose the domain for this session:'}</Text>}
-        <Box>
-          {pend ? <Link key={'kin-approve-' + pend.slug} href={pend.url} label={approveLabel(pend)} /> : null}
-          {pend ? <Button key="kin-approved" label="I approved it" variant="primary" onPress={() => { checkApproval($) }} /> : null}
-          {approved.filter((d) => d.slug && d.slug !== current && d.slug !== pend?.slug).map((d) => (
-            <Button key={'kin-' + d.slug} label={d.name} variant={approved.length === 1 ? 'primary' : undefined} onPress={() => { bindDomain($, d.slug) }} />
-          ))}
-          <Button key="kin-refresh" label="Refresh list" dimColor onPress={() => { refreshChoices($) }} />
-          {current ? <Button key="kin-close" label="Close" role="dismiss" onPress={() => { update($, chooserA, () => false) }} /> : null}
-        </Box>
-        {url ? <Text dimColor>Domain missing? <Link href={url} label="Open the kinitro.ai domain selection" />, approve it there, then Refresh list.</Text> : null}
-        {note ? <Text dimColor>{note}</Text> : null}
+        <Text>{m.title}</Text>
+        <Box>{m.items.map(el)}</Box>
+        {m.selector ? <Text dimColor>Domain missing? <Link href={m.selector} label="Open the kinitro.ai domain selection" />, approve it there, then Refresh list.</Text> : null}
+        {m.note ? <Text dimColor>{m.note}</Text> : null}
       </Box>
     )
   })

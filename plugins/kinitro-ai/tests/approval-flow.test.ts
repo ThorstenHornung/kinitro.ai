@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'claude-code/testing'
-import { approvalContextBlock, approvalFromAnswer, refreshErrorNote } from '../hooks/register'
+import { approvalContextBlock, approvalFromAnswer, bandModel, refreshErrorNote } from '../hooks/register'
 import { makeWorld, probe } from './world'
 
 // 0.24.1 (item 4.2.1-3764): "approval needed" is a normal outcome. A server whose domain gamma needs the person's approval:
@@ -10,7 +10,7 @@ import { makeWorld, probe } from './world'
 const APPROVE_URL = 'https://methos.example/page/approvals/HANDLE1'
 const SELECTOR_URL = 'https://methos.example/page/selector?link=SEL'
 const PROSE = 'The person must approve this move. Show approvalLink to the person as it is'
-type Srv = { minted: string[]; working: Record<string, string>; approved: boolean; decision: 'pending' | 'approved' | 'denied' | 'hang'; requests: number; failSeat?: boolean; hangDomain?: boolean }
+type Srv = { minted: string[]; working: Record<string, string>; approved: boolean; decision: 'pending' | 'approved' | 'denied' | 'hang' | 'manual'; release?: (v: unknown) => void; requests: number; failSeat?: boolean; hangDomain?: boolean }
 const ok = (v: unknown) => ({ result: JSON.stringify(v) })
 const refuse = (v: unknown) => ({ result: JSON.stringify(v), isError: true })
 
@@ -31,6 +31,7 @@ function server(srv: Srv): Record<string, (a: Record<string, unknown>) => unknow
     'open-domain': (a) => {
       if (a.request !== undefined) {
         if (srv.decision === 'hang') return new Promise(() => {})
+        if (srv.decision === 'manual') return new Promise((res) => { srv.release = res })
         if (srv.decision === 'approved') { srv.approved = true; return ok({ status: 'approved', domain: { id: 'dom-gamma', name: 'Gamma' } }) }
         return ok({ status: srv.decision })
       }
@@ -232,5 +233,44 @@ describe('approval flow (criteria 1-5)', () => {
     expect(r.status).not.toBe('approval_needed')
     expect(await probe($, 'status')).toContain('band note: Approval for Gamma was denied. Choose the domain again.')
     expect(await probe($, 'status')).not.toContain('waiting for approval')
+  })
+})
+
+describe('round 2', () => {
+  const pend = approvalFromAnswer({ request: 'R', approvalUrl: APPROVE_URL, approvalLinkText: 'Switch domain to Gamma', to: { domain: 'Gamma', agentNode: 'Coach' } }, 'gamma', 'S')
+  const approved = [{ slug: 'alpha', name: 'ALPHA' }, { slug: 'beta', name: 'BETA' }]
+
+  test('A5 (band model): a pending approval gives the "Approve Gamma" link with the plain URL, the confirm button, no server text', () => {
+    const m = bandModel({ approved, current: 'beta', chooser: false, url: SELECTOR_URL, note: null, pend })
+    expect(m.compact).toBe(false)
+    expect(m.title).toBe('kinitro.ai · Gamma needs your approval.')
+    expect(m.items[0]).toEqual({ kind: 'link', key: 'kin-approve-gamma', label: 'Approve Gamma', href: APPROVE_URL })
+    expect(m.items.some((i) => i.kind === 'button' && i.label === 'I approved it' && i.act === 'approved')).toBe(true)
+    const all = JSON.stringify(m)
+    for (const bad of ['could not bind', 'Switch domain to', '](', PROSE]) expect(all).not.toContain(bad)
+  })
+
+  test('A6 (band model): the picker lists the pending domain only as its approve link; control: the bound band', () => {
+    const m = bandModel({ approved: [...approved, { slug: 'gamma', name: 'Gamma' }], current: 'beta', chooser: true, url: null, note: null, pend })
+    expect(m.items.filter((i) => i.key.includes('gamma')).map((i) => i.kind)).toEqual(['link'])
+    expect(m.items.some((i) => i.kind === 'button' && i.act === 'bind' && i.slug === 'alpha')).toBe(true)
+    const bound = bandModel({ approved, current: 'beta', chooser: false, url: null, note: null, pend: null })
+    expect(bound.compact).toBe(true)
+    expect(bound.title).toBe('kinitro.ai · BETA (beta) ')
+  })
+
+  test('overlap: an approval check that is still open neither hides the agent own open-domain nor clears a running bind', async ($, on) => {
+    const srv = newSrv({ decision: 'manual' })
+    const w = mk(on, srv, 'beta')
+    await probe($, 'reload')
+    await probe($, 'set-domain', { domain: 'gamma' })   // approval needed
+    await probe($, 'set-domain', { domain: 'gamma' })   // pending: starts the check, whose {request} stays open
+    for (let i = 0; i < 10 && !srv.release; i++) await probe($, 'status')   // the check runs in the background
+    expect(typeof srv.release).toBe('function')
+    await ($ as any).tool.call({ tool: 'mcp__plugin_kinitro-ai_kinitro_ai__open-domain', domain: 'dom-alpha' })   // the agent's own call
+    expect(w.files.get('/w/b/kinitro-ai.log') ?? '').toContain('open-domain called by the agent')
+    srv.release!(ok({ status: 'pending' }))
+    await probe($, 'status')
+    expect(json(await probe($, 'set-domain', { domain: 'alpha' })).bound).toBe(true)   // control: a bind after the check
   })
 })
