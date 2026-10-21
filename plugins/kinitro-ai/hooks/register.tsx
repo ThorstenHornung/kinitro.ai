@@ -28,11 +28,11 @@ const READ_TIMEOUT_MS = 3000       // the chat tail and the todo read in prompt.
 
 const SERVER = 'kinitro_ai'
 // Build variant (PO 21.10.2026, hooks/variant.ts): the plugin name, its environment and the prefix of its local files. The
-// Production values give exactly the names of 0.24.1; the Test build (kinitro-ai-test) gets its own names everywhere.
+// Production values give the names of 0.24.1 (0.24.2 adds the PROD marker, ruling R4); the Test build (kinitro-ai-test) gets its own names everywhere.
 // The host state (atom) keys must be string literals: the packager rewrites `plugin: 'kinitro-ai'` for the Test build.
 const F = VARIANT.files
 const PROBE_TOOL = `mcp__${VARIANT.name}__probe`
-const MARK = VARIANT.showEnv ? `${VARIANT.name} ${VARIANT.env}` : VARIANT.name   // the prompt line marker: [kinitro-ai-test TEST 0.24.1] in a Test build
+const MARK = VARIANT.showEnv ? `${VARIANT.name} ${VARIANT.env}` : VARIANT.name   // the prompt line marker: [kinitro-ai PROD 0.24.2] / [kinitro-ai-test TEST 0.24.2]
 const BRAND = VARIANT.showEnv ? `kinitro.ai ${VARIANT.env}` : 'kinitro.ai'      // the band title
 const ENV_VAR = 'KINITRO_AI_ENV'
 // Everything is resolved from the seat (current-seat): no domain codes are hard-wired.
@@ -46,7 +46,7 @@ const FETCH_MS = 60000
 const MAX_TEXT = 50000     // chars per prompt / answer sent to the chat
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = `${F.replace(/^\./, '')}.log`
-const VERSION = '0.24.1'
+const VERSION = '0.24.2'
 // update notice (PO 2026-10-16): at the first prompt, compare with the published marketplace.json on the download page
 const UPDATE_BASE = VARIANT.downloadBase   // the download page; the environment variable KINITRO_AI_DOWNLOAD_BASE overrides it
 const UPDATE_TIMEOUT_MS = 2500
@@ -531,15 +531,12 @@ export function secondConnections(names: string[]): string[] {
 // second connection to warn about; the gate below keeps a session to one of them.
 const SIBLING_RX = /^mcp__plugin_kinitro-ai(-[a-z0-9]+)?_kinitro_ai__/
 
-/** Whether a build of this environment is active, given the value of KINITRO_AI_ENV: PROD unless it says TEST; TEST only then. */
+/** Whether a build is active, given KINITRO_AI_ENV (Architect ruling R1, 21.10.2026): both builds are active by default, so
+ *  one session can work on Production and look at Test. The variable is only an override that switches ONE build off:
+ *  TEST switches the Production build off, PROD switches the Test build off. */
 export function activeIn(env: 'PROD' | 'TEST', value: string | undefined): boolean {
   const want = (value ?? '').trim().toUpperCase()
-  return env === 'TEST' ? want === 'TEST' : want !== 'TEST'
-}
-
-/** What an inactive build answers to a call of its own kinitro.ai server or its probe. */
-export function inactiveText(name: string, env: string, value: string | undefined): string {
-  return `${name} (${env}) is off in this session (${ENV_VAR}=${(value ?? '').trim() || 'unset'}); use the kinitro.ai ${env === 'TEST' ? 'Production' : 'Test'} tools of this session, or start a session with ${ENV_VAR}=${env}.`
+  return env === 'TEST' ? want !== 'PROD' : want !== 'TEST'
 }
 
 let activeP: Promise<{ on: boolean; value: string | undefined }> | undefined
@@ -1565,8 +1562,8 @@ export function bandModel(s: BandState): BandModel {
 
 // ---- hooks -----------------------------------------------------------------
 export const register: Register = (on) => {
-  // Build variant (PO 21.10.2026): every hook first asks activeNow; an inactive build passes the event through untouched
-  // and refuses calls of its own kinitro.ai server and its probe (inactiveText).
+  // Build variant (PO 21.10.2026, ruling R1): every hook first asks activeNow; a build switched off by KINITRO_AI_ENV passes
+  // every event through untouched. Each build's hooks match only its own server and probe (BUNDLED_RX, PROBE_TOOL).
   on('session.start', async ($, e, next) => {
     if (!(await activeNow($)).on) return next(e)   // build variant: inactive in this session
     await log($, `session.start ${VERSION} (interactive=${e.isInteractive}, surface=${e.surface})`)
@@ -1603,8 +1600,7 @@ export const register: Register = (on) => {
   on('tool.call', { tool: BUNDLED_RX }, async ($, e: any, next) => {
     const verb = String(e.tool).replace(BUNDLED_RX, '')
     if (!verb || verb === 'authenticate' || verb === 'complete_authentication') return next(e)
-    const st = await activeNow($)
-    if (!st.on) return { deny: inactiveText(VARIANT.name, VARIANT.env, st.value) }   // build variant: inactive in this session
+    if (!(await activeNow($)).on) return next(e)   // build variant: switched off in this session, the call goes through untouched
     let key = await heldKey($)
     if (!key && !legacy && !binding && !KEYLESS_VERBS.has(verb) && (await rebindOnce($))) key = await heldKey($)
     let r: any = await next(withSession(e, verb, key))
@@ -1628,8 +1624,7 @@ export const register: Register = (on) => {
   }).catch(() => ({ deny: `${VARIANT.name}: the call failed in the plugin session check and was not run again. ${MAY_HAVE_RUN}` }))
 
   on('tool.call', { tool: PROBE_TOOL }, async ($, e: any) => {
-    const st = await activeNow($)
-    if (!st.on) return { deny: inactiveText(VARIANT.name, VARIANT.env, st.value) }   // build variant: inactive in this session
+    if (!(await activeNow($)).on) return { result: `${VARIANT.name} (${VARIANT.env}) is switched off in this session (KINITRO_AI_ENV)` }   // build variant
     const action = e.action ?? 'status'
     if (action === 'open-domain') return { result: await openDomainView($) }
     if (action === 'comments') {

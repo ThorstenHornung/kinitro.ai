@@ -6,14 +6,15 @@
 // Never edit the values by hand in a release tree.
 //   name          the plugin name: tool names (mcp__<name>__probe, mcp__plugin_<name>_kinitro_ai__<verb>), host state, texts
 //   env           PROD or TEST: which kinitro.ai host the bundled server talks to
-//   showEnv       true: the prompt context line and the domain band carry the environment ([kinitro-ai-test TEST 0.24.1])
+//   showEnv       true: the prompt context line and the domain band carry the environment ([kinitro-ai PROD 0.24.2],
+//                 [kinitro-ai-test TEST 0.24.2]); on for both builds from 0.24.2 (Architect ruling R4, 21.10.2026)
 //   downloadBase  the download page whose marketplace.json gives the update notice
 //   command       the slash command file (commands/<command>.md): /kinitro, /kinitro-test
 //   files         the prefix of every local file (.kinitro-ai-domain, .kinitro-ai-outbox.json, ~/.kinitro-ai/sessions, ...)
-// Activation (environment variable KINITRO_AI_ENV, read once per session): a PROD build is active unless it says TEST; a
-// TEST build is active only when it says TEST. An inactive build passes every hook through and refuses calls of its own
-// kinitro.ai server, so a session never works against both hosts.
+// Activation (Architect ruling R1, 21.10.2026): both builds are active side by side in one session; each one's hooks touch
+// only its own server, probe, host state and local files. KINITRO_AI_ENV (read once per session) is an optional override:
+// TEST switches the Production build off, PROD the Test build; a build switched off passes every event through untouched.
 export type Variant = { name: string; env: 'PROD' | 'TEST'; showEnv: boolean; downloadBase: string; files: string; command: string }
 // @variant-begin (the packager replaces this line)
-export const VARIANT: Variant = { name: 'kinitro-ai', env: 'PROD', showEnv: false, downloadBase: 'https://methos.kinitro.ai/download/plugins/claude/', files: '.kinitro-ai', command: 'kinitro' }
+export const VARIANT: Variant = { name: 'kinitro-ai', env: 'PROD', showEnv: true, downloadBase: 'https://methos.kinitro.ai/download/plugins/claude/', files: '.kinitro-ai', command: 'kinitro' }
 // @variant-end

@@ -243,7 +243,7 @@ describe('round 2', () => {
   test('A5 (band model): a pending approval gives the "Approve Gamma" link with the plain URL, the confirm button, no server text', () => {
     const m = bandModel({ approved, current: 'beta', chooser: false, url: SELECTOR_URL, note: null, pend })
     expect(m.compact).toBe(false)
-    expect(m.title).toBe('kinitro.ai · Gamma needs your approval.')
+    expect(m.title).toBe('kinitro.ai PROD · Gamma needs your approval.')
     expect(m.items[0]).toEqual({ kind: 'link', key: 'kin-approve-gamma', label: 'Approve Gamma', href: APPROVE_URL })
     expect(m.items.some((i) => i.kind === 'button' && i.label === 'I approved it' && i.act === 'approved')).toBe(true)
     const all = JSON.stringify(m)
@@ -256,7 +256,7 @@ describe('round 2', () => {
     expect(m.items.some((i) => i.kind === 'button' && i.act === 'bind' && i.slug === 'alpha')).toBe(true)
     const bound = bandModel({ approved, current: 'beta', chooser: false, url: null, note: null, pend: null })
     expect(bound.compact).toBe(true)
-    expect(bound.title).toBe('kinitro.ai · BETA (beta) ')
+    expect(bound.title).toBe('kinitro.ai PROD · BETA (beta) ')
   })
 
   test('overlap: an approval check that is still open neither hides the agent own open-domain nor clears a running bind', async ($, on) => {
