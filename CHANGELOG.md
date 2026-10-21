@@ -6,11 +6,11 @@ All notable changes to the `kinitro-ai` plugin are listed here. The format follo
 
 ### Added (PO 21.10.2026: two plugins with separate connections; Architect rulings R1 and R4)
 - Build variant: `hooks/variant.ts` names the plugin, its environment, its download page, the prefix of its local files and its command. The source is the Production build `kinitro-ai`; the Novatect packager (`package_kinitro_plugin.py --variant test`) builds `kinitro-ai-test` for `https://methos-test.kinitro.ai/mcp` with its own marketplace, `/kinitro-test`, `.kinitro-ai-test-*` files and `~/.kinitro-ai-test/sessions`.
-- Both builds run side by side in one session (R1). Each build's hooks match only its own server and probe; its session key never reaches a call of the other build's server, and the other build's server is no "second connection". `KINITRO_AI_ENV` is an optional override: `TEST` switches the Production build off, `PROD` the Test build; a build switched off passes every event through untouched.
+- Both builds run side by side in one session (R1). Each build's hooks match only its own server and probe; its session key never reaches a call of the other build's server, and the other build's server (exactly `kinitro-ai` or `kinitro-ai-test`) is no "second connection". `KINITRO_AI_ENV` is an optional override: `TEST` switches the Production build off, `PROD` the Test build; a build switched off refuses its own server's calls (fail closed, no raw session key can reach the model) and passes every other event through.
 - The prompt context line and the domain band name the environment (R4): `[kinitro-ai PROD 0.24.2]`, `[kinitro-ai-test TEST 0.24.2]`, "kinitro.ai PROD", "kinitro.ai TEST".
 
 ### Tests
-- `tests/variant.test.ts` (4), `tests/variant-inactive.test.ts` (1), `tests/isolation.test.ts` (1: the own key on own calls only, the other build's call and answer untouched; run in both directions by the Test build's suite). Version strings and band titles in `approval-flow`, `session-key` and `update-notice` move to 0.24.2 / PROD.
+- `tests/variant.test.ts` (4), `tests/variant-inactive.test.ts` (1: the switched-off build refuses its own server, also a keyless `open-domain`), `tests/isolation.test.ts` (1: the own key on own calls only, the other build's call and answer untouched). The names in `isolation.test.ts` and the probe in `tests/world.ts` come from `hooks/variant.ts`, so the Test build's suite (Novatect packager check) runs the same test in its own direction. Version strings and band titles in `approval-flow`, `session-key` and `update-notice` move to 0.24.2 / PROD.
 
 ## [0.24.1] - 2026-10-20
 

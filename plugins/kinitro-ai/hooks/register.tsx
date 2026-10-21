@@ -529,7 +529,7 @@ export function secondConnections(names: string[]): string[] {
 
 // Build variant (PO 21.10.2026): the bundled server of the OTHER kinitro.ai build (kinitro-ai beside kinitro-ai-test) is no
 // second connection to warn about; the gate below keeps a session to one of them.
-const SIBLING_RX = /^mcp__plugin_kinitro-ai(-[a-z0-9]+)?_kinitro_ai__/
+const SIBLING_RX = /^mcp__plugin_kinitro-ai(-test)?_kinitro_ai__/   // review F4: exactly the two builds
 
 /** Whether a build is active, given KINITRO_AI_ENV (Architect ruling R1, 21.10.2026): both builds are active by default, so
  *  one session can work on Production and look at Test. The variable is only an override that switches ONE build off:
@@ -1563,7 +1563,8 @@ export function bandModel(s: BandState): BandModel {
 // ---- hooks -----------------------------------------------------------------
 export const register: Register = (on) => {
   // Build variant (PO 21.10.2026, ruling R1): every hook first asks activeNow; a build switched off by KINITRO_AI_ENV passes
-  // every event through untouched. Each build's hooks match only its own server and probe (BUNDLED_RX, PROBE_TOOL).
+  // every other event through untouched and refuses its own server's calls (review F1). Each build's hooks match only its own
+  // server and probe (BUNDLED_RX, PROBE_TOOL).
   on('session.start', async ($, e, next) => {
     if (!(await activeNow($)).on) return next(e)   // build variant: inactive in this session
     await log($, `session.start ${VERSION} (interactive=${e.isInteractive}, surface=${e.surface})`)
@@ -1600,7 +1601,9 @@ export const register: Register = (on) => {
   on('tool.call', { tool: BUNDLED_RX }, async ($, e: any, next) => {
     const verb = String(e.tool).replace(BUNDLED_RX, '')
     if (!verb || verb === 'authenticate' || verb === 'complete_authentication') return next(e)
-    if (!(await activeNow($)).on) return next(e)   // build variant: switched off in this session, the call goes through untouched
+    // review F1: a build switched off by KINITRO_AI_ENV fails closed on its own server: the call is refused, so no answer (and
+    // no session key in it) ever reaches the model unfiltered. A project's settings can set the variable.
+    if (!(await activeNow($)).on) return { deny: `${VARIANT.name} (${VARIANT.env}) is switched off in this session (KINITRO_AI_ENV); its kinitro.ai tools are not used.` }
     let key = await heldKey($)
     if (!key && !legacy && !binding && !KEYLESS_VERBS.has(verb) && (await rebindOnce($))) key = await heldKey($)
     let r: any = await next(withSession(e, verb, key))

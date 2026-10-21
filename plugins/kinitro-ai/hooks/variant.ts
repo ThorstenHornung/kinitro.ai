@@ -13,7 +13,8 @@
 //   files         the prefix of every local file (.kinitro-ai-domain, .kinitro-ai-outbox.json, ~/.kinitro-ai/sessions, ...)
 // Activation (Architect ruling R1, 21.10.2026): both builds are active side by side in one session; each one's hooks touch
 // only its own server, probe, host state and local files. KINITRO_AI_ENV (read once per session) is an optional override:
-// TEST switches the Production build off, PROD the Test build; a build switched off passes every event through untouched.
+// TEST switches the Production build off, PROD the Test build; a build switched off refuses its own server's calls and
+// passes every other event through untouched.
 export type Variant = { name: string; env: 'PROD' | 'TEST'; showEnv: boolean; downloadBase: string; files: string; command: string }
 // @variant-begin (the packager replaces this line)
 export const VARIANT: Variant = { name: 'kinitro-ai', env: 'PROD', showEnv: true, downloadBase: 'https://methos.kinitro.ai/download/plugins/claude/', files: '.kinitro-ai', command: 'kinitro' }

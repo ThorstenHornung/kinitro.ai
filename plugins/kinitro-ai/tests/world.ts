@@ -2,6 +2,7 @@
 // relative paths against the CURRENT working directory (as the host does), a session id, a working
 // directory and project root the test can move, a user home, and a kinitro.ai connector serving three domains.
 import { mock } from 'claude-code/testing'
+import { VARIANT } from '../hooks/variant'
 
 export type World = { files: Map<string, string>; cwd: string; root: string; sid: string; calls: string[]; tools?: string[]; prefixes: string[]; sent: Array<{ verb: string; args: Record<string, unknown> }>; verbs?: Record<string, (args: Record<string, unknown>) => unknown>; env?: Record<string, string> }
 
@@ -53,6 +54,6 @@ export function makeWorld(on: any, w: Omit<World, 'calls' | 'prefixes' | 'sent'>
 }
 
 export async function probe($: any, action: string, extra: Record<string, unknown> = {}): Promise<string> {
-  const r: any = await $.tool.call({ tool: 'mcp__kinitro-ai__probe', action, ...extra })
+  const r: any = await $.tool.call({ tool: `mcp__${VARIANT.name}__probe`, action, ...extra })   // review F3: the build's own probe
   return String(r.text ?? r.result)
 }
