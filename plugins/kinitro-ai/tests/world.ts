@@ -3,7 +3,7 @@
 // directory and project root the test can move, a user home, and a kinitro.ai connector serving three domains.
 import { mock } from 'claude-code/testing'
 
-export type World = { files: Map<string, string>; cwd: string; root: string; sid: string; calls: string[]; tools?: string[]; prefixes: string[]; sent: Array<{ verb: string; args: Record<string, unknown> }>; verbs?: Record<string, (args: Record<string, unknown>) => unknown> }
+export type World = { files: Map<string, string>; cwd: string; root: string; sid: string; calls: string[]; tools?: string[]; prefixes: string[]; sent: Array<{ verb: string; args: Record<string, unknown> }>; verbs?: Record<string, (args: Record<string, unknown>) => unknown>; env?: Record<string, string> }
 
 const DOMAINS = ['alpha', 'beta', 'gamma']
 
@@ -18,7 +18,7 @@ export function makeWorld(on: any, w: Omit<World, 'calls' | 'prefixes' | 'sent'>
     const p = raw.replace(/^[A-Za-z]:/, '').replace(/\\/g, '/')
     return p.startsWith('/') ? p : `${world.cwd}/${p}`
   }
-  mock.env(on, { HOME: '/u' })
+  mock.env(on, { HOME: '/u', ...(w.env ?? {}) })   // `env` (optional): more environment variables, e.g. KINITRO_AI_ENV
   on('session.id', async () => ({ value: world.sid }))
   on('session.cwd', async () => ({ value: world.cwd }))
   on('session.root', async () => ({ value: world.root }))
