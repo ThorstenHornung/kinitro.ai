@@ -11,6 +11,7 @@ All notable changes to the `kinitro-ai` plugin are listed here. The format follo
 
 ### Tests
 - `tests/headless.test.ts` (4: nothing written in the working folder, nothing sent, no tool, no context; control: the same run interactive; the host state survives a restarted module; a headless call passes through); `tests/session-key.test.ts` 6b (the advice text). The version strings in `session-key` and `update-notice` move to 0.24.3.
+- `tests/publisher.test.mjs` at the repository root (outside the plugin folder, so no install carries it): the guard for the publisher. It checks `plugin.json` author, `marketplace.json` owner, the LICENSE, README footer and partners page, and that no tracked file except this changelog names the person (the GitHub install path is allowed). Run `node --test tests/publisher.test.mjs` from the repository root.
 
 ## [0.24.2] - 2026-10-21
 
