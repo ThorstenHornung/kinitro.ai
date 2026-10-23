@@ -15,6 +15,7 @@ declare module 'claude-code' {
       sessionKey: { sid: string; key: string } | null
       approval: { sid: string; slug: string; request: string; url: string; domainName: string; agentName: string; expiresAt: string } | null
       secondNotice: boolean
+      headless: boolean
     }
   }
 }

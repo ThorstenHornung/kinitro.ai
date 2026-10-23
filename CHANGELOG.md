@@ -2,6 +2,16 @@
 
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.24.3] - 2026-10-23
+
+### Fixed (item 4.2.1-3696, PO 20.10.2026)
+- Headless sessions (`isInteractive === false`: `claude -p`, build and worker sessions) get nothing from the plugin: no state, outbox or log file in the working folder, no briefing fetch, no `probe` tool, no timer, no context or second-connection note for the model, no mirror. One log line goes to `~/.kinitro-ai/headless.log` in the person's folder. The state is host-held, so a restarted hook module stays inert. A call to the plugin's own server in such a session passes through untouched.
+- The second-connection advice no longer tells the person to remove the claude.ai connector in the claude.ai settings (browser, Desktop and mobile need it). In Claude Code it says to switch it off for this tool only: `/mcp`, choose the claude.ai connector, Disable.
+- The publisher is the organisation and its website only: `plugin.json` author and `marketplace.json` owner are `{"name": "Kinitro Consulting", "url": "https://kinitro.ai"}`; README footer, LICENSE and the partners page name Kinitro Consulting and `support@kinitro.ai`. The GitHub install path is unchanged.
+
+### Tests
+- `tests/headless.test.ts` (4: nothing written in the working folder, nothing sent, no tool, no context; control: the same run interactive; the host state survives a restarted module; a headless call passes through); `tests/session-key.test.ts` 6b (the advice text). The version strings in `session-key` and `update-notice` move to 0.24.3.
+
 ## [0.24.2] - 2026-10-21
 
 ### Added (PO 21.10.2026: two plugins with separate connections; Architect rulings R1 and R4)

@@ -1,4 +1,3 @@
-import { atom, update } from 'claude-code'
 import { describe, expect, test } from 'claude-code/testing'
 import { makeWorld } from './world'
 
@@ -8,7 +7,6 @@ import { makeWorld } from './world'
 // into the working folder.
 const done = { reason: 'answer', durationMs: 1, isAborted: false } as const
 const CWD_FILES = (files: Map<string, string>) => [...files.keys()].filter((f) => f.startsWith('/w/')).sort()
-const headlessAtom = atom({ plugin: 'kinitro-ai', key: 'headless' } as const, false)
 
 const mk = (on: any) => {
   const seen: string[] = [], registered: string[] = []
@@ -48,7 +46,8 @@ describe('headless sessions (item 4.2.1-3696 criterion 6)', () => {
   test('H2: the host state survives a restarted module: a session once seen headless stays inert', async ($, on) => {
     const { w, seen } = mk(on)
     const before = new Map(w.files)
-    await update($, headlessAtom, () => true)                                     // what an earlier module of this session left in the host
+    // what an earlier module of this session left in the host: the headless flag, read back through state.get
+    on('state.get', (_$: any, e: any, next: any) => (e.key === 'headless' ? { value: { value: true, version: 1 } } : next(e)))
     await $.prompt.submit({ text: 'again', origin: { kind: 'composer' } } as any)
     await $.turn.complete({ ...done, turnId: 't2', answer: 'OK' } as any)
     expect([...w.files.keys()].sort()).toEqual([...before.keys()].sort())

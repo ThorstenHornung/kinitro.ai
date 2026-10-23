@@ -50,4 +50,4 @@ The offering is chargeable. Commercial terms are agreed individually during the 
 - The kinitro names and logo are not licensed. Ask kinitro before you use them.
 - Access to agents is granted through kinitro.ai seats, not through this repository.
 
-To apply, contact Thorsten Hornung, kinitro consulting, [support@kinitro.ai](mailto:support@kinitro.ai).
+To apply, contact Kinitro Consulting, [support@kinitro.ai](mailto:support@kinitro.ai).

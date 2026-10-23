@@ -6,8 +6,8 @@
 // Never edit the values by hand in a release tree.
 //   name          the plugin name: tool names (mcp__<name>__probe, mcp__plugin_<name>_kinitro_ai__<verb>), host state, texts
 //   env           PROD or TEST: which kinitro.ai host the bundled server talks to
-//   showEnv       true: the prompt context line and the domain band carry the environment ([kinitro-ai PROD 0.24.2],
-//                 [kinitro-ai-test TEST 0.24.2]); on for both builds from 0.24.2 (Architect ruling R4, 21.10.2026)
+//   showEnv       true: the prompt context line and the domain band carry the environment ([kinitro-ai PROD 0.24.3],
+//                 [kinitro-ai-test TEST 0.24.3]); on for both builds from 0.24.2 (Architect ruling R4, 21.10.2026)
 //   downloadBase  the download page whose marketplace.json gives the update notice
 //   command       the slash command file (commands/<command>.md): /kinitro, /kinitro-test
 //   files         the prefix of every local file (.kinitro-ai-domain, .kinitro-ai-outbox.json, ~/.kinitro-ai/sessions, ...)

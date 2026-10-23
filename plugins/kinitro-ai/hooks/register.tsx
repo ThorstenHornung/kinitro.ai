@@ -46,7 +46,7 @@ const FETCH_MS = 60000
 const MAX_TEXT = 50000     // chars per prompt / answer sent to the chat
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = `${F.replace(/^\./, '')}.log`
-const VERSION = '0.24.2'
+const VERSION = '0.24.3'
 // update notice (PO 2026-10-16): at the first prompt, compare with the published marketplace.json on the download page
 const UPDATE_BASE = VARIANT.downloadBase   // the download page; the environment variable KINITRO_AI_DOWNLOAD_BASE overrides it
 const UPDATE_TIMEOUT_MS = 2500
@@ -151,6 +151,7 @@ const contextKeyA = atom({ plugin: 'kinitro-ai', key: 'contextKey' } as const, '
 const boundA = atom({ plugin: 'kinitro-ai', key: 'bound' } as const, null as string | null)   // this session's slug, held by the host: survives reloads and a changed working folder
 const sessionKeyA = atom({ plugin: 'kinitro-ai', key: 'sessionKey' } as const, null as { sid: string; key: string } | null)   // 0.24.0: this Claude session's kinitro.ai session key, host-held for this session only
 const secondNoticeA = atom({ plugin: 'kinitro-ai', key: 'secondNotice' } as const, false)                // 0.24.0: the second connection was told in this session
+const headlessA = atom({ plugin: 'kinitro-ai', key: 'headless' } as const, false)                        // 0.24.3 (item 4.2.1-3696): this session is headless (isInteractive === false): the plugin stays inert; host-held, so a reload keeps it
 // 0.24.1 (item 4.2.1-3764): the approval this Claude session waits for, host-held so a reload never asks the server again
 const approvalA = atom({ plugin: 'kinitro-ai', key: 'approval' } as const, null as Approval | null)
 
@@ -551,10 +552,32 @@ function activeNow($: any): Promise<{ on: boolean; value: string | undefined }> 
   return activeP
 }
 
-/** The one sentence that tells the person about a second connection and how to remove it. */
+// 0.24.3 (item 4.2.1-3696 criterion 6): inert = this build is switched off (KINITRO_AI_ENV) or the session is headless
+// (claude -p, build and worker sessions). An inert plugin passes every event through and touches nothing.
+let headlessKnown: boolean | undefined   // read from the host once per module (a restarted module finds the flag there); set at session.start
+async function headlessNow($: any): Promise<boolean> {
+  if (headlessKnown === undefined) headlessKnown = await read($, headlessA)
+  return headlessKnown
+}
+async function inertNow($: any): Promise<boolean> {
+  return !(await activeNow($)).on || (await headlessNow($))
+}
+
+// the one log line of a headless session: in the person's folder, never in the working folder
+async function headlessLog($: any, line: string) {
+  try {
+    const home = (await $.env.get('HOME')) || (await $.env.get('USERPROFILE'))
+    if (home) await $.fs.write(joinPath(home, `${F}/headless.log`), `${new Date().toISOString()} ${line}
+`)
+  } catch { /* ignore */ }
+}
+
+/** The one sentence that tells the person about a second connection and how to switch it off for this tool. */
 export function secondConnectionText(prefixes: string[]): string {
-  const how = prefixes.map((p) => (p === USER_PREFIX ? 'claude mcp remove kinitro_ai' : p === CONNECTOR_PREFIX ? 'disconnect the kinitro.ai connector in the claude.ai settings' : `remove ${p.slice(5, -2)} in /mcp`))
-  return `A second kinitro.ai connection is present in this session (${prefixes.map((p) => p.slice(5, -2)).join(', ')}); the ${VARIANT.name} plugin uses only its own connection, so remove the other one (${how.join('; ')}).`
+  // 0.24.3 (6b): the claude.ai connector also serves the browser, Desktop and mobile, so it is switched off for this tool
+  // only (/mcp, Disable) and never removed in the claude.ai settings
+  const how = prefixes.map((p) => (p === USER_PREFIX ? 'claude mcp remove kinitro_ai' : p === CONNECTOR_PREFIX ? 'in Claude Code switch the claude.ai connector off for this tool only: /mcp, choose the claude.ai connector, Disable' : `switch ${p.slice(5, -2)} off for this tool in /mcp`))
+  return `A second kinitro.ai connection is present in this session (${prefixes.map((p) => p.slice(5, -2)).join(', ')}); the ${VARIANT.name} plugin uses only its own connection, so switch the other one off for this tool (${how.join('; ')}).`
 }
 
 // 0.24.0: the plugin works only with its own server (choice 1b); the fallback to a user server, the claude.ai connector or
@@ -1567,6 +1590,14 @@ export const register: Register = (on) => {
   // server and probe (BUNDLED_RX, PROBE_TOOL).
   on('session.start', async ($, e, next) => {
     if (!(await activeNow($)).on) return next(e)   // build variant: inactive in this session
+    // 0.24.3 (item 4.2.1-3696 criterion 6): a headless session (claude -p, build and worker sessions) gets nothing from this
+    // plugin: no state or log file in the working folder, no briefing, no probe tool, no timer, no mirror, no note
+    if (e.isInteractive === false) {
+      headlessKnown = true
+      await update($, headlessA, () => true)
+      await headlessLog($, `session.start ${VERSION} (interactive=false): the plugin stays inert in this session`)
+      return next(e)
+    }
     await log($, `session.start ${VERSION} (interactive=${e.isInteractive}, surface=${e.surface})`)
     await readState($)
     await loadCache($)
@@ -1604,6 +1635,7 @@ export const register: Register = (on) => {
     // review F1: a build switched off by KINITRO_AI_ENV fails closed on its own server: the call is refused, so no answer (and
     // no session key in it) ever reaches the model unfiltered. A project's settings can set the variable.
     if (!(await activeNow($)).on) return { deny: `${VARIANT.name} (${VARIANT.env}) is switched off in this session (KINITRO_AI_ENV); its kinitro.ai tools are not used.` }
+    if (await headlessNow($)) return next(e)   // 0.24.3: a headless session holds no key and adds nothing; the call passes through
     let key = await heldKey($)
     if (!key && !legacy && !binding && !KEYLESS_VERBS.has(verb) && (await rebindOnce($))) key = await heldKey($)
     let r: any = await next(withSession(e, verb, key))
@@ -1626,8 +1658,9 @@ export const register: Register = (on) => {
   // the key, never a write twice) and nothing of a raw answer reaches the model.
   }).catch(() => ({ deny: `${VARIANT.name}: the call failed in the plugin session check and was not run again. ${MAY_HAVE_RUN}` }))
 
-  on('tool.call', { tool: PROBE_TOOL }, async ($, e: any) => {
+  on('tool.call', { tool: PROBE_TOOL }, async ($, e: any, next) => {
     if (!(await activeNow($)).on) return { result: `${VARIANT.name} (${VARIANT.env}) is switched off in this session (KINITRO_AI_ENV)` }   // build variant
+    if (await headlessNow($)) return next(e)   // 0.24.3: no probe in a headless session
     const action = e.action ?? 'status'
     if (action === 'open-domain') return { result: await openDomainView($) }
     if (action === 'comments') {
@@ -1706,7 +1739,7 @@ export const register: Register = (on) => {
   // FIRST-MESSAGE CONTEXT BLOCK: Persona + Working rules. Rendered once per
   // conversation and again after every compaction (the host owns the system prompt here).
   on('prompt.context', async ($, e, next) => {
-    if (!(await activeNow($)).on) return next(e)   // build variant: inactive in this session
+    if (await inertNow($)) return next(e)   // inert: build switched off, or a headless session
     const r = await next(e)
     if (!briefing) await loadCache($)
     const text = briefingBlock()
@@ -1720,7 +1753,7 @@ export const register: Register = (on) => {
 
   // SYSTEM PROMPT (every request): Persona + Working rules -- does not fire in the claude.ai cloud host
   on('prompt.compose', async ($, e, next) => {
-    if (!(await activeNow($)).on) return next(e)   // build variant: inactive in this session
+    if (await inertNow($)) return next(e)   // inert: build switched off, or a headless session
     const r = await next(e)
     await ensureBriefing($)
     if (!briefing) return r
@@ -1731,7 +1764,7 @@ export const register: Register = (on) => {
 
   // EVERY USER PROMPT: marker, start (first prompt), per-turn, 70 %, post-compaction
   on('prompt.submit', async ($, e, next) => {
-    if (!(await activeNow($)).on) return next(e)   // build variant: inactive in this session
+    if (await inertNow($)) return next(e)   // inert: build switched off, or a headless session
     if (!briefing) await waitForBriefing($)
     // R2: each user turn looks at a pending approval again, in the background (the hot path awaits no network call)
     const apNow = await heldApproval($)
@@ -1899,7 +1932,7 @@ export const register: Register = (on) => {
 
   // COMPACTION: steer the summarizer, then flag the post-compaction block
   on('session.compact', async ($, e, next) => {
-    if (!(await activeNow($)).on) return next(e)   // build variant: inactive in this session
+    if (await inertNow($)) return next(e)   // inert: build switched off, or a headless session
     if (e.agentId) return next(e)
     await log($, `session.compact trigger=${e.trigger} messages=${e.messages.length}`)
     const keep = sec(S.keep)
@@ -1916,7 +1949,7 @@ export const register: Register = (on) => {
 
   // END OF TURN: prompt and final answer into the agent's kinitro.ai chat (item 3413); outbox first, then send
   on('turn.complete', async ($, e, next) => {
-    if (!(await activeNow($)).on) return next(e)   // build variant: inactive in this session
+    if (await inertNow($)) return next(e)   // inert: build switched off, or a headless session
     const r = await next(e)
     if (e.agentId) return r
     const taken = pending
@@ -1928,7 +1961,7 @@ export const register: Register = (on) => {
 
   // DOMAIN BAND above the prompt: which kinitro.ai domain this session works for; choose or change it
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (!(await activeNow($)).on) return next(e)   // build variant: inactive in this session
+    if (await inertNow($)) return next(e)   // inert: build switched off, or a headless session
     if ((e as any).props?.hasSurvey) return next(e)
     const { Box, Text, Button, Link } = $.ui.resolve(e) as any
     bandRenders++; lastBandSurface = String((e as any).surface)

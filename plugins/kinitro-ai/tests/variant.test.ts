@@ -32,7 +32,7 @@ describe('build variant', () => {
     const w = makeWorld(on, { files: new Map([['/w/b/.kinitro-ai-domain', 'beta\n']]), cwd: '/w/b', root: '/w/b', sid: 'SV' })
     expect(await probe($, 'reload')).toContain('domain: beta')
     await $.prompt.submit({ text: 'a', origin: { kind: 'composer' } } as any)
-    expect(seen[0]).toMatch(/^\[kinitro-ai PROD 0\.24\.2\] context /)
+    expect(seen[0]).toMatch(/^\[kinitro-ai PROD 0\.24\.3\] context /)
     expect(w.files.has('/u/.kinitro-ai/sessions/SV.json')).toBe(true)
     expect(w.files.has('/w/b/kinitro-ai.log')).toBe(true)
   })

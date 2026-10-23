@@ -92,7 +92,7 @@ Details: [How it works](docs/how-it-works.md) and [Plugin reference](docs/plugin
 
 ## For partners
 
-Partners build specialized agent solutions on kinitro.ai and offer them to customers, at a charge. A solution combines persona, procedures, knowledge, data model, views and documents. Commercial terms are agreed individually during the beta. See [For partners](docs/for-partners.md). To get access, contact Thorsten Hornung, kinitro consulting, [support@kinitro.ai](mailto:support@kinitro.ai).
+Partners build specialized agent solutions on kinitro.ai and offer them to customers, at a charge. A solution combines persona, procedures, knowledge, data model, views and documents. Commercial terms are agreed individually during the beta. See [For partners](docs/for-partners.md). To get access, contact Kinitro Consulting, [support@kinitro.ai](mailto:support@kinitro.ai).
 
 ## Documentation
 
@@ -110,4 +110,4 @@ Proprietary beta software. See [LICENSE](LICENSE).
 
 ---
 
-<p align="center">© 2026 kinitro consulting · Thorsten Hornung · <a href="mailto:support@kinitro.ai">support@kinitro.ai</a></p>
+<p align="center">© 2026 Kinitro Consulting · <a href="https://kinitro.ai">kinitro.ai</a> · <a href="mailto:support@kinitro.ai">support@kinitro.ai</a></p>

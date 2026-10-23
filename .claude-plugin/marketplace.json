@@ -1,17 +1,18 @@
 {
   "name": "kinitro-ai",
   "owner": {
-    "name": "kinitro consulting (Thorsten Hornung)"
+    "name": "Kinitro Consulting",
+    "url": "https://kinitro.ai"
   },
   "metadata": {
     "description": "kinitro.ai plugins for running kinitro.ai agents in Claude.",
-    "version": "0.24.2"
+    "version": "0.24.3"
   },
   "plugins": [
     {
       "name": "kinitro-ai",
       "source": "./plugins/kinitro-ai",
-      "version": "0.24.2",
+      "version": "0.24.3",
       "description": "Briefs a kinitro.ai agent from the platform at the right moments and mirrors each turn into kinitro.ai."
     }
   ]
