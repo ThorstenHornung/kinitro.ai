@@ -55,12 +55,27 @@ describe('headless sessions (item 4.2.1-3696 criterion 6)', () => {
     expect(seen.join('\n')).not.toContain('kinitro')
   })
 
-  test('H3: a headless call of the own server is passed through untouched (no key held, nothing added)', async ($, on) => {
+  // H3: the session holds a key (host state), the model calls the plugin's own server. A headless session passes the call
+  // through untouched (no key added); control: the same call in a session that is not headless carries the key.
+  const callWithKey = async ($: any, on: any, headless: boolean) => {
     const { w } = mk(on)
     w.verbs = { 'list-domains': () => ({ result: JSON.stringify({ domains: [] }) }) }
-    await $.session.start({ isInteractive: false, surface: 'terminal', cwd: '/w/b' }).catch(() => undefined)
+    on('state.get', (_$: any, e: any, next: any) => {
+      if (e.key === 'headless' && headless) return { value: { value: true, version: 1 } }
+      if (e.key === 'sessionKey') return { value: { value: { sid: 'H1', key: 'kss_held_key' }, version: 1 } }
+      return next(e)
+    })
     await $.tool.call({ tool: 'mcp__plugin_kinitro-ai_kinitro_ai__list-domains' })
-    expect(w.sent.filter((s) => s.verb !== 'list-domains')).toEqual([])           // no open-domain to obtain a key
-    expect(w.sent[0]!.args.domainRef).toBeUndefined()
+    return w.sent
+  }
+  test('H3: a headless call of the own server is passed through untouched (no key added, nothing else sent)', async ($, on) => {
+    const sent = await callWithKey($, on, true)
+    expect(sent.map((s) => s.verb)).toEqual(['list-domains'])
+    expect(sent[0]!.args.domainRef).toBeUndefined()
+  })
+
+  test('H3 control: the same call in a session that is not headless carries the held key', async ($, on) => {
+    const sent = await callWithKey($, on, false)
+    expect(sent.find((s) => s.verb === 'list-domains')!.args.domainRef).toBe('kss_held_key')
   })
 })
