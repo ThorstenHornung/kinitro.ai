@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'claude-code/testing'
-import { isKeyRefusal, scrubKey, secondConnections, sessionKeyOf } from '../hooks/register'
+import { isKeyRefusal, scrubKey, secondConnections, secondConnectionText, sessionKeyOf } from '../hooks/register'
 import { makeWorld, probe } from './world'
 
 // 0.24.0 (item 4.2.1-3590, PO 19.10.2026): the session key is mandatory. A server that mints keys and refuses every verb
@@ -175,6 +175,15 @@ describe('session key', () => {
     await ($ as any).tool.call({ tool: `${B}list-nodes` })
     expect(w.sent[w.sent.length - 1]!.args.domainRef).toBe('beta')
     expect(srv.minted).toHaveLength(0)
+  })
+
+  test('6b (item 4.2.1-3696): the second-connection advice switches the connector off for this tool only, never in the claude.ai settings', () => {
+    const connector = secondConnectionText([C])
+    expect(connector).toContain('/mcp')
+    expect(connector).toContain('Disable')
+    expect(connector).not.toContain('claude.ai settings')
+    expect(connector).not.toMatch(/disconnect/i)
+    expect(secondConnectionText([U])).toContain('claude mcp remove kinitro_ai')   // control: a user server is still removed
   })
 
   test('P6: a second kinitro.ai connection is told once and never gets the key', async ($, on) => {
