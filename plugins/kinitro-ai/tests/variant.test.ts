@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'claude-code/testing'
-import { activeIn, AUTH_HINT, resolveKinitroTools, secondConnections } from '../hooks/register'
+import { activeIn, AUTH_HINT, devicePrefixFor, resolveKinitroTools, secondConnections } from '../hooks/register'
 import { VARIANT } from '../hooks/variant'
 import { makeWorld, probe } from './world'
 
@@ -32,8 +32,23 @@ describe('build variant', () => {
     const w = makeWorld(on, { files: new Map([['/w/b/.kinitro-ai-domain', 'beta\n']]), cwd: '/w/b', root: '/w/b', sid: 'SV' })
     expect(await probe($, 'reload')).toContain('domain: beta')
     await $.prompt.submit({ text: 'a', origin: { kind: 'composer' } } as any)
-    expect(seen[0]).toMatch(/^\[kinitro-ai PROD 0\.24\.3\] context /)
+    expect(seen[0]).toMatch(/^\[kinitro-ai PROD 0\.25\.0\] context /)
     expect(w.files.has('/u/.kinitro-ai/sessions/SV.json')).toBe(true)
     expect(w.files.has('/w/b/kinitro-ai.log')).toBe(true)
+  })
+  // Item 4.2.1-3910 (Architect ruling Q4, 25.10.2026): each build's device prefix matches only its own device server; the
+  // Production device URL is pinned in tests/publisher.test.mjs (the kit loads no JSON import); the Test build's URL is
+  // proven by the Novatect packager test only.
+  test('the device prefix of each build matches only its own device server', () => {
+    const P = devicePrefixFor('kinitro-ai'), T = devicePrefixFor('kinitro-ai-test')
+    expect(P).toBe('mcp__plugin_kinitro-ai_kinitro_ai_device__')
+    expect(T).toBe('mcp__plugin_kinitro-ai-test_kinitro_ai_device__')
+    const own = (prefix: string, name: string) => name.startsWith(prefix)
+    expect(own(P, 'mcp__plugin_kinitro-ai_kinitro_ai_device__current-seat')).toBe(true)
+    expect(own(P, 'mcp__plugin_kinitro-ai-test_kinitro_ai_device__current-seat')).toBe(false)
+    expect(own(P, 'mcp__plugin_kinitro-ai_kinitro_ai__current-seat')).toBe(false)
+    expect(own(T, 'mcp__plugin_kinitro-ai-test_kinitro_ai_device__current-seat')).toBe(true)
+    expect(own(T, 'mcp__plugin_kinitro-ai_kinitro_ai_device__current-seat')).toBe(false)
+    expect(own(T, 'mcp__plugin_kinitro-ai-test_kinitro_ai__current-seat')).toBe(false)
   })
 })

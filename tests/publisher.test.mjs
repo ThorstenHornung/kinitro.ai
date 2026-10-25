@@ -58,3 +58,11 @@ test('no tracked file names the person', () => {
   assert.ok(allowed >= 1, 'the install-path line of the README was not counted');
   assert.deepEqual(offenders, []);
 });
+
+// Item 4.2.1-3910 (Architect ruling Q4, 25.10.2026): the source names the Production device server, with no oauth block, beside
+// the unchanged OAuth server. Pinned here because the plugin test kit loads no JSON import (design choice D-11).
+test('the plugin source names the Production device server beside the unchanged OAuth server', () => {
+  const servers = JSON.parse(read('plugins/kinitro-ai/.mcp.json')).mcpServers;
+  assert.deepEqual(servers.kinitro_ai_device, { type: 'http', url: 'https://methos.kinitro.ai/mcp/device' });
+  assert.deepEqual(servers.kinitro_ai, { type: 'http', url: 'https://methos.kinitro.ai/mcp', oauth: { clientId: 'claude-code', callbackPort: 33418 } });
+});
