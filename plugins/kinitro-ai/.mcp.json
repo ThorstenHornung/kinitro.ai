@@ -7,6 +7,10 @@
         "clientId": "claude-code",
         "callbackPort": 33418
       }
+    },
+    "kinitro_ai_device": {
+      "type": "http",
+      "url": "https://methos.kinitro.ai/mcp/device"
     }
   }
 }
