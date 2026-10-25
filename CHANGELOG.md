@@ -2,6 +2,18 @@
 
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.25.0] - 2026-10-25
+
+### Added (item 4.2.1-3910, F4 of the device sign-in; PO 24.10.2026)
+- Sign-in by email code when the browser is not on the same machine. `.mcp.json` declares a second own server, `kinitro_ai_device` at `https://methos.kinitro.ai/mcp/device` (no OAuth block); the Test build points it at `https://methos-test.kinitro.ai/mcp/device`.
+- The sign-in path is decided once per Claude session (Q4): the setting `signInPath` (`auto`, `oauth`, `device`; default `auto`) wins; `auto` takes the device path when `SSH_CONNECTION`, `SSH_CLIENT` or `SSH_TTY` is set or `CLAUDE_CODE_REMOTE` is `true`, else the OAuth path of 0.24.x, unchanged. The log names the path and the variable, never its value. Without a connected device server the session falls back to OAuth with a band note; on the OAuth path, while no own tool is listed, the band offers "Sign in with an email code" for the session.
+- On the device path the first user turn calls `sign-in` with the setting `email` (else the agent asks once in chat for the address; `probe` action `sign-in` stores it). The plugin holds the pending session key like any session key (never shown, never in a file, the log, the outbox or `$.store`) and shows the mask of the address, built by the plugin. Band: "a code was sent to t***@example.com.", the link "Approve this sign-in", "I approved it", "Send a new code" (from 60 s, same key). Each user turn, "I approved it" and `probe` action `sign-in-check` look again (no timer); on approval the domain and agent chosen on the approval page are bound and the briefing loads. An expired or refused request ends the sign-in: "The kinitro.ai sign-in ended." with "Sign in again"; nothing starts by itself. A rate limit shows the minutes. The server's prose never reaches the model or the band.
+- The inactive own server's tools are refused with a pointer to the active prefix and described as "Not used in this session." (deferred). The model's own `sign-in` call is refused. A prompt of exactly 6 digits while the sign-in waits is not mirrored, and the agent is told to have the code typed only on the kinitro.ai page.
+- `/kinitro sign-in [email]` and `/kinitro sign-in-path <auto|oauth|device>`.
+
+### Tests
+- `tests/device-signin.test.ts` (28: path rule, sign-in at the first turn, the email question, pending band and context, approval, end, resend, rate limit, OAuth-path refusal and escape, code guard, headless, fallback, the setting). `tests/variant.test.ts`: the device prefix of each build. `tests/publisher.test.mjs`: the source device URL (the plugin kit loads no JSON import). Version strings move to 0.25.0; the newer published versions in `update-notice` move to 0.26.0.
+
 ## [0.24.3] - 2026-10-23
 
 ### Fixed (item 4.2.1-3696, PO 20.10.2026)

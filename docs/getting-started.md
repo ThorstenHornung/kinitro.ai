@@ -54,6 +54,8 @@ The plugin ships the kinitro.ai MCP server, so there is no separate connector to
 
 Plugin hooks never start a sign-in, so until you have done this the plugin finds no kinitro.ai tools and tells you: "Open /mcp, choose plugin:kinitro-ai:kinitro_ai and Authenticate".
 
+**Remote sessions sign in by email code.** When Claude Code runs over SSH or in a cloud session (or the setting **kinitro.ai sign-in path** says `device`), the browser is not on the same machine, so the plugin signs in by itself instead: at your first message kinitro.ai mails you a 6-digit code (the plugin asks for your account email once if the setting **kinitro.ai account email** is empty). Open the link **Approve this sign-in** on any device, type the code on methos.kinitro.ai, choose your domain and agent, then send any message or press **I approved it**. Never type the code in the chat. Change the path with `/kinitro sign-in-path auto|oauth|device` (it applies from the next session).
+
 **You already have the kinitro.ai connector or a `kinitro_ai` server of your own?** From 0.24.0 the plugin works only with its own server: it keeps this session's kinitro.ai session key and passes it on every call, and it never sends the key through another connection. Switch the other one off for this tool (`claude mcp remove kinitro_ai` for a server of your own; for the claude.ai connector in Claude Code switch it off for this tool only: `/mcp`, choose the claude.ai connector, Disable. Leave it connected in the claude.ai settings: the browser, Desktop and mobile need it); the plugin tells you once per session when it sees one.
 
 **Claude Code cloud sessions do not load plugins.** Use the terminal or the Code tab of the desktop app.
