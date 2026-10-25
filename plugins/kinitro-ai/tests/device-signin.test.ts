@@ -52,6 +52,7 @@ const mk = (on: any, srv: Srv, env: Record<string, string> = SSH, tools: string[
   on('turn.complete', async () => ({ text: '' }))
   on('mcp.connect', async (_$: any, e: any) => ({ value: srv.connected ? { isConnected: true, server: `plugin:kinitro-ai:${e.server}` } : { isConnected: false, reason: 'failed' } }))
   on('mcp.call', async (_$: any, e: any) => {
+    if (!String(e.server).endsWith('kinitro_ai_device')) throw new Error(`no connected MCP server named "${e.server}"`)   // only the device server is connected
     srv.direct.push({ server: String(e.server), tool: String(e.tool), args: { ...(e.args ?? {}) } })
     const r = serve(srv, String(e.tool), e.args ?? {})
     return { value: { content: [{ type: 'text', text: r.text }], isError: r.isError } }
@@ -200,7 +201,7 @@ describe('device sign-in (criteria 1-9)', () => {
     await submit($, 'hello')
     const ui = await $.ui.mount({ ...BAND, surface: 'terminal' } as any)
     expect((await ui.find({ type: 'Text', text: /a code was sent/ }))?.text).toBe(`kinitro.ai PROD · a code was sent to ${MASK}.`)
-    const link = await ui.find({ key: 'kin-signin-link' })
+    const link = await ui.find({ type: 'Link' })   // a Link carries no key in the drawn tree
     expect(link?.props.href).toBe(URL)
     expect(link?.props.label).toBe('Approve this sign-in')
     expect(await ui.find({ key: 'kin-signin-approved' })).toBeDefined()
@@ -362,7 +363,7 @@ describe('device sign-in (criteria 1-9)', () => {
     srv.keys[srv.minted[0]!] = 'ready'
     await submit($, 'approved')
     delete srv.keys[srv.minted[0]!]   // the server no longer knows the key: session_key_required
-    await ($ as any).tool.call({ tool: `${DEV}list-domains` })
+    await ($ as any).tool.call({ tool: `${DEV}get-node`, nodeId: 'n1' })
     expect(w.sent.filter((x) => x.verb === 'open-domain')).toHaveLength(0)
     expect(signIns(srv)).toHaveLength(1)
     const ui = await $.ui.mount({ ...BAND, surface: 'terminal' } as any)

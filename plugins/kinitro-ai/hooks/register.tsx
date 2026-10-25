@@ -46,7 +46,7 @@ const FETCH_MS = 60000
 const MAX_TEXT = 50000     // chars per prompt / answer sent to the chat
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = `${F.replace(/^\./, '')}.log`
-const VERSION = '0.24.3'
+const VERSION = '0.25.0'
 // update notice (PO 2026-10-16): at the first prompt, compare with the published marketplace.json on the download page
 const UPDATE_BASE = VARIANT.downloadBase   // the download page; the environment variable KINITRO_AI_DOWNLOAD_BASE overrides it
 const UPDATE_TIMEOUT_MS = 2500
@@ -80,6 +80,11 @@ const REBIND_MS = 30000                    // a refused key is replaced at most 
 const AGENT_FILE = `${F}/agent`       // part 6: the agent node (id) this seat works as, in the PERSON's home folder only (fix round M3:
                                            // never the project folder, never an environment variable a project's settings can set)
 const BUNDLED_RX = new RegExp(`^mcp__plugin_${VARIANT.name}_kinitro_ai__`)  // the plugin's own server, exactly (fix round L1)
+// 0.25.0 (item 4.2.1-3910): the plugin's second own server, the device sign-in address /mcp/device (.mcp.json, no oauth block).
+// One of the two is the session's (its sign-in path); the other one's tools are refused and described as not used.
+const DEVICE_SERVER = 'kinitro_ai_device'
+const DEVICE_RX = new RegExp(`^mcp__plugin_${VARIANT.name}_kinitro_ai_device__`)   // the own device server, exactly
+const OWN_RX = new RegExp(`^mcp__plugin_${VARIANT.name}_kinitro_ai(_device)?__`)   // either own server (tool.call, tool.describe)
 // Each user message may start a fresh engine process while the kinitro.ai
 // connector is still connecting: the briefing and the hook state therefore
 // live in files that survive the restart, refreshed from kinitro.ai in the background.
@@ -154,6 +159,9 @@ const secondNoticeA = atom({ plugin: 'kinitro-ai', key: 'secondNotice' } as cons
 const headlessA = atom({ plugin: 'kinitro-ai', key: 'headless' } as const, false)                        // 0.24.3 (item 4.2.1-3696): this session is headless (isInteractive === false): the plugin stays inert; host-held, so a reload keeps it
 // 0.24.1 (item 4.2.1-3764): the approval this Claude session waits for, host-held so a reload never asks the server again
 const approvalA = atom({ plugin: 'kinitro-ai', key: 'approval' } as const, null as Approval | null)
+// 0.25.0 (item 4.2.1-3910): this Claude session's sign-in path (decided once per session) and its pending device sign-in, host-held
+const signInPathA = atom({ plugin: 'kinitro-ai', key: 'signInPath' } as const, null as SignInPathState | null)
+const signInA = atom({ plugin: 'kinitro-ai', key: 'signIn' } as const, null as SignIn | null)
 
 // ---- session key (0.24.0) -----------------------------------------------------
 let legacy = false            // open-domain gave no session key: a server older than session keys; the slug goes in domainRef as before
@@ -184,6 +192,7 @@ let stateSid: string | undefined
 function resetSessionKeyState() {
   keyMirror = undefined; legacy = false; keyEverHeld = false; keySlug = undefined; pendingApproval = undefined
   lastRebind = 0; followSeat = false; reloadDue = false; secondChecked = false
+  pathMirror = undefined; signInMirror = undefined; firstDeviceSid = undefined; toolPrefix = undefined; toolSource = undefined
 }
 async function syncSession($: any): Promise<string> {
   let sid = ''
@@ -408,6 +417,11 @@ async function openSession($: any, pick: { slug?: string; id?: string }): Promis
 
 // P7: a refused key (or none) is replaced once by a new session in the session's domain; at most once per REBIND_MS
 async function rebindOnce($: any): Promise<boolean> {
+  // R8 (0.25.0): the device address refuses open-domain without a key: the key is dropped and the sign-in ends instead
+  if ((await pathNow($)) === 'device') {
+    if ((await heldKey($)) || (await heldSignIn($))) await endSignIn($, 'the session key was refused')
+    return false
+  }
   if (binding) return false
   if (rebindP) return rebindP
   const now = Date.now()
@@ -426,6 +440,256 @@ async function rebindOnce($: any): Promise<boolean> {
     finally { rebindP = undefined }
   })()
   return rebindP
+}
+
+// ---- device sign-in (0.25.0, item 4.2.1-3910) -----------------------------------
+// Q4 (T13, PO 21.10.2026): "OAuth when the session is local and interactive, device path otherwise; the plugin decides, the
+// person does nothing." The path is decided once per Claude session (session.start, else at the first hook that needs it) and
+// held in $.state. On the device path the plugin signs in itself: sign-in on /mcp/device with the person's email (the setting,
+// else asked through the agent once), the pending key held like any session key (never shown), the approval page link in
+// the band and the turn. The re-check runs at each user turn, on "I approved it" and on the probe action sign-in-check; no
+// timer, no new sign-in by itself after an end (concept 8.1 not ruled). The server's prose never reaches the model or the band.
+export type SignInPath = 'oauth' | 'device'
+export type SignInPathState = { sid: string; path: SignInPath; reason: string }
+export type SignIn = { sid: string; url: string; mask: string; expiresAt: string; requestedAt: number }
+const PATH_MARKERS = ['SSH_CONNECTION', 'SSH_CLIENT', 'SSH_TTY'] as const
+const RESEND_MS = 60_000
+const SIGNIN_ENDED = 'The kinitro.ai sign-in ended.'
+const SIGNIN_FAILED = `kinitro.ai sign-in failed. Run /${VARIANT.command} status for details.`
+const DEVICE_UNAVAILABLE = 'kinitro.ai sign-in by email code is not available here; use /mcp, Authenticate.'
+const RATE_NOTE_RX = /^Too many sign-in requests\./
+export const DEVICE_HINT = `Run /${VARIANT.command} sign-in`
+const EMAIL_ASK = `kinitro.ai sign-in: ask the user, in one short question in chat, for the email address of their kinitro.ai account, then call \`${PROBE_TOOL}\` with {"action": "sign-in", "email": "<address>"}. Never ask for a password or a code.`
+const CODE_TYPED = 'The user typed what looks like the sign-in code here. Tell them to type it only on the kinitro.ai page; do not repeat it.'
+const MODEL_SIGN_IN = `The ${VARIANT.name} plugin signs in itself: call ${PROBE_TOOL} with {"action": "sign-in"}.`
+
+/** R1: the sign-in path. The setting oauth or device wins; auto (or none): device when an SSH variable is set or
+ *  CLAUDE_CODE_REMOTE is true, else OAuth. The reason names the setting or the variable, never a value. */
+export function chooseSignInPath(setting: string | undefined, env: Record<string, string | undefined>): { path: SignInPath; reason: string } {
+  const want = String(setting ?? '').trim().toLowerCase()
+  if (want === 'oauth' || want === 'device') return { path: want, reason: `setting signInPath=${want}` }
+  for (const name of PATH_MARKERS) if (String(env[name] ?? '').trim()) return { path: 'device', reason: name }
+  if (String(env.CLAUDE_CODE_REMOTE ?? '').trim().toLowerCase() === 'true') return { path: 'device', reason: 'CLAUDE_CODE_REMOTE' }
+  return { path: 'oauth', reason: 'no remote marker' }
+}
+
+/** The tool prefix of a build's device server: each build's prefix matches only its own device server. */
+export function devicePrefixFor(buildName: string): string { return `mcp__plugin_${buildName}_kinitro_ai_device__` }
+
+/** The mask of an address as the plugin shows and logs it: the first character, ***, @domain. */
+export function emailMask(email: string): string {
+  const t = String(email).trim(), at = t.indexOf('@')
+  return at < 0 ? '***' : `${t.slice(0, 1)}***${t.slice(at)}`
+}
+
+/** The device label sent with sign-in: COMPUTERNAME, else HOSTNAME, else "unknown device", cut to 80. */
+export function deviceLabel(env: Record<string, string | undefined>): string {
+  return (String(env.COMPUTERNAME ?? '').trim() || String(env.HOSTNAME ?? '').trim() || 'unknown device').slice(0, 80)
+}
+
+/** A prompt that is exactly six digits after trimming (what a sign-in code looks like). */
+export function isSixDigits(text: string): boolean { return /^\d{6}$/.test(String(text).trim()) }
+
+/** R3: an address the probe action sign-in accepts: exactly one @, at most 254 characters (trimmed). */
+function emailOk(email: string): boolean { return email.length <= 254 && email.split('@').length === 2 }
+
+/** R5: the per-turn block while the sign-in waits for the approval (exact text). */
+export function signInContextBlock(si: Pick<SignIn, 'url' | 'mask'>): string {
+  return `kinitro.ai sign-in waits for the user's approval. In your first reply give the link [Approve this sign-in](${si.url}) as a Markdown link and say: a 6-digit code was sent to ${si.mask}; type it only on that kinitro.ai page, on any device, never in this chat; then send any message here. Never ask for the code.`
+}
+
+/** R5: what a kinitro.ai call answers while the sign-in is pending, built by the plugin (no server text). */
+export function signInResult(si: Pick<SignIn, 'url' | 'mask'>) {
+  return {
+    status: 'sign_in_pending', approvalLink: si.url || null, label: 'Approve this sign-in',
+    sayToUser: `A 6-digit code was sent to ${si.mask}. Type it only on the kinitro.ai page behind the link, on any device, never in this chat; then send any message here.`,
+  }
+}
+
+let options: Record<string, unknown> = {}   // the userConfig values of this load (register(on, options)); a change reloads the module
+let pathMirror: SignInPathState | undefined
+let signInMirror: { sid: string; value: SignIn | null } | undefined
+let firstDeviceSid: string | undefined   // the Claude session whose first user turn on the device path was seen (R3, R4)
+let deviceServerName: string | undefined
+let signInP: Promise<any> | undefined
+let checkSignInP: Promise<void> | undefined
+
+function settingOf(field: 'signInPath' | 'email'): string {
+  const v = options[field]
+  return typeof v === 'string' ? v.trim() : ''
+}
+function ownPrefix(path: SignInPath): string { return path === 'device' ? DEVICE_PREFIX : BUNDLED_PREFIX }
+function hintFor(path: SignInPath | undefined): string { return path === 'device' ? DEVICE_HINT : AUTH_HINT }
+
+// the environment variables the path rule and the device label read ($.env.get takes a literal name)
+async function envValue(read: () => Promise<unknown>): Promise<string | undefined> {
+  try { const v = await read(); return typeof v === 'string' ? v : undefined } catch { return undefined }
+}
+async function pathEnv($: any): Promise<Record<string, string | undefined>> {
+  return {
+    SSH_CONNECTION: await envValue(() => $.env.get('SSH_CONNECTION')), SSH_CLIENT: await envValue(() => $.env.get('SSH_CLIENT')),
+    SSH_TTY: await envValue(() => $.env.get('SSH_TTY')), CLAUDE_CODE_REMOTE: await envValue(() => $.env.get('CLAUDE_CODE_REMOTE')),
+  }
+}
+async function labelEnv($: any): Promise<Record<string, string | undefined>> {
+  return { COMPUTERNAME: await envValue(() => $.env.get('COMPUTERNAME')), HOSTNAME: await envValue(() => $.env.get('HOSTNAME')) }
+}
+async function nowMs($: any): Promise<number> {
+  try { return Number(await $.clock.now()) } catch { return Date.now() }
+}
+function clockText(ms: number): string {
+  const d = new Date(ms), p = (n: number) => String(n).padStart(2, '0')
+  return `${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+// changed: the path moves after the first decision (fallback, escape): the tool descriptions are rendered again
+async function setPath($: any, path: SignInPath, reason: string, changed = true) {
+  const sid = await syncSession($)
+  pathMirror = { sid, path, reason }
+  toolPrefix = undefined; toolSource = undefined
+  try { await update($, signInPathA, () => pathMirror!) } catch { /* ignore */ }
+  if (changed) { try { $.ui.invalidate('tool.describe') } catch { /* ignore */ } }
+  await log($, `sign-in path ${path} (${reason})`)
+}
+
+// R1: this Claude session's path; decided once (host-held, a reload keeps it)
+async function pathState($: any): Promise<SignInPathState> {
+  const sid = await syncSession($)
+  if (pathMirror?.sid === sid) return pathMirror
+  let v: SignInPathState | null = null
+  try { v = await read($, signInPathA) } catch { /* ignore */ }
+  if (v && v.sid === sid) { pathMirror = v; return v }
+  const c = chooseSignInPath(settingOf('signInPath'), await pathEnv($))
+  await setPath($, c.path, c.reason, false)
+  return pathMirror!
+}
+async function pathNow($: any): Promise<SignInPath> { return (await pathState($)).path }
+
+async function heldSignIn($: any): Promise<SignIn | undefined> {
+  const sid = await syncSession($)
+  if (signInMirror?.sid === sid) return signInMirror.value ?? undefined
+  let v: SignIn | null = null
+  try { v = await read($, signInA) } catch { /* ignore */ }
+  const value = v && v.sid === sid ? v : null
+  signInMirror = { sid, value }
+  return value ?? undefined
+}
+async function keepSignIn($: any, si: SignIn | null) {
+  const sid = await syncSession($)
+  signInMirror = { sid, value: si }
+  try { await update($, signInA, () => si) } catch { /* ignore */ }
+}
+
+// the device path holds no usable key yet: nothing but the sign-in and its check runs (no briefing, no seat, no mirror)
+async function signInWaiting($: any): Promise<boolean> {
+  if ((await pathNow($)) !== 'device') return false
+  return !(await heldKey($)) || !!(await heldSignIn($))
+}
+
+// R6/R8: the key and the pending sign-in are dropped; the band says so and offers "Sign in again"; nothing starts by itself
+async function endSignIn($: any, why: string) {
+  await keepSignIn($, null)
+  await keepKey($, null); keySlug = undefined
+  briefing = undefined; domainRef = undefined
+  try { await update($, currentA, () => null); await update($, chooserA, () => false); await update($, bandNoteA, () => SIGNIN_ENDED) } catch { /* ignore */ }
+  await log($, `sign-in ended: ${why}`)
+}
+
+// R1 fallback: the device server of this build, connected; else the session goes to the OAuth path with the note
+async function deviceServer($: any): Promise<string | undefined> {
+  if (deviceServerName) return deviceServerName
+  let c: any
+  try { c = await $.mcp.connect(DEVICE_SERVER) } catch (err: any) { c = { isConnected: false, reason: String(err?.message ?? err).slice(0, 80) } }
+  if (c?.isConnected) { deviceServerName = String(c.server || `plugin_${VARIANT.name}_${DEVICE_SERVER}`); return deviceServerName }
+  await setPath($, 'oauth', `device server not connected: ${c?.reason ?? 'unknown'}`)
+  try { await update($, bandNoteA, () => DEVICE_UNAVAILABLE) } catch { /* ignore */ }
+  return undefined
+}
+
+// one call on the device server through the direct route (no hook sees it): sign-in and the plugin's own re-check
+async function deviceCall($: any, server: string, tool: string, args: Record<string, unknown>): Promise<{ text: string; isError: boolean; answer: any }> {
+  const r = await $.mcp.call(server, tool, args)
+  const text = (r?.content ?? []).map((b: any) => (b?.type === 'text' ? b.text : '')).join('')
+  let answer: any
+  try { answer = JSON.parse(text) } catch { /* not JSON */ }
+  return { text, isError: !!r?.isError, answer }
+}
+
+// R4/R7: sign-in on the device server. Single-flight; a pending sign-in younger than 60 s sends nothing; a resend carries the
+// pending key as domainRef and keeps it. The answer's key is held, its prose dropped; the mask is the plugin's own.
+function signInNow($: any): Promise<any> {
+  if (signInP) return signInP
+  signInP = (async () => {
+    try {
+      const email = settingOf('email')
+      if (!email) return { status: 'error', message: `No kinitro.ai account email is set. Ask the user for it, then call ${PROBE_TOOL} with {"action": "sign-in", "email": "<address>"}.` }
+      const si = await heldSignIn($)
+      const key = await heldKey($)
+      if (key && !si) return { status: 'signed_in', message: 'This session is signed in to kinitro.ai.' }
+      const now = await nowMs($)
+      if (si && now < si.requestedAt + RESEND_MS) return { status: 'too_soon', message: `A new code can be sent from ${clockText(si.requestedAt + RESEND_MS)}.` }
+      const server = await deviceServer($)
+      if (!server) return { status: 'error', message: DEVICE_UNAVAILABLE }
+      const env = await labelEnv($)
+      const args = { email, deviceLabel: deviceLabel(env), clientName: `Claude Code, ${VARIANT.name} ${VERSION}`.slice(0, 60), ...(si && key ? { domainRef: key } : {}) }
+      let r: { text: string; isError: boolean; answer: any }
+      try { r = await deviceCall($, server, 'sign-in', args) } catch (err: any) {
+        await log($, `sign-in failed: ${String(err?.message ?? err).slice(0, 200)}`)
+        await update($, bandNoteA, () => SIGNIN_FAILED)
+        return { status: 'error', message: SIGNIN_FAILED }
+      }
+      const a = r.answer
+      if (a?.code === 'sign_in_rate_limited') {
+        const note = `Too many sign-in requests. Try again in ${Math.max(1, Math.ceil(Number(a.retryAfterSeconds ?? 60) / 60))} minutes.`
+        await update($, bandNoteA, () => note)
+        await log($, `sign-in refused: sign_in_rate_limited (retry after ${Number(a.retryAfterSeconds ?? 0)} s)`)
+        return { status: 'error', message: note }
+      }
+      const k = r.isError ? undefined : sessionKeyOf(r.text)
+      if (!k || a?.status !== 'pending') {
+        await log($, `sign-in failed: ${String(a?.code ?? (r.isError ? 'error answer' : 'no session key in the answer')).slice(0, 80)}`)
+        await update($, bandNoteA, () => SIGNIN_FAILED)
+        return { status: 'error', message: SIGNIN_FAILED }
+      }
+      await keepKey($, k); legacy = false; keySlug = undefined
+      const md = /\]\((\S+?)\)/.exec(String(a?.approvalLink ?? ''))
+      const next: SignIn = { sid: await syncSession($), url: String(a?.approvalUrl ?? md?.[1] ?? ''), mask: emailMask(email), expiresAt: String(a?.expiresAt ?? ''), requestedAt: now }
+      await keepSignIn($, next)
+      try { await update($, bandNoteA, () => null); await update($, currentA, () => null) } catch { /* ignore */ }
+      await log($, `sign-in: a code was sent to ${next.mask}${si ? ' again (same session key)' : ''}`)
+      return signInResult(next)
+    } finally { signInP = undefined }
+  })()
+  return signInP
+}
+
+// R6: the re-check of a pending sign-in: current-seat with the key. Pending: nothing changes. Ready: the domain and agent of
+// the seat answer are bound (bindDomain, the briefing, the held turns). Unknown key: the sign-in ended. Single-flight.
+function checkSignIn($: any): Promise<void> {
+  if (checkSignInP) return checkSignInP
+  checkSignInP = (async () => {
+    try {
+      const si = await heldSignIn($)
+      const key = await heldKey($)
+      if (!si || !key) return
+      const server = await deviceServer($)
+      if (!server) return
+      const r = await deviceCall($, server, 'current-seat', { domainRef: key })
+      const code = String(r.answer?.code ?? '')
+      if (code === 'sign_in_pending') return
+      if (code === 'domain_ref_unknown' || isKeyRefusal(r.text)) { await endSignIn($, code || 'the session key was refused'); return }
+      const dom = r.answer?.domain
+      if (r.isError || !dom?.id) { await log($, `sign-in check: no seat in the answer (${code || 'no code'})`); return }
+      await keepSignIn($, null)
+      let slug = typeof dom.slug === 'string' ? dom.slug : ''
+      if (!slug) slug = String(((await mcp($, 'list-domains', {}))?.domains ?? []).find((x: any) => String(x.id) === String(dom.id))?.slug ?? '')
+      if (!slug) { await log($, 'sign-in approved, but the working domain is not in list-domains'); await update($, bandNoteA, () => SIGNIN_FAILED); return }
+      await log($, `sign-in approved: this session works in ${slug}`)
+      await bindDomain($, slug)
+    } catch (err: any) { await log($, `sign-in check failed: ${String(err?.message ?? err).slice(0, 200)}`) }
+    finally { checkSignInP = undefined }
+  })()
+  return checkSignInP
 }
 
 // ---- the session's home folder and record (0.20.0) ---------------------------
@@ -499,19 +763,23 @@ async function log($: any, line: string) {
 //   other      any other server that has a current-seat tool and "kinitro" or "methos" in its name
 export type KinitroSource = 'bundled' | 'user' | 'connector' | 'other'
 const BUNDLED_PREFIX = `mcp__plugin_${VARIANT.name}_kinitro_ai__`
+const DEVICE_PREFIX = devicePrefixFor(VARIANT.name)   // 0.25.0: the own device server's tools
 const USER_PREFIX = `mcp__${SERVER}__`
 const CONNECTOR_PREFIX = 'mcp__claude_ai_Kinitro__'
 const SEAT_VERB = 'current-seat'
 const SOURCE_LABEL: Record<KinitroSource, string> = { bundled: 'bundled plugin server', user: 'user server', connector: 'claude.ai connector', other: 'other server' }
 export const AUTH_HINT = `Open /mcp, choose plugin:${VARIANT.name}:kinitro_ai and Authenticate`
-const NO_TOOLS = `no kinitro.ai tools are visible in this session. ${AUTH_HINT}.`
+const noTools = (path: SignInPath) => `no kinitro.ai tools are visible in this session. ${hintFor(path)}.`
 
 // pure: picks the kinitro.ai tool prefix from a list of tool names (the session's tool list). A server counts when it
 // has a current-seat tool; the bundled server wins over a user server, that over the claude.ai connector, that over the rest.
-export function resolveKinitroTools(names: string[]): { prefix: string; source: KinitroSource } | undefined {
-  const seats = new Set(names.filter((n) => n.endsWith(`__${SEAT_VERB}`)))
+// 0.25.0: the own server of the session's sign-in path is the bundled one; the inactive own server is never taken (the device
+// address lists its tools before any sign-in, the OAuth server none until it is authenticated).
+export function resolveKinitroTools(names: string[], path: SignInPath = 'oauth'): { prefix: string; source: KinitroSource } | undefined {
+  const own = ownPrefix(path), inactive = ownPrefix(path === 'device' ? 'oauth' : 'device')
+  const seats = new Set(names.filter((n) => n.endsWith(`__${SEAT_VERB}`) && !n.startsWith(inactive)))
   const has = (prefix: string) => seats.has(prefix + SEAT_VERB)
-  if (has(BUNDLED_PREFIX)) return { prefix: BUNDLED_PREFIX, source: 'bundled' }
+  if (has(own)) return { prefix: own, source: 'bundled' }
   const bundled = [...seats].find((n) => n.startsWith(`mcp__plugin_${VARIANT.name}_`) && n.endsWith(`__${SEAT_VERB}`))   // the plugin's server under another server name
   if (bundled) return { prefix: bundled.slice(0, -SEAT_VERB.length), source: 'bundled' }
   if (has(USER_PREFIX)) return { prefix: USER_PREFIX, source: 'user' }
@@ -530,7 +798,7 @@ export function secondConnections(names: string[]): string[] {
 
 // Build variant (PO 21.10.2026): the bundled server of the OTHER kinitro.ai build (kinitro-ai beside kinitro-ai-test) is no
 // second connection to warn about; the gate below keeps a session to one of them.
-const SIBLING_RX = /^mcp__plugin_kinitro-ai(-test)?_kinitro_ai__/   // review F4: exactly the two builds
+const SIBLING_RX = /^mcp__plugin_kinitro-ai(-test)?_kinitro_ai(_device)?__/   // review F4: exactly the two builds, each with its two own servers
 
 /** Whether a build is active, given KINITRO_AI_ENV (Architect ruling R1, 21.10.2026): both builds are active by default, so
  *  one session can work on Production and look at Test. The variable is only an override that switches ONE build off:
@@ -588,10 +856,11 @@ let seconds: string[] = []
 let secondChecked = false
 async function kinitroTools($: any): Promise<{ prefix: string | undefined; source: KinitroSource | undefined }> {
   if (toolPrefix) return { prefix: toolPrefix, source: toolSource }
+  const path = await pathNow($)
   try {
     const names: string[] = (await $.tool.list()).map((t: any) => String(t.name))
-    const found = resolveKinitroTools(names)
-    toolPrefix = found?.prefix === BUNDLED_PREFIX ? found.prefix : undefined   // fix round L1: the exact own server, no lookalike
+    const found = resolveKinitroTools(names, path)
+    toolPrefix = found?.prefix === ownPrefix(path) ? found.prefix : undefined   // fix round L1: the exact own server, no lookalike
     toolSource = toolPrefix ? 'bundled' : undefined
     seconds = secondConnections(names)
   } catch { /* nothing is visible */ }
@@ -606,7 +875,7 @@ async function secondConnectionsNow($: any): Promise<string[]> {
 
 // the prefix to show or to name in texts: the resolved one, else the bundled name
 async function kinitroPrefix($: any): Promise<string> {
-  return (await kinitroTools($)).prefix ?? BUNDLED_PREFIX
+  return (await kinitroTools($)).prefix ?? ownPrefix(await pathNow($))
 }
 
 // one call through the plugin's own server: the tool path (its tool.call hook adds the key), else the direct MCP route
@@ -614,7 +883,8 @@ async function kinitroPrefix($: any): Promise<string> {
 // on the other route; the thrown error carries the parsed answer.
 async function mcpOnce($: any, tool: string, args: Record<string, unknown>): Promise<{ text: string; isError: boolean }> {
   const { prefix, source } = await kinitroTools($)
-  const p = prefix ?? BUNDLED_PREFIX   // nothing visible yet (connecting, not signed in): the bundled name
+  const path = await pathNow($)
+  const p = prefix ?? ownPrefix(path)   // nothing visible yet (connecting, not signed in): the own server of the session's path
   const errs: string[] = []
   // fix round L4/M2: once the own server is listed, the tool path is the only route and a deny or a failure there is final
   // (the call may have run; it is never repeated on the direct route). Only while no own tool is listed (nothing can have
@@ -638,7 +908,7 @@ async function mcpOnce($: any, tool: string, args: Record<string, unknown>): Pro
     if (tool === 'open-domain' && !r.isError) { const k = sessionKeyOf(t); if (k) await keepKey($, k) }
     return { text: scrubKey(t), isError: !!r.isError }
   } catch (err: any) { errs.push(`mcp.call: ${String(err?.message ?? err)}`) }
-  throw new Error(scrubKey(`${source ? '' : NO_TOOLS + ' '}${errs.join(' | ')}`))   // fix round L2
+  throw new Error(scrubKey(`${source ? '' : noTools(path) + ' '}${errs.join(' | ')}`))   // fix round L2
 }
 
 async function mcp($: any, tool: string, args0: Record<string, unknown>) {
@@ -712,7 +982,7 @@ function confirmation(slug: string, bound: { text: string; approval?: Approval }
   const ok = domainRef === slug && !!briefing
   return ok
     ? { bound: true, domain: briefing?.domainName ?? slug, agent: briefing?.agentName ?? null, domainView: message.split('domain view: ')[1] ?? null, sayToUser: `This session now works for ${briefing?.domainName ?? slug}${briefing?.agentName && briefing.agentName !== briefing.domainName ? ` with the agent ${briefing.agentName}` : ''}.` }
-    : { bound: false, reason: message, ...(toolSource ? {} : { sayToUser: `No kinitro.ai tools are visible. ${AUTH_HINT}.` }) }
+    : { bound: false, reason: message, ...(toolSource ? {} : { sayToUser: `No kinitro.ai tools are visible. ${hintFor(pathMirror?.path)}.` }) }
 }
 
 // a choice: the session record, the host, and the folder default of the session's home folder (for the next new session)
@@ -730,6 +1000,7 @@ const REFRESH_NOTE_RX = /^Refresh failed:/
 
 // approved domains of the connection, and the address of the seat picker (approve more domains)
 export async function refreshChoices($: any) {
+  if (await signInWaiting($)) return   // 0.25.0: the device path binds through the sign-in (checkSignIn)
   try {
     const seat = await mcp($, 'current-seat', {})
     const approved: DomainChoice[] = (seat?.approved ?? []).map((d: any) => ({ slug: String(d.slug), name: String(d.name) }))
@@ -896,6 +1167,8 @@ async function bindDomain($: any, slug: string): Promise<BindResult> {
 async function loadBriefing($: any) {
   lastLoadTry = Date.now()
   await noteCwd($)
+  // 0.25.0: on the device path nothing is read before the sign-in is approved (a pending key answers sign_in_pending)
+  if (await signInWaiting($)) { briefingError = (await heldSignIn($)) ? 'waiting for the kinitro.ai sign-in approval' : `not signed in (${DEVICE_HINT})`; return }
   try {
     // 0.24.0: the session key decides the seat. A held key is asked first; a refused one is dropped and a new session started.
     let key = await heldKey($)
@@ -1064,6 +1337,7 @@ async function setMirror($: any, enable: boolean) {
 // refresh from kinitro.ai once the connector is up (session.start timer)
 async function refreshTick($: any) {
   if (briefing?.source === 'kinitro.ai') return true
+  if (await signInWaiting($)) return true   // 0.25.0: the device sign-in binds the session itself; no refresh loop
   const cached = briefing
   await loadBriefing($)
   if (!briefing && cached) briefing = cached
@@ -1073,6 +1347,7 @@ async function refreshTick($: any) {
 // first message of a brand-new container: nothing cached, wait for the connector
 async function waitForBriefing($: any) {
   if (await heldApproval($)) return   // R2: no loadBriefing while an approval is pending
+  if (await signInWaiting($)) return  // 0.25.0: nor before the device sign-in is approved
   const until = Date.now() + WAIT_FIRST_MS
   while (!briefing && !needsDomain && Date.now() < until) {
     await loadBriefing($)
@@ -1083,7 +1358,7 @@ async function waitForBriefing($: any) {
 
 // ---- chat mirror (item 3413) ------------------------------------------------
 type OutEntry = { sessionId: string; turnId: string; prompt: string; promptFrom?: 'agent'; answer: string; eventTs: string; domainRef?: string; sent?: boolean; result?: string }
-type PendingPrompt = { from: 'person' | 'agent'; text: string }
+type PendingPrompt = { from: 'person' | 'agent'; text: string; signInCode?: boolean }   // signInCode (0.25.0, R9): never mirrored
 
 // Who wrote a prompt, by the engine's origin.kind and never by its text (item 3536, rules P1/P2).
 // person: mirrored as the person's; agent: mirrored as another agent's message; drop: never mirrored.
@@ -1128,7 +1403,7 @@ async function flushOutbox($: any) {
     let sid = ''
     try { sid = await $.session.id() } catch { /* ignore */ }
     const keyed = !!(await heldKey($))
-    const pendingNow = await heldApproval($)   // review F5: the host-held approval, also after a reload
+    const pendingNow = (await heldApproval($)) || (await signInWaiting($))   // review F5: the host-held approval, also after a reload; 0.25.0: the pending sign-in
     for (const o of box) {
       if (o.sent) continue
       if (keyed && o.sessionId !== sid) continue   // P8: the outbox is shared by the sessions of one folder; each sends its own turns with its own key
@@ -1212,14 +1487,22 @@ async function contextPercent($: any): Promise<number | undefined> {
 async function toolsLine($: any): Promise<string> {
   const { prefix, source } = await kinitroTools($)
   const other = seconds.length ? ` · not used: ${seconds.map((p) => p.slice(5, -2)).join(', ')} (a second kinitro.ai connection)` : ''
-  return (source ? `kinitro.ai tools: ${prefix}* (source: ${SOURCE_LABEL[source]})` : `kinitro.ai tools: none visible (${AUTH_HINT})`) + other
+  return (source ? `kinitro.ai tools: ${prefix}* (source: ${SOURCE_LABEL[source]})` : `kinitro.ai tools: none visible (${hintFor(await pathNow($))})`) + other
 }
 
 async function sessionLine($: any): Promise<string> {
+  const si = await heldSignIn($)
+  if (si) return `session: waiting for the sign-in approval (a code was sent to ${si.mask})`
   if (await heldKey($)) return `session: session key held for this Claude session (never shown)${keySlug ? `, working domain ${keySlug}` : ''}`
   if (legacy) return 'session: the server gives no session key (older server): the domain goes on every call'
   const ap = await heldApproval($)
   return ap ? `session: waiting for approval of ${ap.slug}` : 'session: none yet'
+}
+
+async function signInLine($: any): Promise<string> {
+  const st = await pathState($)
+  const si = await heldSignIn($)
+  return `sign-in path: ${st.path} (${st.reason})${si ? ` · pending: a code was sent to ${si.mask}, request expires ${si.expiresAt || '-'}` : ''}`
 }
 
 async function statusText($: any): Promise<string> {
@@ -1231,6 +1514,7 @@ async function statusText($: any): Promise<string> {
     `domain: ${domainRef ?? (needsDomain ? 'NOT SET - ' + needsDomain : 'seat-bound connection')} · session home ${homeDir ?? '-'} · record ${recordPath ?? 'none (no user home or session id)'}`,
     await toolsLine($),
     await sessionLine($),
+    await signInLine($),
     `band note: ${(await read($, bandNoteA)) ?? '-'}`,
     `refresh: ${(await read($, testModeA)) ? 'test mode, every 2 min' : 'daily'} · instructions loaded ${briefing?.loadedAt ?? '-'}`,
     `layers: ${briefing?.layers ?? '-'}`,
@@ -1558,14 +1842,28 @@ async function updateCheck($: any): Promise<string | undefined> {
 // ---- the domain band as a pure model (round 2: testable without a renderer) ----
 export type BandItem =
   | { kind: 'link'; key: string; label: string; href: string }
-  | { kind: 'button'; key: string; label: string; act: 'change' | 'approved' | 'bind' | 'refresh' | 'close'; slug?: string; primary?: boolean; dim?: boolean }
+  | { kind: 'button'; key: string; label: string; act: 'change' | 'approved' | 'bind' | 'refresh' | 'close' | 'signin-approved' | 'signin-resend' | 'signin-again' | 'signin-device'; slug?: string; primary?: boolean; dim?: boolean }
 export type BandModel = { compact: boolean; title: string; items: BandItem[]; selector?: string; note?: string }
-export type BandState = { approved: DomainChoice[]; current: string | null; chooser: boolean; url: string | null; note: string | null; pend: Approval | null }
+export type BandState = { approved: DomainChoice[]; current: string | null; chooser: boolean; url: string | null; note: string | null; pend: Approval | null; signIn?: SignIn | null; now?: number; offerDevice?: boolean }
 
 /** R6: what the band shows. With a pending approval: the "Approve <Domain>" link (the picker entry of the pending domain)
  *  and "I approved it"; never the server's prose or Markdown. */
 export function bandModel(s: BandState): BandModel {
   const name = (slug: string | null) => s.approved.find((d) => d.slug === slug)?.name ?? slug
+  // 0.25.0 (R5, R6): a pending device sign-in: the mask, the approval link, "I approved it", "Send a new code" (dim for 60 s)
+  if (s.signIn) {
+    const early = (s.now ?? Date.now()) < s.signIn.requestedAt + RESEND_MS
+    return {
+      compact: false, title: `${BRAND} · a code was sent to ${s.signIn.mask}.`,
+      items: [
+        { kind: 'link', key: 'kin-signin-link', label: 'Approve this sign-in', href: s.signIn.url },
+        { kind: 'button', key: 'kin-signin-approved', label: 'I approved it', act: 'signin-approved', primary: true },
+        { kind: 'button', key: 'kin-signin-resend', label: 'Send a new code', act: 'signin-resend', dim: early },
+      ],
+      ...(s.note ? { note: s.note } : {}),
+    }
+  }
+  if (s.note === SIGNIN_ENDED) return { compact: false, title: SIGNIN_ENDED, items: [{ kind: 'button', key: 'kin-signin-again', label: 'Sign in again', act: 'signin-again', primary: true }] }
   if (!s.chooser && s.current && !s.pend) {
     return { compact: true, title: `${BRAND} · ${name(s.current)} (${s.current}) `, items: [{ kind: 'button', key: 'kin-change', label: 'Change domain', act: 'change', dim: true }] }
   }
@@ -1578,13 +1876,15 @@ export function bandModel(s: BandState): BandModel {
     items.push({ kind: 'button', key: 'kin-' + d.slug, label: d.name, act: 'bind', slug: d.slug, primary: s.approved.length === 1 })
   }
   items.push({ kind: 'button', key: 'kin-refresh', label: 'Refresh list', act: 'refresh', dim: true })
+  if (s.offerDevice) items.push({ kind: 'button', key: 'kin-signin-device', label: 'Sign in with an email code', act: 'signin-device' })   // R1 escape
   if (s.current) items.push({ kind: 'button', key: 'kin-close', label: 'Close', act: 'close' })
   const title = s.pend ? `${BRAND} · ${s.pend.domainName} needs your approval.` : s.current ? `${BRAND} · this session works for ${name(s.current)}. Switch to:` : `${BRAND} · choose the domain for this session:`
   return { compact: false, title, items, ...(s.url ? { selector: s.url } : {}), ...(s.note ? { note: s.note } : {}) }
 }
 
 // ---- hooks -----------------------------------------------------------------
-export const register: Register = (on) => {
+export const register: Register = (on, opts) => {
+  options = (opts ?? {}) as Record<string, unknown>   // 0.25.0: the userConfig values (signInPath, email)
   // Build variant (PO 21.10.2026, ruling R1): every hook first asks activeNow; a build switched off by KINITRO_AI_ENV passes
   // every other event through untouched and refuses its own server's calls (review F1). Each build's hooks match only its own
   // server and probe (BUNDLED_RX, PROBE_TOOL).
@@ -1599,6 +1899,7 @@ export const register: Register = (on) => {
       return next(e)
     }
     await log($, `session.start ${VERSION} (interactive=${e.isInteractive}, surface=${e.surface})`)
+    await pathState($)   // 0.25.0 (R1): the sign-in path of this Claude session, decided once and logged
     await readState($)
     await loadCache($)
     $.clock.every(FETCH_MS, () => { flushOutbox($).then(() => fetchInbox($)) })
@@ -1618,8 +1919,8 @@ export const register: Register = (on) => {
     try {
       await $.tool.register({
         name: 'probe',
-        description: `${VARIANT.name} harness control. action "status" (default): diagnostics; "comments": check the open UI comments of the bound domain now and return them with the check time; "test-mode" with value on|off: refresh the instructions every 2 minutes instead of daily; "mirror" with value on|off: switch the chat mirror into the kinitro.ai chat of the agent on or off (default on; off sends and fetches nothing, on resumes from the next turn without backfill); "selection-start": remember the approved domains and return the selection page address (call before the user chooses on that page); "selection-done": compare with that list and bind the newly approved domain, or return the list to ask from; "set-domain" with domain "<slug>": bind this session to a kinitro.ai domain (slug from list-domains) and reload; "reload": re-read the briefing from kinitro.ai; "arm-test": inject EVERY briefing section, conditional ones included, into the next user prompt, marked [TEST]; "invalidate-context": re-render the first-message context block (persona) on the next request.`,
-        inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['status', 'comments', 'test-mode', 'mirror', 'choices', 'open-domain', 'selection-start', 'selection-done', 'set-domain', 'reload', 'arm-test', 'invalidate-context'] }, domain: { type: 'string', description: 'domain slug for set-domain, e.g. verum' }, value: { type: 'string', enum: ['on', 'off'], description: 'for test-mode and mirror' } } },
+        description: `${VARIANT.name} harness control. action "status" (default): diagnostics; "comments": check the open UI comments of the bound domain now and return them with the check time; "test-mode" with value on|off: refresh the instructions every 2 minutes instead of daily; "mirror" with value on|off: switch the chat mirror into the kinitro.ai chat of the agent on or off (default on; off sends and fetches nothing, on resumes from the next turn without backfill); "selection-start": remember the approved domains and return the selection page address (call before the user chooses on that page); "selection-done": compare with that list and bind the newly approved domain, or return the list to ask from; "set-domain" with domain "<slug>": bind this session to a kinitro.ai domain (slug from list-domains) and reload; "reload": re-read the briefing from kinitro.ai; "arm-test": inject EVERY briefing section, conditional ones included, into the next user prompt, marked [TEST]; "invalidate-context": re-render the first-message context block (persona) on the next request; "sign-in" with optional email "<address>": sign this session in by an email code (kinitro.ai mails the code; the user types it only on the kinitro.ai page, never here), or send a new code; "sign-in-check": look whether the user approved the sign-in; "sign-in-path" with value auto|oauth|device: store the sign-in path setting (applies from the next Claude session).`,
+        inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['status', 'comments', 'test-mode', 'mirror', 'choices', 'open-domain', 'selection-start', 'selection-done', 'set-domain', 'reload', 'arm-test', 'invalidate-context', 'sign-in', 'sign-in-path', 'sign-in-check'] }, domain: { type: 'string', description: 'domain slug for set-domain, e.g. verum' }, value: { type: 'string', enum: ['on', 'off', 'auto', 'oauth', 'device'], description: 'on|off for test-mode and mirror; auto|oauth|device for sign-in-path' }, email: { type: 'string', description: "for sign-in: the email address of the user's kinitro.ai account" } } },
       })
     } catch (err: any) { await log($, `tool.register failed: ${err?.message ?? err}`) }
     return next(e)
@@ -1629,13 +1930,20 @@ export const register: Register = (on) => {
   // domainRef (a slug the model passes is replaced); a refused key is replaced once by a new session and the call repeated
   // once; a key in an answer is kept and stripped before the model reads it. Other kinitro.ai connections do not match the
   // matcher, so no key ever goes through them.
-  on('tool.call', { tool: BUNDLED_RX }, async ($, e: any, next) => {
-    const verb = String(e.tool).replace(BUNDLED_RX, '')
-    if (!verb || verb === 'authenticate' || verb === 'complete_authentication') return next(e)
+  // 0.25.0 (item 4.2.1-3910): both own servers; the session's path decides which one is used, the other one is refused.
+  on('tool.call', { tool: OWN_RX }, async ($, e: any, next) => {
+    const isDevice = DEVICE_RX.test(String(e.tool))
+    const verb = String(e.tool).replace(isDevice ? DEVICE_RX : BUNDLED_RX, '')
+    const authVerb = verb === 'authenticate' || verb === 'complete_authentication'
+    if (!verb) return next(e)
     // review F1: a build switched off by KINITRO_AI_ENV fails closed on its own server: the call is refused, so no answer (and
     // no session key in it) ever reaches the model unfiltered. A project's settings can set the variable.
-    if (!(await activeNow($)).on) return { deny: `${VARIANT.name} (${VARIANT.env}) is switched off in this session (KINITRO_AI_ENV); its kinitro.ai tools are not used.` }
+    if (!(await activeNow($)).on) return authVerb ? next(e) : { deny: `${VARIANT.name} (${VARIANT.env}) is switched off in this session (KINITRO_AI_ENV); its kinitro.ai tools are not used.` }
     if (await headlessNow($)) return next(e)   // 0.24.3: a headless session holds no key and adds nothing; the call passes through
+    const path = await pathNow($)
+    if (isDevice !== (path === 'device')) return { deny: `${VARIANT.name} works through ${ownPrefix(path)} in this session; use those tools.` }   // R2
+    if (authVerb) return next(e)
+    if (isDevice && verb === 'sign-in') return { deny: MODEL_SIGN_IN }   // R5: the plugin signs in itself, never through the model
     let key = await heldKey($)
     if (!key && !legacy && !binding && !KEYLESS_VERBS.has(verb) && (await rebindOnce($))) key = await heldKey($)
     let r: any = await next(withSession(e, verb, key))
@@ -1644,6 +1952,13 @@ export const register: Register = (on) => {
       if (key) r = await next(withSession(e, verb, key))
     }
     const text = resultText(r)
+    // R5: a pending key answers sign_in_pending; the model gets the plugin's own result (the link, no server text)
+    if (isDevice && /"code"\s*:\s*"sign_in_pending"/.test(text)) {
+      const si = await heldSignIn($)
+      let url = si?.url ?? ''
+      if (!url) { try { url = String(JSON.parse(text)?.approvalUrl ?? '') } catch { /* no link */ } }
+      return { result: JSON.stringify(signInResult({ url, mask: si?.mask ?? 'your address' })) }
+    }
     if (verb === 'open-domain' && !r?.isError && !r?.deny) {
       const k = sessionKeyOf(text)
       if (k) { await keepKey($, k); legacy = false }
@@ -1663,6 +1978,37 @@ export const register: Register = (on) => {
     if (await headlessNow($)) return next(e)   // 0.24.3: no probe in a headless session
     const action = e.action ?? 'status'
     if (action === 'open-domain') return { result: await openDomainView($) }
+    // 0.25.0 (R3, R7, R11): the device sign-in through the probe; never a password, never the code
+    if (action === 'sign-in') {
+      const given = String(e.email ?? '').trim()
+      if (given) {
+        if (!emailOk(given)) return { result: JSON.stringify({ status: 'error', message: 'That is not an email address.' }) }
+        let denied: string | undefined
+        try { denied = (await $.config.set({ key: `${VARIANT.name}.email`, value: given }))?.deny } catch (err: any) { denied = String(err?.message ?? err) }
+        if (denied) { await log($, `the email setting was not stored: ${String(denied).slice(0, 160)}`); return { result: JSON.stringify({ status: 'error', message: 'The email setting could not be stored.' }) } }
+        options = { ...options, email: given }
+        await log($, `email setting stored: ${emailMask(given)}`)
+      }
+      if ((await pathNow($)) !== 'device') return { result: JSON.stringify({ status: 'error', message: `This session signs in through /mcp. ${AUTH_HINT}.` }) }
+      return { result: JSON.stringify(await signInNow($)) }
+    }
+    if (action === 'sign-in-path') {
+      const v = String(e.value ?? '').trim().toLowerCase()
+      if (!['auto', 'oauth', 'device'].includes(v)) return { result: JSON.stringify({ status: 'error', message: 'The sign-in path is auto, oauth or device.' }) }
+      let denied: string | undefined
+      try { denied = (await $.config.set({ key: `${VARIANT.name}.signInPath`, value: v }))?.deny } catch (err: any) { denied = String(err?.message ?? err) }
+      if (denied) return { result: JSON.stringify({ status: 'error', message: 'The sign-in path setting could not be stored.' }) }
+      options = { ...options, signInPath: v }
+      await log($, `sign-in path setting: ${v}`)
+      return { result: JSON.stringify({ status: 'ok', signInPath: v, thisSession: await pathNow($), note: 'The setting applies from the next Claude session.' }) }
+    }
+    if (action === 'sign-in-check') {
+      await withBudget($, checkSignIn($), TOOL_BUDGET_MS)
+      const si = await heldSignIn($)
+      if (si) return { result: JSON.stringify(signInResult(si)) }
+      const signedIn = (await pathNow($)) === 'device' && !!(await heldKey($))
+      return { result: JSON.stringify(signedIn ? { status: 'signed_in', domain: briefing?.domainName ?? domainRef ?? null } : { status: 'not_signed_in' }) }
+    }
     if (action === 'comments') {
       const list = needsDomain ? undefined : await checkUiComments($)
       return { result: JSON.stringify({ open: list ? list.length : null, truncated: commentsTruncated, lastCheck: lastCommentCheck, lastTold: commentInjectedAt ? new Date(commentInjectedAt).toISOString() : null, error: needsDomain ? 'domain not set' : lastCommentError ?? null, comments: list ?? openComments, block: uiCommentsBlock(list ?? openComments, commentsTruncated) || null }) }
@@ -1736,6 +2082,13 @@ export const register: Register = (on) => {
     return { result: res }
   })
 
+  // 0.25.0 (R2): the tools of the own server the session does not use are described as such and wait behind ToolSearch
+  on('tool.describe', { tool: OWN_RX }, async ($, e: any, next) => {
+    if (await inertNow($)) return next(e)
+    if (DEVICE_RX.test(String(e.tool)) === ((await pathNow($)) === 'device')) return next(e)
+    return { description: 'Not used in this session.', isDeferred: true }
+  })
+
   // FIRST-MESSAGE CONTEXT BLOCK: Persona + Working rules. Rendered once per
   // conversation and again after every compaction (the host owns the system prompt here).
   on('prompt.context', async ($, e, next) => {
@@ -1765,6 +2118,29 @@ export const register: Register = (on) => {
   // EVERY USER PROMPT: marker, start (first prompt), per-turn, 70 %, post-compaction
   on('prompt.submit', async ($, e, next) => {
     if (await inertNow($)) return next(e)   // inert: build switched off, or a headless session
+    // 0.25.0 (R3-R6, R9): on the device path the first user turn signs in (or asks for the email once); each turn while the
+    // sign-in is pending looks again (at most 3 s) and tells the agent the link; a code typed here is not mirrored
+    const signInBlocks: string[] = []
+    let codeTyped = false
+    if ((await pathNow($)) === 'device' && !(e as any).agentId) {
+      const sid = await syncSession($)
+      const first = firstDeviceSid !== sid
+      firstDeviceSid = sid
+      let si = await heldSignIn($)
+      if (si) { await withBudget($, checkSignIn($), READ_TIMEOUT_MS); si = await heldSignIn($) }
+      else if (first && !(await heldKey($))) {
+        const note = await read($, bandNoteA)
+        if (note !== SIGNIN_ENDED && note !== SIGNIN_FAILED && note !== DEVICE_UNAVAILABLE && !RATE_NOTE_RX.test(String(note ?? ''))) {
+          if (settingOf('email')) { await withBudget($, signInNow($), READ_TIMEOUT_MS); si = await heldSignIn($) }
+          else signInBlocks.push(EMAIL_ASK)
+        }
+      }
+      if (si) {
+        signInBlocks.push(signInContextBlock(si))
+        codeTyped = isSixDigits(String(e.text ?? '').replace(/<system-reminder>[\s\S]*?<\/system-reminder>\s*/g, ''))
+        if (codeTyped) signInBlocks.push(CODE_TYPED)
+      }
+    }
     if (!briefing) await waitForBriefing($)
     // R2: each user turn looks at a pending approval again, in the background (the hot path awaits no network call)
     const apNow = await heldApproval($)
@@ -1803,7 +2179,7 @@ export const register: Register = (on) => {
     const cls = (e as any).agentId ? 'drop' : classifyOrigin(kind)
     if (cls !== 'drop') {
       const text = e.text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>\s*/g, '').trim()
-      if (text) pending.push({ from: cls, text })
+      if (text) pending.push({ from: cls, text, ...(codeTyped ? { signInCode: true } : {}) })
     }
     const pct = await contextPercent($)
     const turns = await $.session.turns().catch(() => -1)
@@ -1823,6 +2199,7 @@ export const register: Register = (on) => {
         await log($, `second kinitro.ai connection told: ${others.join(', ')}`)
       }
     }
+    if (signInBlocks.length) { blocks.push(...signInBlocks); injected.push(codeTyped ? 'Sign-in pending, code typed' : signInBlocks[0] === EMAIL_ASK ? 'Sign-in email' : 'Sign-in pending') }
     if (apNow) { blocks.push(approvalContextBlock(apNow)); injected.push('Approval pending') }   // R8: replaces the domain block
     else if (needsDomain) {
       const approved = await read($, approvedA)
@@ -1952,7 +2329,7 @@ export const register: Register = (on) => {
     if (await inertNow($)) return next(e)   // inert: build switched off, or a headless session
     const r = await next(e)
     if (e.agentId) return r
-    const taken = pending
+    const taken = pending.filter((p) => !p.signInCode)   // 0.25.0 (R9): a sign-in code typed in the chat never reaches the outbox
     pending = []
     await queueTurn($, planTurn(taken, e.turnId, e.answer ?? ''))
     await log($, `turn.complete reason=${e.reason} mirrorSent=${mirrorSent} dup=${mirrorDup}${lastMirrorError ? ' error=' + lastMirrorError : ''}`)
@@ -1971,10 +2348,16 @@ export const register: Register = (on) => {
     const url = await read($, selectorUrlA)
     const note = await read($, bandNoteA)
     const pend = (await heldApproval($)) ?? null   // R6: the pending approval of this session; an expired one is dropped (F2)
-    const m = bandModel({ approved, current, chooser, url, note, pend })
+    const signIn = (await heldSignIn($)) ?? null   // 0.25.0 (R5): the pending device sign-in
+    const offerDevice = (await pathNow($)) === 'oauth' && !(await kinitroTools($)).prefix   // R1 escape: no own tool listed yet
+    const m = bandModel({ approved, current, chooser, url, note, pend, signIn, now: await nowMs($), offerDevice })
     const press = (b: Extract<BandItem, { kind: 'button' }>) => () => {
       if (b.act === 'change') { update($, chooserA, () => true); refreshChoices($) }
       else if (b.act === 'approved') checkApproval($)
+      else if (b.act === 'signin-approved') return checkSignIn($)
+      else if (b.act === 'signin-resend') return signInNow($)
+      else if (b.act === 'signin-again') return update($, bandNoteA, () => null).then(() => signInNow($))
+      else if (b.act === 'signin-device') return setPath($, 'device', 'band button').then(() => signInNow($))
       else if (b.act === 'bind') bindDomain($, b.slug!)
       else if (b.act === 'refresh') refreshChoices($)
       else update($, chooserA, () => false)
