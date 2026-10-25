@@ -12,7 +12,7 @@ All notable changes to the `kinitro-ai` plugin are listed here. The format follo
 - `/kinitro sign-in [email]` and `/kinitro sign-in-path <auto|oauth|device>`.
 
 ### Tests
-- `tests/device-signin.test.ts` (28: path rule, sign-in at the first turn, the email question, pending band and context, approval, end, resend, rate limit, OAuth-path refusal and escape, code guard, headless, fallback, the setting). `tests/variant.test.ts`: the device prefix of each build. `tests/publisher.test.mjs`: the source device URL (the plugin kit loads no JSON import). Version strings move to 0.25.0; the newer published versions in `update-notice` move to 0.26.0.
+- `tests/device-signin.test.ts` (27: path rule, sign-in at the first turn, the email question, pending band and context, approval, end, resend, rate limit, OAuth-path refusal and escape, code guard, headless, fallback, the setting). `tests/variant.test.ts`: the device prefix of each build. `tests/publisher.test.mjs`: the source device URL (the plugin kit loads no JSON import). Version strings move to 0.25.0; the newer published versions in `update-notice` move to 0.26.0.
 
 ## [0.24.3] - 2026-10-23
 
