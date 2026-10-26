@@ -6,6 +6,7 @@ All notable changes to the `kinitro-ai` plugin are listed here. The format follo
 
 ### Fixed
 - 0.25.1: drop the unknown types key so marketplaces sync without a warning.
+- First run in the Claude desktop app (no /mcp): when the kinitro.ai tools are not connected, `/kinitro` signs in itself by email code through the plugin's own sign-in (asks only for the email address, shows the approval link, then goes on to the domain choice). /mcp is named only as a last resort for terminal users.
 
 ## [0.25.0] - 2026-10-25
 
