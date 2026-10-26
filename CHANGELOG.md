@@ -2,6 +2,11 @@
 
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.25.1] - 2026-10-26
+
+### Fixed
+- 0.25.1: drop the unknown types key so marketplaces sync without a warning.
+
 ## [0.25.0] - 2026-10-25
 
 ### Added (item 4.2.1-3910, F4 of the device sign-in; PO 24.10.2026)

@@ -1,12 +1,11 @@
 {
   "name": "kinitro-ai",
-  "version": "0.25.0",
+  "version": "0.25.1",
   "description": "kinitro.ai agent harness for Claude: briefs a kinitro.ai domain agent from the platform (persona, standing rules, start, every turn, context checkpoint, after compaction) and mirrors each turn into kinitro.ai.",
   "author": {
     "name": "Kinitro Consulting",
     "url": "https://kinitro.ai"
   },
-  "types": "./types/index.d.ts",
   "userConfig": {
     "signInPath": {
       "type": "string",
