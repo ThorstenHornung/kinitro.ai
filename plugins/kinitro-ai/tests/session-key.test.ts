@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
+import { test } from './kit'
 import { isKeyRefusal, scrubKey, secondConnections, secondConnectionText, sessionKeyOf } from '../hooks/register'
 import { makeWorld, probe } from './world'
 
@@ -116,7 +117,7 @@ describe('session key', () => {
     expect(srv.minted).toHaveLength(1)
     expect(noKeyInFiles(w)).toEqual([])
     expect(await probe($, 'status')).not.toContain('kss_')
-    expect(r).toContain('kinitro-ai PROD 0.25.4')
+    expect(r).toContain('kinitro-ai PROD 0.25.5')
     expect(r).not.toContain('kss_')
     expect(r).not.toContain("pass domainRef:'beta'")
   })

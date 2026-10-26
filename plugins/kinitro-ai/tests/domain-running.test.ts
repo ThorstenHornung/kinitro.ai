@@ -1,4 +1,5 @@
-import { expect, test } from 'claude-code/testing'
+import { expect } from 'claude-code/testing'
+import { test } from './kit'
 import { makeWorld, probe } from './world'
 
 // one module for the whole file: a running session (no restart)

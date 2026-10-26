@@ -59,10 +59,35 @@ test('no tracked file names the person', () => {
   assert.deepEqual(offenders, []);
 });
 
-// Item 4.2.1-3910 (Architect ruling Q4, 25.10.2026): the source names the Production device server, with no oauth block, beside
-// the unchanged OAuth server. Pinned here because the plugin test kit loads no JSON import (design choice D-11).
-test('the plugin source names the Production device server beside the unchanged OAuth server', () => {
-  const servers = JSON.parse(read('plugins/kinitro-ai/.mcp.json')).mcpServers;
+// Item 4.2.1-3910 and 0.25.5: the source names only the Production device server (secret exchange by email code); it brings no
+// OAuth server, so no localhost callback is ever needed. Pinned here because the plugin test kit loads no JSON import.
+test('the plugin source names only the Production device server: no OAuth server, no localhost callback', () => {
+  const raw = read('plugins/kinitro-ai/.mcp.json');
+  const servers = JSON.parse(raw).mcpServers;
+  assert.deepEqual(Object.keys(servers), ['kinitro_ai_device']);
   assert.deepEqual(servers.kinitro_ai_device, { type: 'http', url: 'https://methos.kinitro.ai/mcp/device' });
-  assert.deepEqual(servers.kinitro_ai, { type: 'http', url: 'https://methos.kinitro.ai/mcp', oauth: { clientId: 'claude-code', callbackPort: 33418 } });
+  assert.ok(!/oauth|callbackPort|localhost|127\.0\.0\.1/i.test(raw));
+});
+
+// 0.25.5: the Claude desktop app runs no plugin hooks, so the probe never exists there; the command must work without it.
+test('/kinitro works without the probe: direct flow, no retry loop, no route question, bare /kinitro and connect mean domain', () => {
+  const md = read('plugins/kinitro-ai/commands/kinitro.md');
+  assert.ok(md.includes('do not wait for it and do not retry for it'));
+  assert.ok(md.includes('Go straight to **Direct flow**'));
+  assert.ok(!md.includes('sleep 3') && !/up to 5 tries/.test(md));
+  assert.ok(md.includes('ask nothing about routes'));
+  assert.ok(md.includes('mcp__plugin_kinitro-ai_kinitro_ai_device__<verb>') && md.includes('mcp__claude_ai_Kinitro__<verb>'));
+  assert.ok(md.includes("Keep the answer's `sessionKey` for this session only and pass it as `domainRef`"));
+  assert.ok(md.includes('Never tell the user to run the command again'));
+  assert.ok(md.includes('No arguments at all (a bare `/kinitro`) mean `domain`, and `connect` is a synonym'));
+  assert.match(md, /argument-hint: "\[domain \| connect \|/);
+  assert.ok(md.includes('If `mcp__kinitro-ai__probe` is available, sign in yourself: follow **First sign-in**'));
+  assert.ok(md.includes('"action": "set-domain"'));
+});
+
+// 0.25.5: no user-visible text or document sends a person to a localhost callback or tells them to authenticate in /mcp as the way in.
+test('the sign-in default is the email code: auto means device in the hook source', () => {
+  const src = read('plugins/kinitro-ai/hooks/register.tsx');
+  assert.ok(src.includes("return { path: 'device', reason: 'default: the email-code sign-in; no localhost callback' }"));
+  assert.ok(!/callbackPort|localhost:\d+/.test(src));
 });

@@ -1,4 +1,5 @@
-import { describe, expect, mock, test } from 'claude-code/testing'
+import { describe, expect, mock } from 'claude-code/testing'
+import { test } from './kit'
 import { bandModel, chooseSignInPath, deviceLabel, emailMask, isSixDigits, resolveKinitroTools, secondConnections, signInContextBlock, signInResult } from '../hooks/register'
 import { makeWorld, probe } from './world'
 
@@ -69,18 +70,19 @@ const signIns = (srv: Srv) => srv.direct.filter((d) => d.tool === 'sign-in')
 const textOf = (r: any) => String(r?.text ?? r?.result ?? r?.deny ?? '')
 const allFiles = (w: { files: Map<string, string> }) => [...w.files.values()].join('\n')
 const WITH_EMAIL = { options: { email: EMAIL, signInPath: 'auto' }, timeoutMs: 20000 } as const
+const WITH_EMAIL_OAUTH = { options: { email: EMAIL, signInPath: 'oauth' }, timeoutMs: 20000 } as const
 const NO_EMAIL = { options: { signInPath: 'auto' }, timeoutMs: 20000 } as const
 
 describe('pure parts', () => {
-  test('D1: chooseSignInPath: the setting wins; auto takes SSH markers and CLAUDE_CODE_REMOTE=true, else OAuth', () => {
+  test('D1: chooseSignInPath: the setting wins; auto takes SSH markers and CLAUDE_CODE_REMOTE=true, else device (0.25.5)', () => {
     expect(chooseSignInPath('auto', { SSH_CONNECTION: '1.2.3.4 1 5.6.7.8 22' })).toEqual({ path: 'device', reason: 'SSH_CONNECTION' })
     expect(chooseSignInPath('auto', { SSH_CLIENT: '1.2.3.4 1 22' })).toEqual({ path: 'device', reason: 'SSH_CLIENT' })
     expect(chooseSignInPath('auto', { SSH_TTY: '/dev/pts/1' })).toEqual({ path: 'device', reason: 'SSH_TTY' })
     expect(chooseSignInPath('auto', { CLAUDE_CODE_REMOTE: 'TRUE' })).toEqual({ path: 'device', reason: 'CLAUDE_CODE_REMOTE' })
-    expect(chooseSignInPath('auto', { CLAUDE_CODE_REMOTE: 'false' })).toEqual({ path: 'oauth', reason: 'no remote marker' })
-    expect(chooseSignInPath('auto', { SSH_TTY: '' })).toEqual({ path: 'oauth', reason: 'no remote marker' })
-    expect(chooseSignInPath('auto', {})).toEqual({ path: 'oauth', reason: 'no remote marker' })
-    expect(chooseSignInPath(undefined, {})).toEqual({ path: 'oauth', reason: 'no remote marker' })
+    expect(chooseSignInPath('auto', { CLAUDE_CODE_REMOTE: 'false' })).toEqual({ path: 'device', reason: 'default: the email-code sign-in; no localhost callback' })
+    expect(chooseSignInPath('auto', { SSH_TTY: '' })).toEqual({ path: 'device', reason: 'default: the email-code sign-in; no localhost callback' })
+    expect(chooseSignInPath('auto', {})).toEqual({ path: 'device', reason: 'default: the email-code sign-in; no localhost callback' })
+    expect(chooseSignInPath(undefined, {})).toEqual({ path: 'device', reason: 'default: the email-code sign-in; no localhost callback' })
     expect(chooseSignInPath('oauth', { SSH_CONNECTION: 'x' })).toEqual({ path: 'oauth', reason: 'setting signInPath=oauth' })
     expect(chooseSignInPath('device', {})).toEqual({ path: 'device', reason: 'setting signInPath=device' })
   })
@@ -144,10 +146,10 @@ describe('device sign-in (criteria 1-9)', () => {
     expect(log).toMatch(/sign-in path device \(SSH_CONNECTION\)/)
     expect(log).not.toContain('10.9.8.7')
   })
-  test('D1 control: a local session without markers takes the OAuth path', WITH_EMAIL, async ($, on) => {
+  test('D1 control (0.25.5): a local session without markers takes the device path, never OAuth', WITH_EMAIL, async ($, on) => {
     mk(on, newSrv(), {}, [])
     await start($)
-    expect(await probe($, 'status')).toContain('sign-in path: oauth (no remote marker)')
+    expect(await probe($, 'status')).toContain('sign-in path: device (default: the email-code sign-in; no localhost callback)')
   })
   test('D1: the setting wins over the markers (oauth with SSH)', { options: { email: EMAIL, signInPath: 'oauth' }, timeoutMs: 20000 }, async ($, on) => {
     const srv = newSrv()
@@ -174,7 +176,7 @@ describe('device sign-in (criteria 1-9)', () => {
     const s = signIns(srv)
     expect(s).toHaveLength(1)
     expect(s[0]!.server).toBe('plugin:kinitro-ai:kinitro_ai_device')
-    expect(s[0]!.args).toEqual({ email: EMAIL, deviceLabel: 'WS-1', clientName: 'Claude Code, kinitro-ai 0.25.4' })
+    expect(s[0]!.args).toEqual({ email: EMAIL, deviceLabel: 'WS-1', clientName: 'Claude Code, kinitro-ai 0.25.5' })
     expect(w.sent.filter((x) => x.verb === 'open-domain')).toHaveLength(0)
     // the model's call carries the held key (the plugin adds it), and the answer is the plugin's pending result
     const r: any = await ($ as any).tool.call({ tool: `${DEV}current-seat` })
@@ -333,7 +335,7 @@ describe('device sign-in (criteria 1-9)', () => {
     await ui.unmount()
   })
 
-  test('D9: on the OAuth path a device-server call is refused with a pointer; the band offers the email code while no own tool is listed', WITH_EMAIL, async ($, on) => {
+  test('D9: on the OAuth path a device-server call is refused with a pointer; the band offers the email code while no own tool is listed', WITH_EMAIL_OAUTH, async ($, on) => {
     const srv = newSrv()
     const w = mk(on, srv, {}, [...DEVICE_TOOLS])
     await start($)
@@ -370,7 +372,7 @@ describe('device sign-in (criteria 1-9)', () => {
     expect((await ui.find({ type: 'Text', text: /sign-in ended/ }))?.text).toBe('The kinitro.ai sign-in ended.')
     await ui.unmount()
   })
-  test('the escape on the OAuth path: "Sign in with an email code" switches this session to the device path and signs in', WITH_EMAIL, async ($, on) => {
+  test('the escape on the OAuth path: "Sign in with an email code" switches this session to the device path and signs in', WITH_EMAIL_OAUTH, async ($, on) => {
     const srv = newSrv()
     mk(on, srv, {}, [...DEVICE_TOOLS])
     await start($)

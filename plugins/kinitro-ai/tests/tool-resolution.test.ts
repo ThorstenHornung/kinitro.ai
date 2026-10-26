@@ -1,4 +1,5 @@
-import { describe, expect, mock, test } from 'claude-code/testing'
+import { describe, expect, mock } from 'claude-code/testing'
+import { test } from './kit'
 import { AUTH_HINT, resolveKinitroTools } from '../hooks/register'
 import { makeWorld, probe } from './world'
 

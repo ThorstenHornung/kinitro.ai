@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
+import { test } from './kit'
 import { makeWorld } from './world'
 
 // Item 4.2.1-3696 criterion 6 (PO 20.10.2026 10:22): in a session with isInteractive === false (claude -p, build and worker

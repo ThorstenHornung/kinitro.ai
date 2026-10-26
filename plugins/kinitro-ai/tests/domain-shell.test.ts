@@ -1,4 +1,5 @@
-import { expect, test } from 'claude-code/testing'
+import { expect } from 'claude-code/testing'
+import { test } from './kit'
 import { makeWorld, probe } from './world'
 
 // 0.22.0: the domain view opens the shell of the domain (open-page target 'shell'); a server that does not know the

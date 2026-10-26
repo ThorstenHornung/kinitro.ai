@@ -2,6 +2,12 @@
 
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.25.5] - 2026-10-26
+
+### Fixed
+- 0.25.5: the plugin never needs a localhost callback. `.mcp.json` brings only the device server (email-code sign-in, secret exchange); the OAuth server `kinitro_ai` with its callback port 33418 is gone, and `signInPath` `auto` always means device (`oauth` stays only for a user who adds their own server). Nothing shows "needs authentication" in `/mcp` any more.
+- 0.25.5: `/kinitro` works in the Claude desktop app, which runs no plugin hooks and so never has the `probe` tool: without the probe the command follows a direct flow with the MCP tools that exist (device `sign-in` by email code, `list-domains`, `open-domain`, approval link), keeping the session key itself; no waiting, no retry loop, no question about routes.
+
 ## [0.25.4] - 2026-10-26
 
 ### Fixed

@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
+import { test } from './kit'
 import { activeIn, AUTH_HINT, devicePrefixFor, resolveKinitroTools, secondConnections } from '../hooks/register'
 import { VARIANT } from '../hooks/variant'
 import { makeWorld, probe } from './world'
@@ -32,7 +33,7 @@ describe('build variant', () => {
     const w = makeWorld(on, { files: new Map([['/w/b/.kinitro-ai-domain', 'beta\n']]), cwd: '/w/b', root: '/w/b', sid: 'SV' })
     expect(await probe($, 'reload')).toContain('domain: beta')
     await $.prompt.submit({ text: 'a', origin: { kind: 'composer' } } as any)
-    expect(seen[0]).toMatch(/^\[kinitro-ai PROD 0\.25\.4\] context /)
+    expect(seen[0]).toMatch(/^\[kinitro-ai PROD 0.25.5\] context /)
     expect(w.files.has('/u/.kinitro-ai/sessions/SV.json')).toBe(true)
     expect(w.files.has('/w/b/kinitro-ai.log')).toBe(true)
   })

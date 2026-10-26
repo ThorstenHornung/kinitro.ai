@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
+import { test } from './kit'
 import { classifyOrigin, planTurn } from '../hooks/register'
 import { makeWorld, probe } from './world'
 

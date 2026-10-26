@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
+import { test } from './kit'
 import { makeWorld } from './world'
 
 // Build variant (ruling R1, 21.10.2026), own file: the activation is read once per module, so the switched-off case gets its

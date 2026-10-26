@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
+import { test } from './kit'
 import { makeWorld, probe } from './world'
 
 // The chat mirroring switch (PO 2026-10-16): probe mirror on|off, default on, persisted in .kinitro-ai-state.json.

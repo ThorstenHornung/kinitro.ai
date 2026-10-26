@@ -1,4 +1,5 @@
-import { expect, test } from 'claude-code/testing'
+import { expect } from 'claude-code/testing'
+import { test } from './kit'
 import { makeWorld, probe } from './world'
 
 // a fresh module = the hook process restarted after a `cd` (the live bug of 2026-10-09)

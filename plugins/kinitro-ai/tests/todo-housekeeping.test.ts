@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
+import { test } from './kit'
 import { CHAT_TAIL_BEGIN, CHAT_TAIL_END, chatTailBlock, contextReminder, parseTodos, todoAgeMs, todoBlock, todoListHash, todoPushLine, todoShortList } from '../hooks/register'
 import { makeWorld, probe } from './world'
 

@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect } from 'claude-code/testing'
+import { test } from './kit'
 import { compareVersions, publishedVersion, updateNotice } from '../hooks/register'
 import { makeWorld, probe } from './world'
 
@@ -33,7 +34,7 @@ describe('update notice', () => {
     await probe($, 'reload')
     await $.prompt.submit({ text: 'a', origin: { kind: 'composer' } } as any)
     expect(fetched).toEqual([PAGE + 'marketplace.json'])
-    expect(seen[0]).toContain(`kinitro-ai 0.26.0 is available (you run 0.25.4). Claude Code: run /kinitro update. Cowork/Desktop: re-upload the plugin from ${PAGE}.`)
+    expect(seen[0]).toContain(`kinitro-ai 0.26.0 is available (you run 0.25.5). Claude Code: run /kinitro update. Cowork/Desktop: re-upload the plugin from ${PAGE}.`)
   })
   test('equal: no notice', async ($, on) => {
     const { seen, fetched } = mk(on, ok('0.23.2'))

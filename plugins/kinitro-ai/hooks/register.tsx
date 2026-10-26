@@ -46,7 +46,7 @@ const FETCH_MS = 60000
 const MAX_TEXT = 50000     // chars per prompt / answer sent to the chat
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = `${F.replace(/^\./, '')}.log`
-const VERSION = '0.25.4'
+const VERSION = '0.25.5'
 // update notice (PO 2026-10-16): at the first prompt, compare with the published marketplace.json on the download page
 const UPDATE_BASE = VARIANT.downloadBase   // the download page; the environment variable KINITRO_AI_DOWNLOAD_BASE overrides it
 const UPDATE_TIMEOUT_MS = 2500
@@ -470,7 +470,7 @@ export function chooseSignInPath(setting: string | undefined, env: Record<string
   if (want === 'oauth' || want === 'device') return { path: want, reason: `setting signInPath=${want}` }
   for (const name of PATH_MARKERS) if (String(env[name] ?? '').trim()) return { path: 'device', reason: name }
   if (String(env.CLAUDE_CODE_REMOTE ?? '').trim().toLowerCase() === 'true') return { path: 'device', reason: 'CLAUDE_CODE_REMOTE' }
-  return { path: 'oauth', reason: 'no remote marker' }
+  return { path: 'device', reason: 'default: the email-code sign-in; no localhost callback' }   // 0.25.5: auto means device
 }
 
 /** The tool prefix of a build's device server: each build's prefix matches only its own device server. */

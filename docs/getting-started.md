@@ -6,7 +6,7 @@
 |---|---|---|
 | 1 | kinitro or partner | Account and agent seat |
 | 2 | Setup person | Install the plugin (it brings the kinitro.ai server) |
-| 3 | Setup person | Sign in once: `/mcp` → `plugin:kinitro-ai:kinitro_ai` → Authenticate |
+| 3 | Setup person | Sign in once: type `/kinitro domain` (email code) |
 | 4 | Business user | Start the first conversation |
 
 ## Before you start
@@ -46,15 +46,9 @@ If the install fails, check that `git` is installed and the machine can reach gi
 
 ## Step 3: Sign in once
 
-The plugin ships the kinitro.ai MCP server, so there is no separate connector to set up. After installing, sign in once:
+The plugin ships the kinitro.ai MCP server, so there is no separate connector to set up and no browser callback on your machine. After installing, type `/kinitro domain` in Claude Code or in the Claude desktop app. kinitro.ai mails you a 6-digit code (the plugin asks once for your account email); open the link **Approve this sign-in**, type the code on the kinitro.ai page, then choose your domain. Until you are signed in the plugin tells you: "Type /kinitro domain to sign in".
 
-1. Open `/mcp`.
-2. Choose **`plugin:kinitro-ai:kinitro_ai`**.
-3. Choose **Authenticate** and finish the sign-in in the browser.
-
-Until you are signed in the plugin finds no kinitro.ai tools and tells you: "Type /kinitro domain to sign in". That command starts the sign-in by email code (it asks for your account email, shows an approval link, then goes on to the domain choice); it works in the Claude desktop app, which has no `/mcp`. The `/mcp` steps above are only a fallback for the Claude Code terminal.
-
-**Remote sessions sign in by email code.** When Claude Code runs over SSH or in a cloud session (or the setting **kinitro.ai sign-in path** says `device`), the browser is not on the same machine, so the plugin signs in by itself instead: at your first message kinitro.ai mails you a 6-digit code (the plugin asks for your account email once if the setting **kinitro.ai account email** is empty). Open the link **Approve this sign-in** on any device, type the code on methos.kinitro.ai, choose your domain and agent, then send any message or press **I approved it**. Never type the code in the chat. Change the path with `/kinitro sign-in-path auto|oauth|device` (it applies from the next session).
+**The email code works everywhere.** Locally, over SSH and in a cloud session the plugin signs in by itself: at your first message kinitro.ai mails you a 6-digit code (the plugin asks for your account email once if the setting **kinitro.ai account email** is empty). Open the link **Approve this sign-in** on any device, type the code on methos.kinitro.ai, choose your domain and agent, then send any message or press **I approved it**. Never type the code in the chat. Change the path with `/kinitro sign-in-path auto|oauth|device` (it applies from the next session).
 
 **You already have the kinitro.ai connector or a `kinitro_ai` server of your own?** From 0.24.0 the plugin works only with its own server: it keeps this session's kinitro.ai session key and passes it on every call, and it never sends the key through another connection. Switch the other one off for this tool (`claude mcp remove kinitro_ai` for a server of your own; for the claude.ai connector in Claude Code switch it off for this tool only: `/mcp`, choose the claude.ai connector, Disable. Leave it connected in the claude.ai settings: the browser, Desktop and mobile need it); the plugin tells you once per session when it sees one.
 
@@ -87,7 +81,7 @@ The `probe` status then shows `briefing: MISSING (...)` followed by a reason. Wo
 
 1. **Wait a moment and send another message.** The server may still be connecting. The plugin retries on its own.
 2. **Run `probe` with action `reload`.** This reads the briefing again.
-3. **Check the sign-in.** If the status says `kinitro.ai tools: none visible`, type `/kinitro domain`; it signs you in by email code. (Claude Code terminal only, as a fallback: open `/mcp`, choose `plugin:kinitro-ai:kinitro_ai` and Authenticate.)
+3. **Check the sign-in.** If the status says `kinitro.ai tools: none visible`, type `/kinitro domain`; it signs you in by email code.
 4. **Read the reason in the status line.** The [troubleshooting table](plugin-reference.md#troubleshooting) maps typical messages to a fix.
 5. **Ask your contact** to check the agent node, its AIAgent and the agent instructions.
 
