@@ -2,6 +2,11 @@
 
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.25.2] - 2026-10-26
+
+### Fixed
+- 0.25.2: the same content as the corrected 0.25.1 (no unknown types key; first run in the Claude desktop app signs in by email code without /mcp). The 0.25.1 zip was cached at the edge before the sign-in change, so the fix ships under a new version.
+
 ## [0.25.1] - 2026-10-26
 
 ### Fixed
