@@ -1,6 +1,6 @@
 import { describe, expect, mock } from 'claude-code/testing'
 import { test } from './kit'
-import { bandModel, chooseSignInPath, staleOauthPath, deviceLabel, emailMask, isSixDigits, resolveKinitroTools, secondConnections, signInContextBlock, signInResult } from '../hooks/register'
+import { plainReason, plainCode, bandModel, chooseSignInPath, staleOauthPath, deviceLabel, emailMask, isSixDigits, resolveKinitroTools, secondConnections, signInContextBlock, signInResult } from '../hooks/register'
 import { makeWorld, probe } from './world'
 
 // Item 4.2.1-3910 (F4): when the browser is not on the same machine (SSH, a cloud session, or the setting), the plugin signs
@@ -22,7 +22,7 @@ const DEVICE_TOOLS = ['sign-in', 'current-seat', 'list-domains', 'open-domain', 
 const BAND = { plugin: 'kinitro-ai', component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 12, bodyColumns: 120, scroll: { offset: 0, bodyRows: 12 } } } as const
 
 type Direct = { server: string; tool: string; args: Record<string, unknown> }
-type Srv = { keys: Record<string, 'pending' | 'ready' | 'gone'>; minted: string[]; direct: Direct[]; connected: boolean; rateLimited?: number; expiresAt: string; mirrored: Record<string, unknown>[] }
+type Srv = { keys: Record<string, 'pending' | 'ready' | 'gone'>; minted: string[]; direct: Direct[]; connected: boolean; rateLimited?: number; throwText?: string; rawAnswer?: { text: string; isError: boolean }; expiresAt: string; mirrored: Record<string, unknown>[] }
 const newSrv = (x: Partial<Srv> = {}): Srv => ({ keys: {}, minted: [], direct: [], connected: true, expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(), mirrored: [], ...x })
 const answer = (v: unknown, isError = false) => ({ text: JSON.stringify(v), isError })
 
@@ -46,7 +46,9 @@ function serve(srv: Srv, verb: string, a: Record<string, unknown>) {
   return answer({ status: 'ok' })
 }
 
-const mk = (on: any, srv: Srv, env: Record<string, string> = SSH, tools: string[] = DEVICE_TOOLS) => {
+// routed (0.25.7): the real host shows the plugin's own $.mcp.call to the plugin's tool.call hooks (Claude Code 2.1.310: "$.mcp.call(...) refused: ...");
+// the older tests call the server directly, as the host did not.
+const mk = (on: any, srv: Srv, env: Record<string, string> = SSH, tools: string[] = DEVICE_TOOLS, routed?: (a: Record<string, unknown>) => Promise<any>) => {
   const ctx: string[] = []
   const cfg: Record<string, unknown> = {}
   on('prompt.submit', async (_$: any, e: any) => { ctx.push((e.context ?? []).join(SEP)); return { text: e.text } })
@@ -54,6 +56,14 @@ const mk = (on: any, srv: Srv, env: Record<string, string> = SSH, tools: string[
   on('mcp.connect', async (_$: any, e: any) => ({ value: srv.connected ? { isConnected: true, server: `plugin:kinitro-ai:${e.server}` } : { isConnected: false, reason: 'failed' } }))
   on('mcp.call', async (_$: any, e: any) => {
     if (!String(e.server).endsWith('kinitro_ai_device')) throw new Error(`no connected MCP server named "${e.server}"`)   // only the device server is connected
+    if (srv.throwText) return { deny: srv.throwText }
+    if (srv.rawAnswer) return { value: { content: [{ type: 'text', text: srv.rawAnswer.text }], isError: srv.rawAnswer.isError } }
+    if (routed) {
+      const r: any = await routed({ tool: DEV + String(e.tool), ...(e.args ?? {}) })
+      if (r?.deny !== undefined) throw new Error(`$.mcp.call(${e.server}, ${e.tool}) refused: ${r.deny}`)
+      srv.direct.push({ server: String(e.server), tool: String(e.tool), args: { ...(e.args ?? {}) } })
+      return { value: { content: [{ type: 'text', text: String(r?.text ?? r?.result ?? '') }], isError: !!r?.isError } }
+    }
     srv.direct.push({ server: String(e.server), tool: String(e.tool), args: { ...(e.args ?? {}) } })
     const r = serve(srv, String(e.tool), e.args ?? {})
     return { value: { content: [{ type: 'text', text: r.text }], isError: r.isError } }
@@ -176,7 +186,7 @@ describe('device sign-in (criteria 1-9)', () => {
     const s = signIns(srv)
     expect(s).toHaveLength(1)
     expect(s[0]!.server).toBe('plugin:kinitro-ai:kinitro_ai_device')
-    expect(s[0]!.args).toEqual({ email: EMAIL, deviceLabel: 'WS-1', clientName: 'Claude Code, kinitro-ai 0.25.6' })
+    expect(s[0]!.args).toEqual({ email: EMAIL, deviceLabel: 'WS-1', clientName: 'Claude Code, kinitro-ai 0.25.7' })
     expect(w.sent.filter((x) => x.verb === 'open-domain')).toHaveLength(0)
     // the model's call carries the held key (the plugin adds it), and the answer is the plugin's pending result
     const r: any = await ($ as any).tool.call({ tool: `${DEV}current-seat` })
@@ -427,6 +437,68 @@ describe('device sign-in (criteria 1-9)', () => {
     const ui = await $.ui.mount({ ...BAND, surface: 'terminal' } as any)
     expect(JSON.stringify(await ui.drawn())).toContain('kinitro.ai sign-in by email code is not available here; type /kinitro domain to sign in.')
     await ui.unmount()
+  })
+
+  // 0.25.7 (the field fault of 26.10.2026): the plugin's own sign-in call went through its own tool.call hook, which refused it
+  // as "the model must not sign in", so no request ever reached the server and the person read only "sign-in failed".
+  test('D13 (0.25.7): the plugin\'s own sign-in call is not refused by its own hook when the host shows it to the hooks; the model\'s call still is', WITH_EMAIL, async ($, on) => {
+    const srv = newSrv()
+    mk(on, srv, SSH, DEVICE_TOOLS, (a) => ($ as any).tool.call(a))
+    await start($)
+    await submit($, 'hello')
+    expect(signIns(srv)).toHaveLength(1)
+    expect(srv.minted).toHaveLength(1)
+    const st = await probe($, 'status')
+    expect(st).toContain('a code was sent to t***@example.com')
+    expect(st).not.toContain('last sign-in attempt failed')
+    // the model's own call of the device sign-in is refused, also while the plugin is not signing in
+    const m: any = await ($ as any).tool.call({ tool: `${DEV}sign-in`, email: 'x@example.com' })
+    expect(textOf(m)).toContain('signs in itself')
+    expect(signIns(srv)).toHaveLength(1)
+    // and a call that only looks like the plugin's (no flag) stays refused
+    const fake: any = await ($ as any).tool.call({ tool: `${DEV}sign-in`, email: 'x@example.com', clientName: 'Claude Code, kinitro-ai 0.25.7' })
+    expect(textOf(fake)).toContain('signs in itself')
+    expect(signIns(srv)).toHaveLength(1)
+  })
+
+  test('D14 (0.25.7): a refused call shows its real reason in the answer, the band note and /kinitro status, in plain words', WITH_EMAIL, async ($, on) => {
+    const srv = newSrv({ throwText: 'Some other plugin said no.' })
+    mk(on, srv)
+    await start($)
+    const r = JSON.parse(await probe($, 'sign-in'))
+    expect(r.status).toBe('error')
+    expect(r.message).toBe("kinitro.ai sign-in failed: Claude Code refused the plugin's own sign-in call (Some other plugin said no.).")
+    const st = await probe($, 'status')
+    expect(st).toContain("last sign-in attempt failed at")
+    expect(st).toContain("Claude Code refused the plugin's own sign-in call (Some other plugin said no.)")
+    const ui = await $.ui.mount({ ...BAND, surface: 'terminal' } as any)
+    expect(JSON.stringify(await ui.drawn())).toContain("kinitro.ai sign-in failed: Claude Code refused the plugin's own sign-in call")
+    await ui.unmount()
+    // the failed note stops the automatic retry on the next turn
+    const before = signIns(srv).length
+    await submit($, 'again')
+    expect(signIns(srv)).toHaveLength(before)
+  })
+
+  test('D15 (0.25.7): a network fault, a timeout and a server error code each give their own plain reason', WITH_EMAIL, async ($, on) => {
+    expect(plainReason('kinitro-ai: $.mcp.call(plugin:kinitro-ai:kinitro_ai_device, sign-in) refused: The kinitro-ai plugin signs in itself: call mcp__kinitro-ai__probe with {"action": "sign-in"}.')).toBe("Claude Code refused the plugin's own sign-in call (The kinitro-ai plugin signs in itself: call mcp__kinitro-ai__probe with {\"action\": \"sign-in\"}.)")   // the exact line of the field log
+    expect(plainReason('fetch failed: ENOTFOUND methos.kinitro.ai')).toContain('cannot reach kinitro.ai')
+    expect(plainReason('Request timed out after 30000ms')).toBe('kinitro.ai did not answer in time; try again in a minute')
+    expect(plainReason('no connected MCP server named "x"')).toContain('not connected')
+    expect(plainReason('kss_abc123XYZ leaked')).not.toContain('kss_abc123XYZ')
+    expect(plainCode('sign_in_rate_limited', true)).toContain('too many sign-in requests')
+    expect(plainCode('internal_error', true)).toContain('error code internal_error')
+    expect(plainCode(undefined, false)).toContain('without a session key')
+    void on; void $
+  })
+
+  test('D16 (0.25.7): a server answer without a key gives the code as the reason', WITH_EMAIL, async ($, on) => {
+    const srv = newSrv({ rawAnswer: { text: JSON.stringify({ status: 'error', code: 'internal_error', message: PROSE }), isError: true } })
+    mk(on, srv)
+    await start($)
+    const r = JSON.parse(await probe($, 'sign-in'))
+    expect(r.message).toBe('kinitro.ai sign-in failed: kinitro.ai answered the sign-in with the error code internal_error.')
+    expect(JSON.stringify(r)).not.toContain(PROSE)
   })
 
   test('criterion 5: /kinitro sign-in-path stores the setting; a bad value is refused', WITH_EMAIL, async ($, on) => {

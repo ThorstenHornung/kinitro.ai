@@ -2,6 +2,12 @@
 
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.25.7] - 2026-10-26
+
+### Fixed
+- 0.25.7: the email-code sign-in works in Claude Code 2.1.310. The host shows the plugin's own `$.mcp.call` to the plugin's own `tool.call` hook, and that hook refused every `sign-in` on the device server as "the model must not sign in" (rule R5), so 0.25.0 to 0.25.6 never sent a request to kinitro.ai (field log 26.10.2026 12:54 UTC: `$.mcp.call(plugin:kinitro-ai:kinitro_ai_device, sign-in) refused: The kinitro-ai plugin signs in itself`; server log: no `tools/call` on /mcp/device, no grant of client mcp-device). The plugin's own call (flag set around it, client name the plugin builds) now passes; the model's own `sign-in` call is still refused.
+- 0.25.7: a failed sign-in says why, in plain words: the probe answer, the band note and `/kinitro status` ("last sign-in attempt failed at ...: Claude Code refused the plugin's own sign-in call (...)", "this computer cannot reach kinitro.ai", "kinitro.ai answered the sign-in with the error code ..."). The fixed sentence "sign-in failed. Run /kinitro status for details." is gone; status gave no reason before.
+
 ## [0.25.6] - 2026-10-26
 
 ### Fixed

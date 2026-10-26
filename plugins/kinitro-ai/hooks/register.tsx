@@ -46,7 +46,7 @@ const FETCH_MS = 60000
 const MAX_TEXT = 50000     // chars per prompt / answer sent to the chat
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = `${F.replace(/^\./, '')}.log`
-const VERSION = '0.25.6'
+const VERSION = '0.25.7'
 // update notice (PO 2026-10-16): at the first prompt, compare with the published marketplace.json on the download page
 const UPDATE_BASE = VARIANT.downloadBase   // the download page; the environment variable KINITRO_AI_DOWNLOAD_BASE overrides it
 const UPDATE_TIMEOUT_MS = 2500
@@ -455,9 +455,29 @@ export type SignIn = { sid: string; url: string; mask: string; expiresAt: string
 const PATH_MARKERS = ['SSH_CONNECTION', 'SSH_CLIENT', 'SSH_TTY'] as const
 const RESEND_MS = 60_000
 const SIGNIN_ENDED = 'The kinitro.ai sign-in ended.'
-const SIGNIN_FAILED = `kinitro.ai sign-in failed. Run /${VARIANT.command} status for details.`
+const SIGNIN_FAILED_RX = /^kinitro\.ai sign-in failed/   // 0.25.7: a note starts like this and the reason follows (failNote)
 const DEVICE_UNAVAILABLE = `kinitro.ai sign-in by email code is not available here; type /${VARIANT.command} domain to sign in.`
 const RATE_NOTE_RX = /^Too many sign-in requests\./
+// 0.25.7 (item 4.2.1-3910): the reason a sign-in failed, in plain words. 0.25.6 swallowed it into one fixed sentence; the person
+// could not tell "the plugin refused its own call" from "kinitro.ai is down". The text is the plugin's own wording; a host or
+// server detail is cut to 140 characters and holds no key (scrubKey).
+export function plainReason(raw: string): string {
+  const t = String(raw ?? '').replace(/\s+/g, ' ').trim()
+  const clean = scrubKey(t)
+  const detail = clean.slice(0, 140)
+  if (/refused:|\$\.mcp\.call: /.test(t)) return `Claude Code refused the plugin's own sign-in call (${clean.replace(/^.*?(refused:|\$\.mcp\.call:)\s*/, '').slice(0, 140) || 'no reason given'})`
+  if (/ECONN|ENOTFOUND|EAI_AGAIN|fetch failed|network|certificate|TLS|SSL/i.test(t)) return `this computer cannot reach kinitro.ai (${detail})`
+  if (/timed? ?out|timeout/i.test(t)) return 'kinitro.ai did not answer in time; try again in a minute'
+  if (/no connected MCP server|not connected/i.test(t)) return `the kinitro.ai device server is not connected in this Claude session (${detail})`
+  return `the sign-in call failed (${detail || 'no detail'})`
+}
+export function plainCode(code: string | undefined, isError: boolean): string {
+  if (code === 'sign_in_rate_limited') return 'too many sign-in requests; wait a few minutes'
+  if (code === 'session_key_required') return 'kinitro.ai wants a sign-in first and gave no session key'
+  if (code) return `kinitro.ai answered the sign-in with the error code ${String(code).slice(0, 60)}`
+  return isError ? 'kinitro.ai answered the sign-in with an error and no code' : 'kinitro.ai answered the sign-in without a session key'
+}
+const failNote = (reason: string) => `kinitro.ai sign-in failed: ${reason}.`
 export const DEVICE_HINT = `Run /${VARIANT.command} sign-in`
 const EMAIL_ASK = `kinitro.ai sign-in: ask the user, in one short question in chat, for the email address of their kinitro.ai account, then call \`${PROBE_TOOL}\` with {"action": "sign-in", "email": "<address>"}. Never ask for a password or a code.`
 const CODE_TYPED = 'The user typed what looks like the sign-in code here. Tell them to type it only on the kinitro.ai page; do not repeat it.'
@@ -509,6 +529,8 @@ export function signInResult(si: Pick<SignIn, 'url' | 'mask'>) {
 let options: Record<string, unknown> = {}   // the userConfig values of this load (register(on, options)); a change reloads the module
 let pathMirror: SignInPathState | undefined
 let signInMirror: { sid: string; value: SignIn | null } | undefined
+let ownSignInCall = false   // 0.25.7: true only while signInNow makes its own device sign-in call (the host shows it to this plugin's own tool.call hook)
+let lastSignInFailure: { at: string; reason: string } | undefined   // 0.25.7: what /kinitro status says about the last failed sign-in
 let firstDeviceSid: string | undefined   // the Claude session whose first user turn on the device path was seen (R3, R4)
 let deviceServerName: string | undefined
 let signInP: Promise<any> | undefined
@@ -617,6 +639,7 @@ async function deviceServer($: any): Promise<string | undefined> {
   try { c = await $.mcp.connect(DEVICE_SERVER) } catch (err: any) { c = { isConnected: false, reason: String(err?.message ?? err).slice(0, 80) } }
   if (c?.isConnected) { deviceServerName = String(c.server || `plugin_${VARIANT.name}_${DEVICE_SERVER}`); return deviceServerName }
   await log($, `device server not connected: ${c?.reason ?? 'unknown'}`)   // 0.25.6: stays on the device path (no OAuth server exists); the next call connects again
+  lastSignInFailure = { at: new Date().toISOString(), reason: `the kinitro.ai device server did not connect (${String(c?.reason ?? 'no reason given').slice(0, 100)})` }
   try { await update($, bandNoteA, () => DEVICE_UNAVAILABLE) } catch { /* ignore */ }
   return undefined
 }
@@ -648,11 +671,13 @@ function signInNow($: any): Promise<any> {
       const env = await labelEnv($)
       const args = { email, deviceLabel: deviceLabel(env), clientName: `Claude Code, ${VARIANT.name} ${VERSION}`.slice(0, 60), ...(si && key ? { domainRef: key } : {}) }
       let r: { text: string; isError: boolean; answer: any }
-      try { r = await deviceCall($, server, 'sign-in', args) } catch (err: any) {
-        await log($, `sign-in failed: ${String(err?.message ?? err).slice(0, 200)}`)
-        await update($, bandNoteA, () => SIGNIN_FAILED)
-        return { status: 'error', message: SIGNIN_FAILED }
-      }
+      try { ownSignInCall = true; r = await deviceCall($, server, 'sign-in', args) } catch (err: any) {
+        const why = plainReason(String(err?.message ?? err))
+        await log($, `sign-in failed: ${String(err?.message ?? err).slice(0, 300)}`)
+        lastSignInFailure = { at: new Date().toISOString(), reason: why }
+        await update($, bandNoteA, () => failNote(why))
+        return { status: 'error', message: failNote(why) }
+      } finally { ownSignInCall = false }
       const a = r.answer
       if (a?.code === 'sign_in_rate_limited') {
         const note = `Too many sign-in requests. Try again in ${Math.max(1, Math.ceil(Number(a.retryAfterSeconds ?? 60) / 60))} minutes.`
@@ -663,9 +688,12 @@ function signInNow($: any): Promise<any> {
       const k = r.isError ? undefined : sessionKeyOf(r.text)
       if (!k || a?.status !== 'pending') {
         await log($, `sign-in failed: ${String(a?.code ?? (r.isError ? 'error answer' : 'no session key in the answer')).slice(0, 80)}`)
-        await update($, bandNoteA, () => SIGNIN_FAILED)
-        return { status: 'error', message: SIGNIN_FAILED }
+        const why = plainCode(a?.code ? String(a.code) : undefined, r.isError)
+        lastSignInFailure = { at: new Date().toISOString(), reason: why }
+        await update($, bandNoteA, () => failNote(why))
+        return { status: 'error', message: failNote(why) }
       }
+      lastSignInFailure = undefined
       await keepKey($, k); legacy = false; keySlug = undefined
       const md = /\]\((\S+?)\)/.exec(String(a?.approvalLink ?? ''))
       const next: SignIn = { sid: await syncSession($), url: String(a?.approvalUrl ?? md?.[1] ?? ''), mask: emailMask(email), expiresAt: String(a?.expiresAt ?? ''), requestedAt: now }
@@ -698,7 +726,7 @@ function checkSignIn($: any): Promise<void> {
       await keepSignIn($, null)
       let slug = typeof dom.slug === 'string' ? dom.slug : ''
       if (!slug) slug = String(((await mcp($, 'list-domains', {}))?.domains ?? []).find((x: any) => String(x.id) === String(dom.id))?.slug ?? '')
-      if (!slug) { await log($, 'sign-in approved, but the working domain is not in list-domains'); await update($, bandNoteA, () => SIGNIN_FAILED); return }
+      if (!slug) { await log($, 'sign-in approved, but the working domain is not in list-domains'); lastSignInFailure = { at: new Date().toISOString(), reason: 'the domain you approved is not in your list of domains' }; await update($, bandNoteA, () => failNote('the domain you approved is not in your list of domains')); return }
       await log($, `sign-in approved: this session works in ${slug}`)
       await bindDomain($, slug)
     } catch (err: any) { await log($, `sign-in check failed: ${String(err?.message ?? err).slice(0, 200)}`) }
@@ -1519,7 +1547,8 @@ async function sessionLine($: any): Promise<string> {
 async function signInLine($: any): Promise<string> {
   const st = await pathState($)
   const si = await heldSignIn($)
-  return `sign-in path: ${st.path} (${st.reason})${si ? ` · pending: a code was sent to ${si.mask}, request expires ${si.expiresAt || '-'}` : ''}`
+  const failed = lastSignInFailure ? ` · last sign-in attempt failed at ${lastSignInFailure.at.slice(11, 19)} UTC: ${lastSignInFailure.reason}` : ''
+  return `sign-in path: ${st.path} (${st.reason})${si ? ` · pending: a code was sent to ${si.mask}, request expires ${si.expiresAt || '-'}` : ''}${failed}`
 }
 
 async function statusText($: any): Promise<string> {
@@ -1962,7 +1991,14 @@ export const register: Register = (on, opts) => {
     const path = await pathNow($)
     if (isDevice !== (path === 'device')) return { deny: `${VARIANT.name} works through ${ownPrefix(path)} in this session; use those tools.` }   // R2
     if (authVerb) return next(e)
-    if (isDevice && verb === 'sign-in') return { deny: MODEL_SIGN_IN }   // R5: the plugin signs in itself, never through the model
+    // R5: the plugin signs in itself, never through the model. 0.25.7: the host shows the plugin's OWN $.mcp.call to this hook too
+    // (measured 26.10.2026 on Claude Code 2.1.310: "$.mcp.call(...sign-in) refused: The kinitro-ai plugin signs in itself"), so
+    // 0.25.0 to 0.25.6 denied their own sign-in and no request ever reached the server. The plugin's call is told apart by the
+    // flag set around it and by the client name only the plugin builds; the answer (with its key) goes back to the plugin alone.
+    if (isDevice && verb === 'sign-in') {
+      if (ownSignInCall && String(e.clientName ?? '').startsWith(`Claude Code, ${VARIANT.name} ${VERSION}`)) return next(e)
+      return { deny: MODEL_SIGN_IN }
+    }
     let key = await heldKey($)
     if (!key && !legacy && !binding && !KEYLESS_VERBS.has(verb) && (await rebindOnce($))) key = await heldKey($)
     let r: any = await next(withSession(e, verb, key))
@@ -2149,7 +2185,7 @@ export const register: Register = (on, opts) => {
       if (si) { await withBudget($, checkSignIn($), READ_TIMEOUT_MS); si = await heldSignIn($) }
       else if (first && !(await heldKey($))) {
         const note = await read($, bandNoteA)
-        if (note !== SIGNIN_ENDED && note !== SIGNIN_FAILED && note !== DEVICE_UNAVAILABLE && !RATE_NOTE_RX.test(String(note ?? ''))) {
+        if (note !== SIGNIN_ENDED && !SIGNIN_FAILED_RX.test(String(note ?? '')) && note !== DEVICE_UNAVAILABLE && !RATE_NOTE_RX.test(String(note ?? ''))) {
           if (settingOf('email')) { await withBudget($, signInNow($), READ_TIMEOUT_MS); si = await heldSignIn($) }
           else signInBlocks.push(EMAIL_ASK)
         }
