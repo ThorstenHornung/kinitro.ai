@@ -2,6 +2,11 @@
 
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.25.8] - 2026-10-26
+
+### Fixed
+- 0.25.8: the sign-in approval link is shown as a titled link with the URL hidden. The server's `approvalLink` is already a Markdown link, so the direct flow of `/kinitro` showed it exactly as given instead of wrapping it in a second link; with only `approvalUrl` it shows `[Approve the sign-in on kinitro.ai](<approvalUrl>)`, never the bare URL.
+
 ## [0.25.7] - 2026-10-26
 
 ### Fixed
