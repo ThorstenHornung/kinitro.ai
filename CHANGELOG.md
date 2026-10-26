@@ -2,6 +2,11 @@
 
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.25.3] - 2026-10-26
+
+### Fixed
+- 0.25.3: no user-visible message sends a person to /mcp any more; the band, the status and the docs say "Type /kinitro domain to sign in" (the command starts the email-code sign-in). /mcp stays only as a Claude Code terminal fallback line.
+
 ## [0.25.2] - 2026-10-26
 
 ### Fixed

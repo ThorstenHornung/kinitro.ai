@@ -214,7 +214,7 @@ From 0.24.0 the plugin works **only with its own bundled server**, `mcp__plugin_
 
 Claude Code itself decides which servers are connected: a server of yours at the same address as the plugin's is used instead of the plugin's copy (precedence local, project, user, plugin, claude.ai connectors), so the plugin then finds no server of its own until you remove yours.
 
-When no kinitro.ai tool is visible, the `probe` status shows `kinitro.ai tools: none visible (Open /mcp, choose plugin:kinitro-ai:kinitro_ai and Authenticate)`, a failed binding returns the same instruction as `sayToUser`, and the `MISSING (...)` reason begins with it.
+When no kinitro.ai tool is visible, the `probe` status shows `kinitro.ai tools: none visible (Type /kinitro domain to sign in)`, a failed binding returns the same instruction as `sayToUser` (the command starts the email-code sign-in itself; `/mcp` is only a Claude Code terminal fallback), and the `MISSING (...)` reason begins with it.
 
 **Claude Code cloud sessions do not load plugins**, so the bundled server is not available there. A `kinitro_ai` server in the session configuration or the claude.ai connector works there as a plain connection: the agent calls `open-domain` once and passes the returned session key on every call, as the connector's own texts say.
 

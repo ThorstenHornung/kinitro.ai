@@ -8,7 +8,7 @@ import { makeWorld, probe } from './world'
 describe('build variant', () => {
   test('the source is the Production build with the names of 0.24.1 and, from 0.24.2, the PROD marker', () => {
     expect(VARIANT).toEqual({ name: 'kinitro-ai', env: 'PROD', showEnv: true, downloadBase: 'https://methos.kinitro.ai/download/plugins/claude/', files: '.kinitro-ai', command: 'kinitro' })
-    expect(AUTH_HINT).toBe('Open /mcp, choose plugin:kinitro-ai:kinitro_ai and Authenticate')
+    expect(AUTH_HINT).toBe('Type /kinitro domain to sign in')
   })
   test('activation (R1): both builds on by default; KINITRO_AI_ENV switches one off', () => {
     expect(activeIn('PROD', undefined)).toBe(true)

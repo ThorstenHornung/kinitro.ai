@@ -46,7 +46,7 @@ const FETCH_MS = 60000
 const MAX_TEXT = 50000     // chars per prompt / answer sent to the chat
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = `${F.replace(/^\./, '')}.log`
-const VERSION = '0.25.2'
+const VERSION = '0.25.3'
 // update notice (PO 2026-10-16): at the first prompt, compare with the published marketplace.json on the download page
 const UPDATE_BASE = VARIANT.downloadBase   // the download page; the environment variable KINITRO_AI_DOWNLOAD_BASE overrides it
 const UPDATE_TIMEOUT_MS = 2500
@@ -456,7 +456,7 @@ const PATH_MARKERS = ['SSH_CONNECTION', 'SSH_CLIENT', 'SSH_TTY'] as const
 const RESEND_MS = 60_000
 const SIGNIN_ENDED = 'The kinitro.ai sign-in ended.'
 const SIGNIN_FAILED = `kinitro.ai sign-in failed. Run /${VARIANT.command} status for details.`
-const DEVICE_UNAVAILABLE = 'kinitro.ai sign-in by email code is not available here; use /mcp, Authenticate.'
+const DEVICE_UNAVAILABLE = `kinitro.ai sign-in by email code is not available here; type /${VARIANT.command} domain to sign in.`
 const RATE_NOTE_RX = /^Too many sign-in requests\./
 export const DEVICE_HINT = `Run /${VARIANT.command} sign-in`
 const EMAIL_ASK = `kinitro.ai sign-in: ask the user, in one short question in chat, for the email address of their kinitro.ai account, then call \`${PROBE_TOOL}\` with {"action": "sign-in", "email": "<address>"}. Never ask for a password or a code.`
@@ -768,7 +768,7 @@ const USER_PREFIX = `mcp__${SERVER}__`
 const CONNECTOR_PREFIX = 'mcp__claude_ai_Kinitro__'
 const SEAT_VERB = 'current-seat'
 const SOURCE_LABEL: Record<KinitroSource, string> = { bundled: 'bundled plugin server', user: 'user server', connector: 'claude.ai connector', other: 'other server' }
-export const AUTH_HINT = `Open /mcp, choose plugin:${VARIANT.name}:kinitro_ai and Authenticate`
+export const AUTH_HINT = `Type /${VARIANT.command} domain to sign in`
 const noTools = (path: SignInPath) => `no kinitro.ai tools are visible in this session. ${hintFor(path)}.`
 
 // pure: picks the kinitro.ai tool prefix from a list of tool names (the session's tool list). A server counts when it
@@ -1989,7 +1989,7 @@ export const register: Register = (on, opts) => {
         options = { ...options, email: given }
         await log($, `email setting stored: ${emailMask(given)}`)
       }
-      if ((await pathNow($)) !== 'device') return { result: JSON.stringify({ status: 'error', message: `This session signs in through /mcp. ${AUTH_HINT}.` }) }
+      if ((await pathNow($)) !== 'device') return { result: JSON.stringify({ status: 'error', message: `${AUTH_HINT}.` }) }
       return { result: JSON.stringify(await signInNow($)) }
     }
     if (action === 'sign-in-path') {

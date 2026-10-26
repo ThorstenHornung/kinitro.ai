@@ -423,7 +423,7 @@ describe('device sign-in (criteria 1-9)', () => {
     expect(signIns(srv)).toHaveLength(0)
     expect(await probe($, 'status')).toContain('sign-in path: oauth')
     const ui = await $.ui.mount({ ...BAND, surface: 'terminal' } as any)
-    expect(JSON.stringify(await ui.drawn())).toContain('kinitro.ai sign-in by email code is not available here; use /mcp, Authenticate.')
+    expect(JSON.stringify(await ui.drawn())).toContain('kinitro.ai sign-in by email code is not available here; type /kinitro domain to sign in.')
     await ui.unmount()
   })
 
