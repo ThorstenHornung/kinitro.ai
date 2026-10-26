@@ -1,6 +1,6 @@
 import { describe, expect, mock } from 'claude-code/testing'
 import { test } from './kit'
-import { bandModel, chooseSignInPath, deviceLabel, emailMask, isSixDigits, resolveKinitroTools, secondConnections, signInContextBlock, signInResult } from '../hooks/register'
+import { bandModel, chooseSignInPath, staleOauthPath, deviceLabel, emailMask, isSixDigits, resolveKinitroTools, secondConnections, signInContextBlock, signInResult } from '../hooks/register'
 import { makeWorld, probe } from './world'
 
 // Item 4.2.1-3910 (F4): when the browser is not on the same machine (SSH, a cloud session, or the setting), the plugin signs
@@ -74,7 +74,7 @@ const WITH_EMAIL_OAUTH = { options: { email: EMAIL, signInPath: 'oauth' }, timeo
 const NO_EMAIL = { options: { signInPath: 'auto' }, timeoutMs: 20000 } as const
 
 describe('pure parts', () => {
-  test('D1: chooseSignInPath: the setting wins; auto takes SSH markers and CLAUDE_CODE_REMOTE=true, else device (0.25.5)', () => {
+  test('D1: chooseSignInPath: the setting wins; auto takes SSH markers and CLAUDE_CODE_REMOTE=true, else device (0.25.6)', () => {
     expect(chooseSignInPath('auto', { SSH_CONNECTION: '1.2.3.4 1 5.6.7.8 22' })).toEqual({ path: 'device', reason: 'SSH_CONNECTION' })
     expect(chooseSignInPath('auto', { SSH_CLIENT: '1.2.3.4 1 22' })).toEqual({ path: 'device', reason: 'SSH_CLIENT' })
     expect(chooseSignInPath('auto', { SSH_TTY: '/dev/pts/1' })).toEqual({ path: 'device', reason: 'SSH_TTY' })
@@ -146,7 +146,7 @@ describe('device sign-in (criteria 1-9)', () => {
     expect(log).toMatch(/sign-in path device \(SSH_CONNECTION\)/)
     expect(log).not.toContain('10.9.8.7')
   })
-  test('D1 control (0.25.5): a local session without markers takes the device path, never OAuth', WITH_EMAIL, async ($, on) => {
+  test('D1 control (0.25.6): a local session without markers takes the device path, never OAuth', WITH_EMAIL, async ($, on) => {
     mk(on, newSrv(), {}, [])
     await start($)
     expect(await probe($, 'status')).toContain('sign-in path: device (default: the email-code sign-in; no localhost callback)')
@@ -176,7 +176,7 @@ describe('device sign-in (criteria 1-9)', () => {
     const s = signIns(srv)
     expect(s).toHaveLength(1)
     expect(s[0]!.server).toBe('plugin:kinitro-ai:kinitro_ai_device')
-    expect(s[0]!.args).toEqual({ email: EMAIL, deviceLabel: 'WS-1', clientName: 'Claude Code, kinitro-ai 0.25.5' })
+    expect(s[0]!.args).toEqual({ email: EMAIL, deviceLabel: 'WS-1', clientName: 'Claude Code, kinitro-ai 0.25.6' })
     expect(w.sent.filter((x) => x.verb === 'open-domain')).toHaveLength(0)
     // the model's call carries the held key (the plugin adds it), and the answer is the plugin's pending result
     const r: any = await ($ as any).tool.call({ tool: `${DEV}current-seat` })
@@ -417,13 +417,13 @@ describe('device sign-in (criteria 1-9)', () => {
     expect(w.ctx.join(SEP)).not.toContain('kinitro')
   })
 
-  test('D12: the device path without a connected device server falls back to OAuth with the note', WITH_EMAIL, async ($, on) => {
+  test('D12 (0.25.6): the device path without a connected device server stays on the device path with the note; no OAuth fallback', WITH_EMAIL, async ($, on) => {
     const srv = newSrv({ connected: false })
     mk(on, srv)
     await start($)
     await submit($, 'hello')
     expect(signIns(srv)).toHaveLength(0)
-    expect(await probe($, 'status')).toContain('sign-in path: oauth')
+    expect(await probe($, 'status')).toContain('sign-in path: device')
     const ui = await $.ui.mount({ ...BAND, surface: 'terminal' } as any)
     expect(JSON.stringify(await ui.drawn())).toContain('kinitro.ai sign-in by email code is not available here; type /kinitro domain to sign in.')
     await ui.unmount()
@@ -437,5 +437,45 @@ describe('device sign-in (criteria 1-9)', () => {
     const bad = JSON.parse(await probe($, 'sign-in-path', { value: 'other' }))
     expect(bad.status).toBe('error')
     expect(w.cfg).toEqual({ 'kinitro-ai.signInPath': 'device' })
+  })
+})
+
+// 0.25.6: a session started on 0.25.0 to 0.25.4 holds path oauth in the host state (key signInPath); --resume and /reload-plugins keep it.
+describe('stale OAuth binding (0.25.6)', () => {
+  test('the migration rule: a stored oauth path is stale unless the setting says oauth (state key signInPath, kept by --resume and /reload-plugins)', () => {
+    expect(staleOauthPath('oauth', 'auto')).toBe(true)
+    expect(staleOauthPath('oauth', '')).toBe(true)
+    expect(staleOauthPath('oauth', 'device')).toBe(true)
+    expect(staleOauthPath('oauth', ' OAuth ')).toBe(false)
+    expect(staleOauthPath('device', 'auto')).toBe(false)
+  })
+  test('a session that held path oauth while the setting is auto signs in by email code after the setting is read again', WITH_EMAIL, async ($, on) => {
+    const srv = newSrv()
+    mk(on, srv, {}, [...DEVICE_TOOLS])
+    await start($)
+    const r = await probe($, 'sign-in')
+    expect(signIns(srv)).toHaveLength(1)
+    expect(r).toContain('sign_in_pending')
+    expect(await probe($, 'status')).toContain('sign-in path: device')
+  })
+  test('the setting oauth is kept (opt-in), and its refusal says what failed, never the command text', { options: { email: EMAIL, signInPath: 'oauth' }, timeoutMs: 20000 }, async ($, on) => {
+    const srv = newSrv()
+    mk(on, srv, {}, [])
+    await start($)
+    const r = await probe($, 'sign-in')
+    expect(signIns(srv)).toHaveLength(0)
+    expect(r).toContain('the setting sign-in path is oauth')
+    expect(r).not.toContain('Type /kinitro')
+    expect(r).not.toContain('/kinitro domain')
+  })
+  test('no probe answer inside /kinitro tells the person to type /kinitro: status and set-domain with no tools', WITH_EMAIL, async ($, on) => {
+    const srv = newSrv()
+    mk(on, srv, {}, [])
+    await start($)
+    for (const a of ['status', 'set-domain']) {
+      const r = a === 'set-domain' ? await probe($, a, { domain: 'beta' }) : await probe($, a)
+      expect(r).not.toContain('Type /kinitro')
+      expect(r).not.toContain('/kinitro domain')
+    }
   })
 })

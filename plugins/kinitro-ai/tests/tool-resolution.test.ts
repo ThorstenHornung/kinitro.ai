@@ -1,6 +1,6 @@
 import { describe, expect, mock } from 'claude-code/testing'
 import { test } from './kit'
-import { AUTH_HINT, resolveKinitroTools } from '../hooks/register'
+import { SIGNIN_NEEDED, resolveKinitroTools } from '../hooks/register'
 import { makeWorld, probe } from './world'
 
 const B = 'mcp__plugin_kinitro-ai_kinitro_ai__'
@@ -34,15 +34,15 @@ test('the session follows the tool list: nothing visible, a second connection on
 
   // nothing visible: the status and the failed binding say exactly what to do
   const none = await probe($, 'reload')
-  expect(none).toContain(`kinitro.ai tools: none visible (${AUTH_HINT})`)
-  expect(none).toContain(`MISSING (no kinitro.ai tools are visible in this session. ${AUTH_HINT}.`)
+  expect(none).toContain(`kinitro.ai tools: none visible (${SIGNIN_NEEDED})`)
+  expect(none).toContain(`MISSING (no kinitro.ai tools are visible in this session: ${SIGNIN_NEEDED}.`)
   const set: any = await ($ as any).tool.call({ tool: 'mcp__kinitro-ai__probe', action: 'set-domain', domain: 'beta' })
-  expect(String(set.text ?? set.result)).toContain(`"sayToUser":"No kinitro.ai tools are visible. ${AUTH_HINT}."`)
+  expect(String(set.text ?? set.result)).toContain(`"sayToUser":"You are not signed in to kinitro.ai yet; I start the email-code sign-in now."`)
 
   // 0.24.0 (criterion 8, choice 1b): only the claude.ai connector: never used by the plugin, named as a second connection
   w.tools = [seat(C)]; w.prefixes.length = 0
   const conn = await probe($, 'reload')
-  expect(conn).toContain(`kinitro.ai tools: none visible (${AUTH_HINT}) · not used: claude_ai_Kinitro (a second kinitro.ai connection)`)
+  expect(conn).toContain(`kinitro.ai tools: none visible (${SIGNIN_NEEDED}) · not used: claude_ai_Kinitro (a second kinitro.ai connection)`)
   expect(conn).not.toContain('domain: beta')
   expect(w.prefixes).toEqual([])
 

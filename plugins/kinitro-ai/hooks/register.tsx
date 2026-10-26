@@ -46,7 +46,7 @@ const FETCH_MS = 60000
 const MAX_TEXT = 50000     // chars per prompt / answer sent to the chat
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = `${F.replace(/^\./, '')}.log`
-const VERSION = '0.25.5'
+const VERSION = '0.25.6'
 // update notice (PO 2026-10-16): at the first prompt, compare with the published marketplace.json on the download page
 const UPDATE_BASE = VARIANT.downloadBase   // the download page; the environment variable KINITRO_AI_DOWNLOAD_BASE overrides it
 const UPDATE_TIMEOUT_MS = 2500
@@ -552,13 +552,28 @@ async function setPath($: any, path: SignInPath, reason: string, changed = true)
   await log($, `sign-in path ${path} (${reason})`)
 }
 
+/** 0.25.6: a stored oauth path is stale unless the person chose oauth by setting (the plugin brings no OAuth server any more). */
+export function staleOauthPath(stored: string, setting: string): boolean { return stored === 'oauth' && String(setting).trim().toLowerCase() !== 'oauth' }
+
 // R1: this Claude session's path; decided once (host-held, a reload keeps it)
 async function pathState($: any): Promise<SignInPathState> {
   const sid = await syncSession($)
   if (pathMirror?.sid === sid) return pathMirror
   let v: SignInPathState | null = null
   try { v = await read($, signInPathA) } catch { /* ignore */ }
-  if (v && v.sid === sid) { pathMirror = v; return v }
+  if (v && v.sid === sid) {
+    // 0.25.6: a session started on 0.25.0 to 0.25.4 holds path oauth (state key signInPath, host-held, kept by --resume and /reload-plugins).
+    // 0.25.5 removed the OAuth server, so that binding points at nothing: unless the person chose oauth by setting, the session moves
+    // to the device path, and the key of the old server is dropped so the email-code sign-in can start.
+    if (staleOauthPath(v.path, settingOf('signInPath'))) {
+      await setPath($, 'device', 'migrated: the OAuth server is gone', true)
+      try { await keepKey($, null) } catch { /* ignore */ }
+      keySlug = undefined; briefing = undefined; domainRef = undefined; legacy = false
+      try { await keepSignIn($, null); await update($, bandNoteA, () => null) } catch { /* ignore */ }
+      return pathMirror!
+    }
+    pathMirror = v; return v
+  }
   const c = chooseSignInPath(settingOf('signInPath'), await pathEnv($))
   await setPath($, c.path, c.reason, false)
   return pathMirror!
@@ -601,7 +616,7 @@ async function deviceServer($: any): Promise<string | undefined> {
   let c: any
   try { c = await $.mcp.connect(DEVICE_SERVER) } catch (err: any) { c = { isConnected: false, reason: String(err?.message ?? err).slice(0, 80) } }
   if (c?.isConnected) { deviceServerName = String(c.server || `plugin_${VARIANT.name}_${DEVICE_SERVER}`); return deviceServerName }
-  await setPath($, 'oauth', `device server not connected: ${c?.reason ?? 'unknown'}`)
+  await log($, `device server not connected: ${c?.reason ?? 'unknown'}`)   // 0.25.6: stays on the device path (no OAuth server exists); the next call connects again
   try { await update($, bandNoteA, () => DEVICE_UNAVAILABLE) } catch { /* ignore */ }
   return undefined
 }
@@ -769,7 +784,9 @@ const CONNECTOR_PREFIX = 'mcp__claude_ai_Kinitro__'
 const SEAT_VERB = 'current-seat'
 const SOURCE_LABEL: Record<KinitroSource, string> = { bundled: 'bundled plugin server', user: 'user server', connector: 'claude.ai connector', other: 'other server' }
 export const AUTH_HINT = `Type /${VARIANT.command} domain to sign in`
-const noTools = (path: SignInPath) => `no kinitro.ai tools are visible in this session. ${hintFor(path)}.`
+// 0.25.6: what the probe says when no kinitro.ai tool is usable. It says what is missing and the probe's own step, never "type /kinitro" (the answer is read inside that command: a loop)
+export const SIGNIN_NEEDED = `not signed in to kinitro.ai yet; the email-code sign-in starts with ${PROBE_TOOL} action sign-in`
+const noTools = (_path: SignInPath) => `no kinitro.ai tools are visible in this session: ${SIGNIN_NEEDED}.`
 
 // pure: picks the kinitro.ai tool prefix from a list of tool names (the session's tool list). A server counts when it
 // has a current-seat tool; the bundled server wins over a user server, that over the claude.ai connector, that over the rest.
@@ -982,7 +999,7 @@ function confirmation(slug: string, bound: { text: string; approval?: Approval }
   const ok = domainRef === slug && !!briefing
   return ok
     ? { bound: true, domain: briefing?.domainName ?? slug, agent: briefing?.agentName ?? null, domainView: message.split('domain view: ')[1] ?? null, sayToUser: `This session now works for ${briefing?.domainName ?? slug}${briefing?.agentName && briefing.agentName !== briefing.domainName ? ` with the agent ${briefing.agentName}` : ''}.` }
-    : { bound: false, reason: message, ...(toolSource ? {} : { sayToUser: `No kinitro.ai tools are visible. ${hintFor(pathMirror?.path)}.` }) }
+    : { bound: false, reason: message, ...(toolSource ? {} : { sayToUser: `You are not signed in to kinitro.ai yet; I start the email-code sign-in now.` }) }
 }
 
 // a choice: the session record, the host, and the folder default of the session's home folder (for the next new session)
@@ -1487,7 +1504,7 @@ async function contextPercent($: any): Promise<number | undefined> {
 async function toolsLine($: any): Promise<string> {
   const { prefix, source } = await kinitroTools($)
   const other = seconds.length ? ` · not used: ${seconds.map((p) => p.slice(5, -2)).join(', ')} (a second kinitro.ai connection)` : ''
-  return (source ? `kinitro.ai tools: ${prefix}* (source: ${SOURCE_LABEL[source]})` : `kinitro.ai tools: none visible (${hintFor(await pathNow($))})`) + other
+  return (source ? `kinitro.ai tools: ${prefix}* (source: ${SOURCE_LABEL[source]})` : `kinitro.ai tools: none visible (${SIGNIN_NEEDED})`) + other
 }
 
 async function sessionLine($: any): Promise<string> {
@@ -1991,7 +2008,7 @@ export const register: Register = (on, opts) => {
         options = { ...options, email: given }
         await log($, `email setting stored: ${emailMask(given)}`)
       }
-      if ((await pathNow($)) !== 'device') return { result: JSON.stringify({ status: 'error', message: `${AUTH_HINT}.` }) }
+      if ((await pathNow($)) !== 'device') return { result: JSON.stringify({ status: 'error', message: 'Sign-in by email code is off because the setting sign-in path is oauth, and the plugin no longer brings an OAuth server. Set the sign-in path to auto (probe action sign-in-path), then run /reload-plugins.' }) }
       return { result: JSON.stringify(await signInNow($)) }
     }
     if (action === 'sign-in-path') {

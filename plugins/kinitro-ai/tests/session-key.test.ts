@@ -117,7 +117,7 @@ describe('session key', () => {
     expect(srv.minted).toHaveLength(1)
     expect(noKeyInFiles(w)).toEqual([])
     expect(await probe($, 'status')).not.toContain('kss_')
-    expect(r).toContain('kinitro-ai PROD 0.25.5')
+    expect(r).toContain('kinitro-ai PROD 0.25.6')
     expect(r).not.toContain('kss_')
     expect(r).not.toContain("pass domainRef:'beta'")
   })

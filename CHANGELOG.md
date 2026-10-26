@@ -2,6 +2,11 @@
 
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.25.6] - 2026-10-26
+
+### Fixed
+- 0.25.6: a session that started on 0.25.0 to 0.25.4 (resumed with --resume, or after /reload-plugins) kept the stored sign-in path `oauth` (host state key `signInPath`) and the key of the removed OAuth server, so the device sign-in was refused. Unless the setting says oauth, the stored path now moves to the device path at once, the old key is dropped and the email-code sign-in starts. A failed device connection no longer switches to OAuth. No probe answer inside /kinitro says "Type /kinitro domain" any more; it says what is missing and the probe step (`action sign-in`).
+
 ## [0.25.5] - 2026-10-26
 
 ### Fixed
