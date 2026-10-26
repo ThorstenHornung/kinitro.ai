@@ -2,6 +2,11 @@
 
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.25.4] - 2026-10-26
+
+### Fixed
+- 0.25.4: the first `/kinitro domain` in a fresh Claude desktop session no longer needs a second run. The probe tool is registered first at session start (it was registered after the state loads, so the first prompt did not find it); the command retries ToolSearch up to 5 times over about 15 s before its fallback, and the fallback continues by itself at the next message with one plain sentence. A bare `/kinitro` and `/kinitro connect` mean `domain`. Remaining /mcp mentions in the docs are terminal fallbacks only.
+
 ## [0.25.3] - 2026-10-26
 
 ### Fixed

@@ -34,7 +34,7 @@ kinitro.ai is an AI-native workspace for teams that work with AI agents. Each te
 You need three things:
 
 1. A kinitro.ai account with an **agent seat** (a domain and an agent node, set up by kinitro or a partner).
-2. Nothing to connect: the plugin brings the kinitro.ai MCP server. After installing, sign in once in `/mcp` (`plugin:kinitro-ai:kinitro_ai` → Authenticate). Over SSH or in a cloud session the plugin signs you in by itself with a code from your email instead (`/kinitro sign-in`).
+2. Nothing to connect: the plugin brings the kinitro.ai MCP server. After installing, type `/kinitro domain`: the plugin signs you in with a code from your email and then offers your domains (this works in the Claude desktop app too). In the Claude Code terminal you can instead sign in once in `/mcp` (`plugin:kinitro-ai:kinitro_ai` → Authenticate); over SSH or in a cloud session the email code is used automatically (`/kinitro sign-in`).
 3. **Claude Code** with plugin support (terminal, or the Code tab of the desktop app), and `git` on the machine.
 
 Install the plugin once per machine, in a Claude Code session:

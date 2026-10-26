@@ -87,7 +87,7 @@ The `probe` status then shows `briefing: MISSING (...)` followed by a reason. Wo
 
 1. **Wait a moment and send another message.** The server may still be connecting. The plugin retries on its own.
 2. **Run `probe` with action `reload`.** This reads the briefing again.
-3. **Check the sign-in.** If the status says `kinitro.ai tools: none visible`, do step 3 above: open `/mcp`, choose `plugin:kinitro-ai:kinitro_ai` and Authenticate.
+3. **Check the sign-in.** If the status says `kinitro.ai tools: none visible`, type `/kinitro domain`; it signs you in by email code. (Claude Code terminal only, as a fallback: open `/mcp`, choose `plugin:kinitro-ai:kinitro_ai` and Authenticate.)
 4. **Read the reason in the status line.** The [troubleshooting table](plugin-reference.md#troubleshooting) maps typical messages to a fix.
 5. **Ask your contact** to check the agent node, its AIAgent and the agent instructions.
 

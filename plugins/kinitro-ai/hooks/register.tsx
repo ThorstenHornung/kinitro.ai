@@ -46,7 +46,7 @@ const FETCH_MS = 60000
 const MAX_TEXT = 50000     // chars per prompt / answer sent to the chat
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = `${F.replace(/^\./, '')}.log`
-const VERSION = '0.25.3'
+const VERSION = '0.25.4'
 // update notice (PO 2026-10-16): at the first prompt, compare with the published marketplace.json on the download page
 const UPDATE_BASE = VARIANT.downloadBase   // the download page; the environment variable KINITRO_AI_DOWNLOAD_BASE overrides it
 const UPDATE_TIMEOUT_MS = 2500
@@ -1898,6 +1898,16 @@ export const register: Register = (on, opts) => {
       await headlessLog($, `session.start ${VERSION} (interactive=false): the plugin stays inert in this session`)
       return next(e)
     }
+    // 0.25.4: the probe is registered FIRST, before any file read, state load or timer, so that it is already in the session's tool
+    // list when the first prompt ("/kinitro domain") asks ToolSearch for it; it used to be registered after those awaits.
+    // /kinitro is a static command file (commands/kinitro.md): the Claude app lists only those
+    try {
+      await $.tool.register({
+        name: 'probe',
+        description: `${VARIANT.name} harness control. action "status" (default): diagnostics; "comments": check the open UI comments of the bound domain now and return them with the check time; "test-mode" with value on|off: refresh the instructions every 2 minutes instead of daily; "mirror" with value on|off: switch the chat mirror into the kinitro.ai chat of the agent on or off (default on; off sends and fetches nothing, on resumes from the next turn without backfill); "selection-start": remember the approved domains and return the selection page address (call before the user chooses on that page); "selection-done": compare with that list and bind the newly approved domain, or return the list to ask from; "set-domain" with domain "<slug>": bind this session to a kinitro.ai domain (slug from list-domains) and reload; "reload": re-read the briefing from kinitro.ai; "arm-test": inject EVERY briefing section, conditional ones included, into the next user prompt, marked [TEST]; "invalidate-context": re-render the first-message context block (persona) on the next request; "sign-in" with optional email "<address>": sign this session in by an email code (kinitro.ai mails the code; the user types it only on the kinitro.ai page, never here), or send a new code; "sign-in-check": look whether the user approved the sign-in; "sign-in-path" with value auto|oauth|device: store the sign-in path setting (applies from the next Claude session).`,
+        inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['status', 'comments', 'test-mode', 'mirror', 'choices', 'open-domain', 'selection-start', 'selection-done', 'set-domain', 'reload', 'arm-test', 'invalidate-context', 'sign-in', 'sign-in-path', 'sign-in-check'] }, domain: { type: 'string', description: 'domain slug for set-domain, e.g. verum' }, value: { type: 'string', enum: ['on', 'off', 'auto', 'oauth', 'device'], description: 'on|off for test-mode and mirror; auto|oauth|device for sign-in-path' }, email: { type: 'string', description: "for sign-in: the email address of the user's kinitro.ai account" } } },
+      })
+    } catch (err: any) { await log($, `tool.register failed: ${err?.message ?? err}`) }
     await log($, `session.start ${VERSION} (interactive=${e.isInteractive}, surface=${e.surface})`)
     await pathState($)   // 0.25.0 (R1): the sign-in path of this Claude session, decided once and logged
     await readState($)
@@ -1915,14 +1925,6 @@ export const register: Register = (on, opts) => {
         if (done || tries > 40 || needsDomain || pendingApproval) { refreshDone = true; timer.cancel(); log($, `refresh ${done ? 'done' : 'gave up'} after ${tries} tries`) }
       })
     })
-    // /kinitro is a static command file (commands/kinitro.md): the Claude app lists only those
-    try {
-      await $.tool.register({
-        name: 'probe',
-        description: `${VARIANT.name} harness control. action "status" (default): diagnostics; "comments": check the open UI comments of the bound domain now and return them with the check time; "test-mode" with value on|off: refresh the instructions every 2 minutes instead of daily; "mirror" with value on|off: switch the chat mirror into the kinitro.ai chat of the agent on or off (default on; off sends and fetches nothing, on resumes from the next turn without backfill); "selection-start": remember the approved domains and return the selection page address (call before the user chooses on that page); "selection-done": compare with that list and bind the newly approved domain, or return the list to ask from; "set-domain" with domain "<slug>": bind this session to a kinitro.ai domain (slug from list-domains) and reload; "reload": re-read the briefing from kinitro.ai; "arm-test": inject EVERY briefing section, conditional ones included, into the next user prompt, marked [TEST]; "invalidate-context": re-render the first-message context block (persona) on the next request; "sign-in" with optional email "<address>": sign this session in by an email code (kinitro.ai mails the code; the user types it only on the kinitro.ai page, never here), or send a new code; "sign-in-check": look whether the user approved the sign-in; "sign-in-path" with value auto|oauth|device: store the sign-in path setting (applies from the next Claude session).`,
-        inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['status', 'comments', 'test-mode', 'mirror', 'choices', 'open-domain', 'selection-start', 'selection-done', 'set-domain', 'reload', 'arm-test', 'invalidate-context', 'sign-in', 'sign-in-path', 'sign-in-check'] }, domain: { type: 'string', description: 'domain slug for set-domain, e.g. verum' }, value: { type: 'string', enum: ['on', 'off', 'auto', 'oauth', 'device'], description: 'on|off for test-mode and mirror; auto|oauth|device for sign-in-path' }, email: { type: 'string', description: "for sign-in: the email address of the user's kinitro.ai account" } } },
-      })
-    } catch (err: any) { await log($, `tool.register failed: ${err?.message ?? err}`) }
     return next(e)
   })
 

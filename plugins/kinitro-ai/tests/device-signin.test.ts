@@ -174,7 +174,7 @@ describe('device sign-in (criteria 1-9)', () => {
     const s = signIns(srv)
     expect(s).toHaveLength(1)
     expect(s[0]!.server).toBe('plugin:kinitro-ai:kinitro_ai_device')
-    expect(s[0]!.args).toEqual({ email: EMAIL, deviceLabel: 'WS-1', clientName: 'Claude Code, kinitro-ai 0.25.0' })
+    expect(s[0]!.args).toEqual({ email: EMAIL, deviceLabel: 'WS-1', clientName: 'Claude Code, kinitro-ai 0.25.4' })
     expect(w.sent.filter((x) => x.verb === 'open-domain')).toHaveLength(0)
     // the model's call carries the held key (the plugin adds it), and the answer is the plugin's pending result
     const r: any = await ($ as any).tool.call({ tool: `${DEV}current-seat` })
