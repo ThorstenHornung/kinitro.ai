@@ -92,23 +92,15 @@ describe('prompt.submit raised through the engine (rule P3, P4, P5)', () => {
     expect(c.length).toBe(1)
     expect(c[0]!.args).toMatchObject({ prompt: 'typed words', answer: 'ans1', turnId: 'e1' })
   })
-  test('a turn that holds only a notice: nothing is mirrored (item 4075; before 0.25.9 the answer was stored with an empty prompt)', async ($, on) => {
+  test('a turn that holds only a notice: the answer is stored with an empty prompt, the notice text is not sent', async ($, on) => {
     const w = mk(on)
     await probe($, 'reload')
     await submit($, 'wake up', { kind: 'scheduled-trigger' })
     await $.turn.complete({ ...done, turnId: 'e2', answer: 'ans2' } as any)
-    expect(appends(w)).toEqual([])
-    expect(JSON.stringify(w.sent)).not.toContain('wake up')
-  })
-  test('a turn with a prompt of an unclassified kind keeps its answer with an empty prompt (item 3439)', async ($, on) => {
-    const w = mk(on)
-    await probe($, 'reload')
-    await submit($, 'channel text', { kind: 'channel' })
-    await $.turn.complete({ ...done, turnId: 'e2b', answer: 'ans2b' } as any)
     const c = appends(w)
     expect(c.length).toBe(1)
-    expect(c[0]!.args).toMatchObject({ prompt: '', answer: 'ans2b' })
-    expect(JSON.stringify(c[0]!.args)).not.toContain('channel text')
+    expect(c[0]!.args).toMatchObject({ prompt: '', answer: 'ans2' })
+    expect(JSON.stringify(c[0]!.args)).not.toContain('wake up')
   })
   test('a prompt from another agent is sent with promptFrom agent', async ($, on) => {
     const w = mk(on)

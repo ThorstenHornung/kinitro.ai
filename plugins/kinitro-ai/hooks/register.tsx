@@ -1423,7 +1423,7 @@ export function classifyOrigin(kind: string | undefined): 'person' | 'agent' | '
 
 // Item 4075: prompts that nobody typed. Origin kinds of a schedule (cron, /loop, ScheduleWakeup), an auto-continuation, a task
 // notification and observer activity; and texts that carry nothing of a person (only system reminders, or an autonomous-loop sentinel
-// such as <<autonomous-loop>>). A turn that holds only such prompts is not mirrored at all, so recurring sweeps never flood the chat.
+// such as <<autonomous-loop>>). The text of such a prompt is never mirrored; the answer of the turn still is (the person reads the seat's answers to notices).
 const AUTO_KINDS = ['scheduled-trigger', 'auto-continuation', 'task-notification', 'observer-activity']
 export function isAutoKind(kind: string | undefined): boolean { return kind !== undefined && AUTO_KINDS.includes(kind) }
 export function isSentinelText(text: string): boolean { return /^<<[A-Za-z0-9_:. -]{1,60}>>$/.test(text.trim()) }
@@ -1629,7 +1629,7 @@ async function statusText($: any): Promise<string> {
     `test armed: ${testArmed} · compactions seen: ${compactions} · post-compact pending: ${compactedPending}`,
     `ui comments: ${openComments.length}${commentsTruncated ? '+' : ''} open (last check ${lastCommentCheck}, last told ${commentInjectedAt ? new Date(commentInjectedAt).toISOString() : '-'}${lastCommentError ? ', last error: ' + lastCommentError : ''})`,
     `Chat mirroring: ${(await mirrorEnabled($)) ? 'on' : 'off'}`,
-    `chat mirror: ${mirrorSent} turns sent, ${mirrorDup} already present, agent ${lastMirrorTarget}${lastMirrorError ? ' · last error: ' + lastMirrorError : ''} · inbox ${inboxNew} new since start, last fetch ${lastFetch} · not mirrored: ${autoSkipped} automatic turns, ${inboxSkipped} prompts from the chat`,
+    `chat mirror: ${mirrorSent} turns sent, ${mirrorDup} already present, agent ${lastMirrorTarget}${lastMirrorError ? ' · last error: ' + lastMirrorError : ''} · inbox ${inboxNew} new since start, last fetch ${lastFetch} · not mirrored: ${autoSkipped} automatic prompts (answer sent alone), ${inboxSkipped} prompts from the chat`,
   ].join('\n')
 }
 
@@ -2288,7 +2288,7 @@ export const register: Register = (on, opts) => {
     }
     // item 3536: only what the person typed and what another agent sent is kept; notices and sub agent prompts are not (P2-P4)
     // item 4075: only what a person typed (or another agent sent) is kept, once; a prompt that came from the kinitro.ai chat is
-    // already there; a schedule, a task notification or a system reminder marks the turn automatic. Nothing at all while mirroring is off.
+    // already there; a schedule, a task notification or a system reminder marks the turn automatic (its answer is still mirrored, without the prompt text). Nothing at all while mirroring is off.
     const kind: string | undefined = (e as any).origin?.kind
     const cls = (e as any).agentId ? 'drop' : classifyOrigin(kind)
     if (!(e as any).agentId && await mirrorEnabled($)) {
@@ -2454,7 +2454,7 @@ export const register: Register = (on, opts) => {
     pending = []; autoTurn = false
     await savePending($)
     const r = await next(e)
-    if (automatic) { autoSkipped++; await log($, `turn.complete reason=${e.reason} automatic turn (schedule, notice or system reminder only): not mirrored`); return r }
+    if (automatic) { autoSkipped++; await log($, `turn.complete reason=${e.reason} automatic turn (schedule, notice or system reminder only): the answer is mirrored, the prompt text is not`) }
     await queueTurn($, planTurn(taken, e.turnId, e.answer ?? ''))
     await log($, `turn.complete reason=${e.reason} mirrorSent=${mirrorSent} dup=${mirrorDup}${lastMirrorError ? ' error=' + lastMirrorError : ''}`)
     return r

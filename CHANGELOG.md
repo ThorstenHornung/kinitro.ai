@@ -7,8 +7,8 @@ All notable changes to the `kinitro-ai` plugin are listed here. The format follo
 ### Fixed
 - 0.25.9 (item 4.2.1-4075): the prompts a person types in Claude reach the agent's kinitro.ai chat once, together with the answer of their turn. The prompt is now written to `.kinitro-ai-prompts.json` when it is typed (not only held in memory), so a plugin restart or a turn that closes while the next prompt arrives no longer loses it or pairs it with the wrong answer.
 - 0.25.9: a prompt that is the text of a message written in the kinitro.ai chat itself (the plugin's inbox) is not mirrored a second time. Words typed in the terminal are always the person's own.
-- 0.25.9: a turn that holds only an automatic prompt (a schedule, `/loop`, a wake-up, an auto-continuation, a task notification, observer activity, a system reminder, an autonomous-loop sentinel) is not mirrored at all, neither the prompt nor the answer, so recurring sweeps do not fill the chat with answers that carry the "(No prompt was mirrored for this turn.)" row. A turn for which the engine raises no prompt still sends its answer alone, as before.
-- 0.25.9: `/kinitro status` counts the automatic turns and chat prompts that were not mirrored. With mirroring off, typed words are not written to any file.
+- 0.25.9: the text of an automatic prompt (a schedule, `/loop`, a wake-up, an auto-continuation, a task notification, observer activity, a system reminder, an autonomous-loop sentinel) is never mirrored as the person's prompt. The answer of such a turn is still mirrored, as before.
+- 0.25.9: `/kinitro status` counts the automatic prompts and chat prompts that were not mirrored. With mirroring off, typed words are not written to any file.
 
 ## [0.25.8] - 2026-10-26
 

@@ -114,29 +114,31 @@ describe('criterion 2: a prompt that came from the kinitro.ai chat is not mirror
   })
 })
 
-describe('criterion 3: schedules, loops, wake-ups, notices and system reminders are not mirrored', () => {
+describe('criterion 3: the text of schedules, loops, wake-ups, notices and system reminders is not mirrored (their answers are)', () => {
   for (const kind of ['scheduled-trigger', 'auto-continuation', 'task-notification', 'observer-activity']) {
-    test(`a turn that holds only a ${kind} prompt: nothing is mirrored, prompt and answer`, async ($, on) => {
+    test(`a turn that holds only a ${kind} prompt: the answer is mirrored with an empty prompt, the prompt text is not`, async ($, on) => {
       const w = mk(on)
       await probe($, 'reload')
       await submit($, 'sweep the queue', kind)
       await complete($, 's1', 'sweep done')
-      expect(appends(w)).toEqual([])
+      expect(appends(w).map((c) => [c.args.prompt, c.args.answer])).toEqual([['', 'sweep done']])
+      expect(JSON.stringify(w.sent)).not.toContain('sweep the queue')
     })
   }
-  test('a turn that holds only a system reminder: nothing is mirrored', async ($, on) => {
+  test('a turn that holds only a system reminder: answer only, no reminder text', async ($, on) => {
     const w = mk(on)
     await probe($, 'reload')
     await submit($, '<system-reminder>The task tools have not been used recently.</system-reminder>', 'bridge')
     await complete($, 's2')
-    expect(appends(w)).toEqual([])
+    expect(appends(w).map((c) => [c.args.prompt, c.args.answer])).toEqual([['', 'ans s2']])
+    expect(JSON.stringify(w.sent)).not.toContain('task tools')
   })
-  test('an autonomous-loop sentinel is not mirrored, whatever its origin', async ($, on) => {
+  test('an autonomous-loop sentinel text is not mirrored, whatever its origin (the answer is)', async ($, on) => {
     const w = mk(on)
     await probe($, 'reload')
     await submit($, '<<autonomous-loop-dynamic>>', 'bridge')
     await complete($, 's3')
-    expect(appends(w)).toEqual([])
+    expect(appends(w).map((c) => [c.args.prompt, c.args.answer])).toEqual([['', 'ans s3']])
   })
   test('a wake-up and a typed prompt in one turn: the typed prompt is mirrored, the wake-up text is not', async ($, on) => {
     const w = mk(on)
@@ -149,14 +151,14 @@ describe('criterion 3: schedules, loops, wake-ups, notices and system reminders 
     expect(c[0]!.args).toMatchObject({ prompt: 'actually, do this instead' })
     expect(JSON.stringify(c)).not.toContain('sweep')
   })
-  test('the turn after an automatic one is not held back', async ($, on) => {
+  test('the automatic turn keeps its answer and the turn after it is not held back', async ($, on) => {
     const w = mk(on)
     await probe($, 'reload')
     await submit($, 'sweep', 'scheduled-trigger')
     await complete($, 's5')
     await submit($, 'a real question', 'bridge')
     await complete($, 's6')
-    expect(appends(w).map((c) => [c.args.turnId, c.args.prompt])).toEqual([['s6', 'a real question']])
+    expect(appends(w).map((c) => [c.args.turnId, c.args.prompt])).toEqual([['s5', ''], ['s6', 'a real question']])
   })
   test('an engine that raises no prompt.submit for a turn still sends the answer alone (item 3439)', async ($, on) => {
     const w = mk(on)
@@ -164,12 +166,12 @@ describe('criterion 3: schedules, loops, wake-ups, notices and system reminders 
     await complete($, 's7')
     expect(appends(w)[0]!.args).toMatchObject({ prompt: '', answer: 'ans s7' })
   })
-  test('the status line counts what was not mirrored', async ($, on) => {
+  test('the status line counts the automatic prompts that were not mirrored', async ($, on) => {
     mk(on)
     await probe($, 'reload')
     await submit($, 'sweep', 'scheduled-trigger')
     await complete($, 's8')
-    expect(await probe($, 'status')).toContain('1 automatic turns')
+    expect(await probe($, 'status')).toContain('1 automatic prompts')
   })
 })
 
