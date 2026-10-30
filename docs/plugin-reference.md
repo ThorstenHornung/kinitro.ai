@@ -121,6 +121,7 @@ The plugin keeps its files in the session's **home folder** (see [Choosing the d
 | `.kinitro-ai-domain.<session id>` | Written up to 0.19.x. Read once to take over an older session's domain. | Yes. |
 | `.kinitro-ai-domain` | The folder default: the last slug chosen in this folder. | Yes. |
 | `.kinitro-ai-state.json` | Hook state: test flag, chat mirroring switch (`mirror`), last update check (`updateCheckedAt`, `updateLatest`, 0.23.2), last context warning, compaction flag, counters. | Yes. Counters restart; the next first prompt checks for an update again. |
+| `.kinitro-ai-prompts.json` | The prompts of the running turn (0.25.9), written when they are typed and emptied at the end of the turn. Not written while mirroring is off. | Yes |
 | `.kinitro-ai-outbox.json` | Turns not yet confirmed by kinitro.ai (prompt and answer text, the domain slug; never a session key). Each Claude session sends only its own turns. At most 200 entries. | Yes, but unsent turns are lost. |
 | `~/.kinitro-ai/agent` | Optional seat setting in the person's home folder: the agent node id this seat works as (0.24.0). | Yes. The domain's default agent node is used. |
 | `.kinitro-ai-inbox.json` | New messages fetched from the agent's chat, and the fetch cursor. | Yes. |
@@ -171,7 +172,7 @@ The agent can call `probe` with one of twelve actions. All but `comments`, `choi
 
 ## The chat mirror
 
-The plugin sends what you typed, what another agent sent to this session and the main agent's final answer. Automatic notices, sub agent texts, tool calls, thinking and instruction blocks are not sent. It writes them at the end of every turn into the agent's chat in kinitro.ai. It uses the verb `mirror-messaging` (action `append`, platform `claude-code`, the Claude session id and the turn id).
+The plugin sends what you typed, what another agent sent to this session and the main agent's final answer. Automatic notices, sub agent texts, tool calls, thinking and instruction blocks are not sent. From 0.25.9 a turn that holds only an automatic prompt (a schedule, `/loop`, a wake-up, a task notification, a system reminder) is not sent at all, and a prompt that is the text of a message written in the kinitro.ai chat itself is not sent a second time. The prompts of the running turn are kept in `.kinitro-ai-prompts.json` until the turn ends. It writes them at the end of every turn into the agent's chat in kinitro.ai. It uses the verb `mirror-messaging` (action `append`, platform `claude-code`, the Claude session id and the turn id).
 
 - Which prompt is whose is decided by the engine's `origin.kind`, never by the text: `composer`, `bridge`, `slack-ping` and `sdk` are yours; `peer`, `peer-send-message`, `coordinator`, `projects-relay` and `observer` are another agent's (sent with `promptFrom: "agent"`); every other kind is dropped.
 - Tool calls, thinking and injected instruction blocks are not sent. Subagent turns are skipped.

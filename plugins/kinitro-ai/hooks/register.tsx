@@ -41,12 +41,13 @@ const REWARN_STEP = 5      // warn again when the fill rises this many more poin
 const MIRROR_PLATFORM = 'claude-code'   // chat mirror (item 3413): turns go into the agent's kinitro.ai chat via mirror-messaging
 const OUTBOX_FILE = `${F}-outbox.json`   // every turn is written here first, then sent; resending is safe (the verb ignores a repeat)
 const INBOX_FILE = `${F}-inbox.json`     // new chat messages from kinitro.ai, told to the agent at its next prompt
+const PROMPTS_FILE = `${F}-prompts.json`   // item 4075: the prompts of the running turn, written at prompt.submit, so a plugin restart or a late turn.complete never loses them
 const BOX_MAX = 200
 const FETCH_MS = 60000
 const MAX_TEXT = 50000     // chars per prompt / answer sent to the chat
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = `${F.replace(/^\./, '')}.log`
-const VERSION = '0.25.8'
+const VERSION = '0.25.9'
 // update notice (PO 2026-10-16): at the first prompt, compare with the published marketplace.json on the download page
 const UPDATE_BASE = VARIANT.downloadBase   // the download page; the environment variable KINITRO_AI_DOWNLOAD_BASE overrides it
 const UPDATE_TIMEOUT_MS = 2500
@@ -110,6 +111,9 @@ let briefingError: string | undefined
 let lastLoadTry = 0
 let route = '-'
 let pending: PendingPrompt[] = []   // prompts of this turn that the person typed or another agent sent (item 3536)
+let autoTurn = false                // item 4075: this turn saw an automatic prompt (schedule, loop, wake-up, task notification, system reminder) and no prompt of a person
+let pendingLoaded = false           // the prompts file of this session was read once into memory
+let autoSkipped = 0, inboxSkipped = 0
 let warnedAt = 0
 let compactedPending = false
 let testArmed = false
@@ -1417,6 +1421,20 @@ export function classifyOrigin(kind: string | undefined): 'person' | 'agent' | '
   return 'drop'   // task-notification, scheduled-trigger, auto-continuation, observer-activity, unclassified, channel, plugin and any unknown kind
 }
 
+// Item 4075: prompts that nobody typed. Origin kinds of a schedule (cron, /loop, ScheduleWakeup), an auto-continuation, a task
+// notification and observer activity; and texts that carry nothing of a person (only system reminders, or an autonomous-loop sentinel
+// such as <<autonomous-loop>>). A turn that holds only such prompts is not mirrored at all, so recurring sweeps never flood the chat.
+const AUTO_KINDS = ['scheduled-trigger', 'auto-continuation', 'task-notification', 'observer-activity']
+export function isAutoKind(kind: string | undefined): boolean { return kind !== undefined && AUTO_KINDS.includes(kind) }
+export function isSentinelText(text: string): boolean { return /^<<[A-Za-z0-9_:. -]{1,60}>>$/.test(text.trim()) }
+export function stripReminders(text: string): string { return String(text ?? '').replace(/<system-reminder>[\s\S]*?<\/system-reminder>\s*/g, '').trim() }
+function sameText(a: string, b: string): boolean {
+  const n = (t: string) => stripReminders(t).replace(/\s+/g, ' ').trim().toLowerCase()
+  const x = n(a), y = n(b)
+  return x.length > 0 && x === y
+}
+const INBOX_MATCH_MS = 15 * 60 * 1000   // a chat message older than this is no longer taken for the source of a prompt
+
 // The outbox entries of one finished main-agent turn: the answer stands on the last prompt, a later prompt gets turnId:p<i>.
 export function planTurn(pending: PendingPrompt[], turnId: string, answer: string): { turnId: string; prompt: string; promptFrom?: 'agent'; answer: string }[] {
   if (pending.length === 0) return answer ? [{ turnId, prompt: '', answer }] : []
@@ -1520,6 +1538,45 @@ async function takeInbox($: any): Promise<InMsg[]> {
   return fresh
 }
 
+// ---- prompts of the running turn (item 4075) -----------------------------------
+type PromptState = { sid: string; prompts: PendingPrompt[]; auto: boolean }
+async function sessionIdOf($: any): Promise<string> { try { return String(await $.session.id()) } catch { return '' } }
+
+// the prompts file is read once per plugin process: a restart between prompt.submit and turn.complete keeps the typed prompt
+async function loadPending($: any) {
+  if (pendingLoaded) return
+  pendingLoaded = true
+  const st = await readJson<Partial<PromptState>>($, PROMPTS_FILE, {})
+  if (st.sid && st.sid === (await sessionIdOf($))) {
+    if (Array.isArray(st.prompts) && pending.length === 0) pending = st.prompts.filter((p) => p && typeof p.text === 'string')
+    if (st.auto) autoTurn = true
+  }
+}
+async function savePending($: any) {
+  try {
+    if (pending.length === 0 && !autoTurn) { if (await $.fs.exists(await at($, PROMPTS_FILE))) await $.fs.write(await at($, PROMPTS_FILE), JSON.stringify({ sid: '', prompts: [], auto: false })); return }
+    await $.fs.write(await at($, PROMPTS_FILE), JSON.stringify({ sid: await sessionIdOf($), prompts: pending, auto: autoTurn } as PromptState))
+  } catch { /* ignore */ }
+}
+
+// A prompt that is the text of a message written in the kinitro.ai chat (the plugin's inbox) is already in that chat:
+// it is not mirrored a second time. Each chat message covers one prompt; an old one (INBOX_MATCH_MS) covers none.
+async function fromInbox($: any, text: string, fetchFirst: boolean): Promise<boolean> {
+  const look = async (): Promise<boolean> => {
+    const inbox = await readJson<{ cursor?: string; messages: (InMsg & { told?: boolean; used?: boolean })[] }>($, INBOX_FILE, { messages: [] })
+    const now = Date.now()
+    const hit = inbox.messages.find((m) => !m.used && sameText(m.text, text) && (m.at === undefined || !Number.isFinite(Date.parse(String(m.at))) || now - Date.parse(String(m.at)) <= INBOX_MATCH_MS))
+    if (!hit) return false
+    hit.used = true
+    await $.fs.write(await at($, INBOX_FILE), JSON.stringify(inbox))
+    return true
+  }
+  if (await look()) return true
+  if (!fetchFirst) return false
+  await withBudget($, fetchInbox($), READ_TIMEOUT_MS)
+  return look()
+}
+
 function briefingBlock(): string {
   if (!briefing) return ''
   return `kinitro.ai briefing (from ${briefing.code}, applies to the whole session)\n\n## ${S.persona}\n${sec(S.persona)}\n\n## ${S.rules}\n${sec(S.rules)}`
@@ -1572,7 +1629,7 @@ async function statusText($: any): Promise<string> {
     `test armed: ${testArmed} · compactions seen: ${compactions} · post-compact pending: ${compactedPending}`,
     `ui comments: ${openComments.length}${commentsTruncated ? '+' : ''} open (last check ${lastCommentCheck}, last told ${commentInjectedAt ? new Date(commentInjectedAt).toISOString() : '-'}${lastCommentError ? ', last error: ' + lastCommentError : ''})`,
     `Chat mirroring: ${(await mirrorEnabled($)) ? 'on' : 'off'}`,
-    `chat mirror: ${mirrorSent} turns sent, ${mirrorDup} already present, agent ${lastMirrorTarget}${lastMirrorError ? ' · last error: ' + lastMirrorError : ''} · inbox ${inboxNew} new since start, last fetch ${lastFetch}`,
+    `chat mirror: ${mirrorSent} turns sent, ${mirrorDup} already present, agent ${lastMirrorTarget}${lastMirrorError ? ' · last error: ' + lastMirrorError : ''} · inbox ${inboxNew} new since start, last fetch ${lastFetch} · not mirrored: ${autoSkipped} automatic turns, ${inboxSkipped} prompts from the chat`,
   ].join('\n')
 }
 
@@ -2230,11 +2287,18 @@ export const register: Register = (on, opts) => {
       if (briefing.source !== 'kinitro.ai' || age > limit) { const kept = briefing; await loadBriefing($); if (!briefing) briefing = kept }
     }
     // item 3536: only what the person typed and what another agent sent is kept; notices and sub agent prompts are not (P2-P4)
+    // item 4075: only what a person typed (or another agent sent) is kept, once; a prompt that came from the kinitro.ai chat is
+    // already there; a schedule, a task notification or a system reminder marks the turn automatic. Nothing at all while mirroring is off.
     const kind: string | undefined = (e as any).origin?.kind
     const cls = (e as any).agentId ? 'drop' : classifyOrigin(kind)
-    if (cls !== 'drop') {
-      const text = e.text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>\s*/g, '').trim()
-      if (text) pending.push({ from: cls, text, ...(codeTyped ? { signInCode: true } : {}) })
+    if (!(e as any).agentId && await mirrorEnabled($)) {
+      await loadPending($)
+      const text = stripReminders(String(e.text ?? ''))
+      if (cls === 'drop') { if (isAutoKind(kind)) autoTurn = true }
+      else if (!text || isSentinelText(text)) autoTurn = true
+      else if (cls === 'person' && !codeTyped && kind !== 'composer' && await fromInbox($, text, kind !== undefined && !needsDomain && !!domainRef)) { inboxSkipped++; await log($, 'prompt from the kinitro.ai chat: not mirrored again') }
+      else pending.push({ from: cls, text, ...(codeTyped ? { signInCode: true } : {}) })
+      await savePending($)
     }
     const pct = await contextPercent($)
     const turns = await $.session.turns().catch(() => -1)
@@ -2382,10 +2446,15 @@ export const register: Register = (on, opts) => {
   // END OF TURN: prompt and final answer into the agent's kinitro.ai chat (item 3413); outbox first, then send
   on('turn.complete', async ($, e, next) => {
     if (await inertNow($)) return next(e)   // inert: build switched off, or a headless session
-    const r = await next(e)
-    if (e.agentId) return r
+    if (e.agentId) return next(e)
+    // item 4075: the prompts of this turn are taken before the downstream hooks run, so a prompt that arrives meanwhile belongs to the next turn
+    await loadPending($)
     const taken = pending.filter((p) => !p.signInCode)   // 0.25.0 (R9): a sign-in code typed in the chat never reaches the outbox
-    pending = []
+    const automatic = autoTurn && taken.length === 0 && pending.length === 0
+    pending = []; autoTurn = false
+    await savePending($)
+    const r = await next(e)
+    if (automatic) { autoSkipped++; await log($, `turn.complete reason=${e.reason} automatic turn (schedule, notice or system reminder only): not mirrored`); return r }
     await queueTurn($, planTurn(taken, e.turnId, e.answer ?? ''))
     await log($, `turn.complete reason=${e.reason} mirrorSent=${mirrorSent} dup=${mirrorDup}${lastMirrorError ? ' error=' + lastMirrorError : ''}`)
     return r
