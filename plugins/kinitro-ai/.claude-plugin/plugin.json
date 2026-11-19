@@ -1,7 +1,7 @@
 {
   "name": "kinitro-ai",
-  "version": "0.26.0",
-  "description": "kinitro.ai agent harness for Claude: briefs a kinitro.ai domain agent from the platform (persona, standing rules, start, every turn, context checkpoint, after compaction) and mirrors each turn into kinitro.ai.",
+  "version": "0.26.1",
+  "description": "Briefs a kinitro.ai agent with its seat's instructions, mirrors each turn into the seat's kinitro.ai chat and keeps the kinitro.ai session key hidden. Works in Claude Code and in Cowork, on claude.ai and in the desktop app. To start, connect the kinitro_ai_device connector, then pick \"kinitro\" from the \"/\" menu or just ask, for example \"kinitro status\".",
   "author": {
     "name": "Kinitro Consulting",
     "url": "https://kinitro.ai"

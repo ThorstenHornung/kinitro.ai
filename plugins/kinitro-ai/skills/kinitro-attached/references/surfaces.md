@@ -1,6 +1,6 @@
 # Surfaces: update and check the kinitro.ai setup
 
-Anything marked (check) was not verified against the current product and may differ; say so to the user if it matters.
+Anything marked (check) was not verified against the current product and may differ; say so to the user if it matters. Menu names are the English ones; the German ones are in brackets once.
 
 ## Claude Code (terminal) and the Code tab of the desktop app
 
@@ -20,10 +20,18 @@ Plugin server names in rules: the plugin's device server is `plugin_kinitro-ai_k
 
 ## Claude desktop app, chat and Cowork
 
-- Plugins and connectors are managed in the Claude account, not on the machine. Settings areas: Connectors (kinitro.ai connected or not), and the plugin or customize area (check exact name) for installed plugins.
+- Plugins and connectors are managed in the Claude account, not on the machine. The plugin page is Plugins > <plugin> (Plugins > Kinitro ai) with the tabs Overview, Permissions and Files and a Connectors list; each connector has a Connect button. claude.ai makes every server of the plugin's `.mcp.json` a connector there; the plugin brings only `kinitro_ai_device`.
+- Commands are namespaced here and typing one by hand fails ("This command couldn't be loaded"): the user picks "kinitro" from the "/" menu or just asks in their own words ("kinitro status"). Plain `/kinitro` is typed only in the Claude Code terminal.
 - Organisation plugins: an admin uploads and updates the package; users cannot update it themselves. To update: the admin re-uploads the new package file.
 - Personal plugins: install the new package file (check exact menu). The package is at https://methos.kinitro.ai/download/plugins/claude/; offer to fetch it for the user with the tools you have, then tell them where to open it.
-- Cowork sessions have no terminal: the plugin's own server is not started there; the plugin adopts the account connector. If the connector is missing, connect it under Settings, Connectors.
+- Cowork sessions have no terminal: the plugin's own server is not started there; the plugin adopts the account connector, and there is no plugin sign-in (no email code). If the connector is missing or not connected, the login steps are:
+  1. Plugins > Kinitro ai > Connectors > `kinitro_ai_device` > Connect.
+  2. Choose "Sign in now" ("Jetzt anmelden"). claude.ai wrongly preselects "No sign-in" ("Keine Anmeldung", marked "detected"): it fails, do not accept it. kinitro.ai supports neither dynamic client registration nor Claude's client identity (CIMD) yet; a backend fix is planned.
+  3. Choose "Use your own OAuth client" ("Eigenen OAuth-Client verwenden"), client ID `claude`, no secret.
+  4. The kinitro.ai login page (email and password) follows; the connector then shows Connected.
+  5. Start a new chat.
+  Connector tool prefix in the chat: `mcp__kinitro_ai_device__`. If only another connector of the plugin page is in the chat (for example a Test connector a tester added), switch `kinitro_ai_device` on in the chat's + > Plugins menu, or start a new chat.
+- A custom connector (for a server the plugin does not bring, for example a Test server a tester adds) is created with "Add custom connector" (German: "Benutzerdefinierten Connector hinzufügen") with the server URL; its Authentication options include an OAuth client section where the client ID is entered as above.
 - Browser pane (split screen beside the chat): the user opens it from the app's view or pane controls (check).
 
 ## claude.ai (web) and mobile

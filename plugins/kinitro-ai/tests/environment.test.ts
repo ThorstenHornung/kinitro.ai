@@ -16,7 +16,7 @@ describe('one plugin for Prod and Test (P5)', () => {
     makeWorld(on, { files: new Map(), cwd: '/w/b', root: '/w/b', sid: 'E1', tools: [seat(DEV), seat(DEV_TEST)] })
     const s = await probe($, 'status')
     expect(s).toContain(`kinitro.ai tools: ${DEV}* (source: bundled plugin server)`)
-    expect(JSON.parse(s).details[0]).toBe('kinitro-ai 0.26.0')
+    expect(JSON.parse(s).details[0]).toBe('kinitro-ai 0.26.1')
     const r: any = await ($ as any).tool.call({ tool: `${DEV_TEST}list-nodes` })
     expect(String(r.deny)).toBe('kinitro.ai Prod is active in this session.')
   })
@@ -25,7 +25,7 @@ describe('one plugin for Prod and Test (P5)', () => {
     const w = makeWorld(on, { files: new Map(), cwd: '/w/b', root: '/w/b', sid: 'E2', tools: [seat(DEV), seat(DEV_TEST), seat('mcp__kinitro_ai__'), 'mcp__kinitro_ai__list-nodes'], env: { KINITRO_AI_ENV: 'TEST' } })
     const s = await probe($, 'status')
     expect(s).toContain(`kinitro.ai tools: ${DEV_TEST}* (source: bundled plugin server)`)
-    expect(JSON.parse(s).details[0]).toBe('kinitro-ai TEST 0.26.0')
+    expect(JSON.parse(s).details[0]).toBe('kinitro-ai TEST 0.26.1')
     const prod: any = await ($ as any).tool.call({ tool: `${DEV}list-nodes` })
     expect(String(prod.deny)).toBe('kinitro.ai Test is active in this session.')
     const conn: any = await ($ as any).tool.call({ tool: 'mcp__kinitro_ai__list-nodes' })
@@ -44,11 +44,11 @@ describe('one plugin for Prod and Test (P5)', () => {
     expect(s).not.toContain('session key held')
     expect(s).toContain('session: none yet')
     expect(s).toContain('briefing: MISSING')
-    expect(JSON.parse(s).details[0]).toBe('kinitro-ai TEST 0.26.0')
+    expect(JSON.parse(s).details[0]).toBe('kinitro-ai TEST 0.26.1')
     expect(w.files.get('/w/b/kinitro-ai-domain') ?? '').not.toContain('kss_')
     const back: any = await $.tool.call({ tool: 'mcp__kinitro-ai__probe', action: 'env', value: 'prod' })
     expect(JSON.parse(String(back.result)).message).toBe('kinitro.ai Prod is active in this session. Choose a domain with /kinitro.')
-    expect(JSON.parse(await probe($, 'status')).details[0]).toBe('kinitro-ai 0.26.0')
+    expect(JSON.parse(await probe($, 'status')).details[0]).toBe('kinitro-ai 0.26.1')
   })
 
   test('the Test environment shows TEST in the prompt line; Prod shows no environment', async ($, on) => {
@@ -58,8 +58,8 @@ describe('one plugin for Prod and Test (P5)', () => {
     await $.prompt.submit({ text: 'a', origin: { kind: 'composer' } } as any)
     await $.tool.call({ tool: 'mcp__kinitro-ai__probe', action: 'env', value: 'test' })
     await $.prompt.submit({ text: 'b', origin: { kind: 'composer' } } as any)
-    expect(seen[0]).toMatch(/^\[kinitro-ai 0\.26\.0\] /)
-    expect(seen[1]).toMatch(/^\[kinitro-ai TEST 0\.26\.0\] /)
+    expect(seen[0]).toMatch(/^\[kinitro-ai 0\.26\.1\] /)
+    expect(seen[1]).toMatch(/^\[kinitro-ai TEST 0\.26\.1\] /)
   })
 
   test('Cowork with Test adopts mcp__kinitro_ai_Test__ and not mcp__kinitro_ai__', async ($, on) => {

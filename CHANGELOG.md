@@ -2,6 +2,20 @@
 
 All notable changes to the `kinitro-ai` plugin are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.26.1] - 2026-11-19
+
+### Changed
+- 0.26.1: `.mcp.json` brings only the Prod server `kinitro_ai_device`. claude.ai turns every server of a plugin into a visible connector, and Test must be hidden from normal users. A tester adds Test themselves: in Claude Code `claude mcp add --transport http -s user kinitro_ai_device_test https://methos-test.kinitro.ai/mcp/device`; on claude.ai a custom connector with that URL. With Test active the plugin adopts a Test-named server on every surface (including `mcp__kinitro_ai_device_test__`) when no bundled Test server is listed; the email-code sign-in connects the bundled name first, then the user-level name `kinitro_ai_device_test`, and when neither connects the status problem says how to add it. Calls to the inactive environment's tools are still refused.
+- 0.26.1: the plugin page text. `plugin.json` has a plain description (what it does, where it works, how to start) and `plugins/kinitro-ai/README.md` explains purpose, setup per surface, daily use, privacy and troubleshooting.
+- 0.26.1: `skills/kinitro-attached/SKILL.md` and `references/surfaces.md` carry the exact claude.ai connector login (Sign in now, Use your own OAuth client, client ID `claude`, no secret; the preselected "No sign-in" fails) with the German labels once, the plugin page layout (Overview, Permissions, Files, Connectors) and the custom connector dialog; the "(check)" marks this settles are gone.
+
+### Fixed
+- 0.26.1: Cowork never suggests the email-code sign-in. With no kinitro tools visible the status problem, the fix, the tools line and the probe `sign-in` answer say: connect the connector of the plugin on claude.ai (Plugins > Kinitro ai > Connectors > kinitro_ai_device > Connect, Sign in now, Use your own OAuth client with client ID claude, sign in on the kinitro.ai page, new chat). The status line `sign-in path: device (CLAUDE_CODE_REMOTE)` is `sign-in: connector login on claude.ai` in Cowork.
+- 0.26.1: plugin commands are namespaced in Cowork and on claude.ai and typing one by hand fails there, so plain-language requests are the primary entry point ("kinitro status", "connect me to kinitro", "switch to the Analyst seat", "mirror off", "refresh kinitro", "update the kinitro plugin"). The skill `kinitro-attached` triggers on these phrasings and carries the flow (the steps of `commands/kinitro.md`: probe flow, direct flow without the probe). Every user-facing text for those surfaces says to pick "kinitro" from the "/" menu or ask in your own words; `/kinitro` is named only for the Claude Code terminal.
+- 0.26.1: when the active environment's connector is missing but the other environment's is in the chat (for example only `kinitro_ai_device_test` with Prod active), the status problem says so and names the step (switch `kinitro_ai_device` on in the chat's + > Plugins menu, or start a new chat) instead of the generic add text.
+- 0.26.1: a band note of a failed binding ("could not bind ..."), a failed refresh or a failed sign-in is cleared when the seat's briefing loads later; it no longer stays in the status.
+- 0.26.1: a module reload no longer labels the re-injected persona "after compaction". The compaction flag belongs to the session it happened in (state key `compactSid`); a reloaded module's first persona says "session start".
+
 ## [0.26.0] - 2026-11-19
 
 ### Added

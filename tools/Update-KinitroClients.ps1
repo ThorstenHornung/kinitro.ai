@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Brings every Claude Code configuration directory on this machine to kinitro-ai 0.26.0
+  Brings every Claude Code configuration directory on this machine to kinitro-ai 0.26.1
   and removes the deprecated kinitro pieces.
 
 .DESCRIPTION

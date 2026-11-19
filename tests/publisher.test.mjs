@@ -71,17 +71,15 @@ test('the plugin source names only the Production device server: no OAuth server
 
 // 0.25.5: the Claude desktop app runs no plugin hooks, so the probe never exists there; the command must work without it.
 test('/kinitro works without the probe: direct flow, no retry loop, no route question, bare /kinitro and connect mean domain', () => {
+  // 0.26.1: assertions follow the 0.26 rewrite of commands/kinitro.md (same rules, new wording)
   const md = read('plugins/kinitro-ai/commands/kinitro.md');
-  assert.ok(md.includes('do not wait for it and do not retry for it'));
-  assert.ok(md.includes('Go straight to **Direct flow**'));
+  assert.ok(md.includes('do not wait or retry: go straight to the Direct flow'));
   assert.ok(!md.includes('sleep 3') && !/up to 5 tries/.test(md));
-  assert.ok(md.includes('ask nothing about routes'));
-  assert.ok(md.includes('mcp__plugin_kinitro-ai_kinitro_ai_device__<verb>') && md.includes('mcp__claude_ai_Kinitro__<verb>'));
-  assert.ok(md.includes("Keep the answer's `sessionKey` for this session only and pass it as `domainRef`"));
+  assert.ok(md.includes('no question about routes'));
+  assert.ok(md.includes('mcp__plugin_kinitro-ai_kinitro_ai_device__<verb>') && md.includes('mcp__claude_ai_Kinitro__'));
+  assert.ok(md.includes("Keep the answer's `sessionKey`"));
   assert.ok(md.includes('Never tell the user to run the command again'));
-  assert.ok(md.includes('No arguments at all (a bare `/kinitro`) mean `domain`, and `connect` is a synonym'));
-  assert.match(md, /argument-hint: "\[domain \| connect \|/);
-  assert.ok(md.includes('If `mcp__kinitro-ai__probe` is available, sign in yourself: follow **First sign-in**'));
+  assert.ok(md.includes('the bare word `domain` or `connect` or no arguments name none'));
   assert.ok(md.includes('"action": "set-domain"'));
 });
 
@@ -90,4 +88,16 @@ test('the sign-in default is the email code: auto means device in the hook sourc
   const src = read('plugins/kinitro-ai/hooks/register.tsx');
   assert.ok(src.includes("return { path: 'device', reason: 'default: the email-code sign-in; no localhost callback' }"));
   assert.ok(!/callbackPort|localhost:\d+/.test(src));
+});
+
+// 0.26.1 (J): users cannot know the namespaced command and typing it by hand fails on claude.ai; plain-language requests are the entry point.
+test('no user-facing text tells a user to type the namespaced command; the skill triggers on the plain phrasings and points at the command file', () => {
+  for (const f of ['plugins/kinitro-ai/README.md', 'plugins/kinitro-ai/.claude-plugin/plugin.json', 'plugins/kinitro-ai/skills/kinitro-attached/SKILL.md', 'plugins/kinitro-ai/skills/kinitro-attached/references/surfaces.md']) {
+    assert.ok(!/kinitro-ai:kinitro/.test(read(f)), `${f} names the namespaced command`);
+  }
+  const skill = read('plugins/kinitro-ai/skills/kinitro-attached/SKILL.md');
+  const description = skill.split('\n')[2];
+  for (const phrase of ['"kinitro status"', '"connect me to kinitro', '"switch to the Analyst seat"', '"mirror off"', '"refresh kinitro"', '"update the kinitro plugin"']) assert.ok(description.includes(phrase), phrase);
+  assert.ok(skill.includes('commands/kinitro.md'));
+  assert.ok(read('plugins/kinitro-ai/.claude-plugin/plugin.json').includes('\\"/\\" menu'));
 });

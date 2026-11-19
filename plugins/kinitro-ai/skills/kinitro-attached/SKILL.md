@@ -1,6 +1,6 @@
 ---
 name: kinitro-attached
-description: Use when a user asks about connecting Claude to kinitro.ai, signing in, switching domain or seat, the kinitro plugin and its /kinitro commands, chat mirroring, approval prompts for kinitro tools, updating the kinitro plugin, or when a kinitro.ai connection misbehaves (no briefing, "session key required", mirror not arriving, duplicate plugin, connector not connected).
+description: Use when a user asks about connecting Claude to kinitro.ai, signing in, switching domain or seat, the kinitro plugin and its commands, or phrases like "kinitro status", "connect me to kinitro" or "connect me to MethOS", "switch to the Analyst seat", "mirror off", "refresh kinitro", "update the kinitro plugin", chat mirroring, approval prompts for kinitro tools, updating the kinitro plugin, or when a kinitro.ai connection misbehaves (no briefing, "session key required", mirror not arriving, duplicate plugin, connector not connected).
 ---
 
 # Working attached to kinitro.ai
@@ -45,13 +45,37 @@ Consequence: in MCP-only mode say plainly once ("I am connected without the plug
 
 Keep each script short; one step at a time; wait where the user must act.
 
-**Connect and sign in (first time).**
+**Connect and sign in (first time, Claude Code).**
 1. Say you will connect them to kinitro.ai. Ask for the email address of their kinitro.ai account (never a password).
 2. Start the sign-in (`/kinitro sign-in`, or the device server's `sign-in` tool). Show the approval link as a titled link.
 3. Tell them: a 6-digit code was emailed; type it on the kinitro.ai page, not here. Wait for "done", then check.
 4. Next, the domain choice: numbered list of their approved domains; they answer with a number or name. A new domain needs one approval on the kinitro.ai page.
 
+**Connect and sign in on claude.ai or in the Claude desktop app (Cowork).** There is no plugin sign-in there: the connector of the plugin does it. claude.ai shows every server of the plugin as a connector on the plugin page; kinitro.ai supports neither dynamic client registration nor Claude's own client identity yet, so the user enters the client by hand. Steps, one at a time:
+1. Open Plugins > Kinitro ai (German UI: Plugins > Kinitro ai), Connectors, `kinitro_ai_device`, and press Connect.
+2. In the sign-in dialog choose "Sign in now" (German: "Jetzt anmelden"). Do not accept the preselected "No sign-in" ("Keine Anmeldung", marked "detected"): it fails.
+3. Choose "Use your own OAuth client" ("Eigenen OAuth-Client verwenden"), enter client ID `claude`, leave the secret empty.
+4. The kinitro.ai login page opens: email and password of the kinitro.ai account. Afterwards the connector shows Connected.
+5. Start a new chat (the tools appear in new chats), then say "kinitro status" to check.
+A backend fix is planned so that this manual client entry goes away; until then give exactly these steps. Never suggest the email-code sign-in in Cowork.
+
 **Change domain or seat.** Plugin mode: `/kinitro <domain>` or `/kinitro <domain> <seat>`, or `/kinitro` for the numbered list. If the seat is not accepted yet, the default seat is bound and seat choice comes with a later update. MCP-only: call `open-domain` with the other domain, keep the same key. Remind them that the earlier chat copy stays with the previous seat.
+
+**How the user asks: plain words first.** Users cannot know the command name: plugin commands are namespaced in Cowork and on claude.ai, and typing `/kinitro status` by hand fails there ("This command couldn't be loaded"). So treat plain-language requests as the main entry point and never tell a user to type a slash command by hand. Say: pick "kinitro" from the "/" menu, or simply ask in your own words (for example "kinitro status"). Name `/kinitro` only for the Claude Code terminal, where it can be typed. Everything below writes the commands as `/kinitro ...` for you; the user's words mean the same.
+
+**Plain-language requests, the full flow.** These phrasings are requests to run the kinitro command with that argument; do it yourself, do not send the user to a menu. Follow the steps of `commands/kinitro.md` in the plugin folder (Step 0 loading the tools, then the **Plugin flow** when `mcp__kinitro-ai__probe` exists, the **Direct flow** without it; `update` before Step 0). In short:
+
+| The user says | You do (plugin flow, one probe call) |
+|---|---|
+| "kinitro status", "is kinitro working" | `{"action":"status"}`; summarise in at most 6 plain lines, coach `problems` one at a time with the `fix` |
+| "connect me to kinitro / MethOS", "choose domain" | `{"action":"choices"}`, numbered list, then `{"action":"set-domain","domain":"<slug>"}` (sign in first if needed, section 3) |
+| "switch to the Analyst seat", "work in <domain> as <seat>" | `{"action":"set-domain","domain":"<slug>","seat":"<name>"}` |
+| "mirror off" / "mirror on", "follow on" / "follow off" | `{"action":"mirror","value":"off|on"}`, `{"action":"follow","value":"on|off"}` |
+| "refresh kinitro" | `{"action":"refresh"}`; "applies from your next message" |
+| "update the kinitro plugin" | section 6 for the surface |
+| "sign in to kinitro" | Claude Code: `{"action":"sign-in"}`; Cowork and claude.ai: the connector login above, never the email code |
+
+Without the probe (claude.ai chat, mobile, Cowork when the plugin hooks do not run), do the same steps with the kinitro.ai tools directly (**Direct flow** of `commands/kinitro.md`): `list-domains`, `open-domain`, keep the key for this session only.
 
 **Plugin commands in plain words.** `/kinitro` choose domain; `/kinitro status` what works and what does not; `/kinitro refresh` reload the agent's instructions now; `/kinitro mirror on|off` copy the chat to the seat or not; `/kinitro follow on|off` the browser pane shows what I write; `/kinitro update` install the newest plugin; `/kinitro sign-in [email]`. Offer only what the user asked about.
 
@@ -72,7 +96,7 @@ In the Claude desktop app a built-in browser pane can sit beside the chat. After
 Details and exact menu names: `references/surfaces.md`. Short version:
 
 - **Claude Code terminal / Code tab:** `/kinitro update`, or in a shell `claude plugin marketplace update kinitro-ai` then `claude plugin update kinitro-ai@kinitro-ai`, then `/reload-plugins`. Check: `/plugin` (installed, enabled, errors), `/mcp` (servers and sign-in state), `claude plugin list`.
-- **Desktop chat / Cowork:** plugins are managed in the Claude account. Organisation plugins: the admin re-uploads the new package. Personal plugins: install the new package file. Offer to fetch it from https://methos.kinitro.ai/download/plugins/claude/. Check in Settings, Connectors (kinitro.ai connected?) and the plugin list (check).
+- **Desktop chat / Cowork:** plugins are managed in the Claude account. Organisation plugins: the admin re-uploads the new package. Personal plugins: install the new package file. Offer to fetch it from https://methos.kinitro.ai/download/plugins/claude/. Check on the plugin page, Plugins > Kinitro ai: tabs Overview, Permissions and Files, and a Connectors list where `kinitro_ai_device` shows Connect or Connected.
 - **claude.ai web / mobile:** there is no plugin; the connector is the connection (Settings, Connectors). Organisation connectors are added by an owner or admin.
 
 ## 7. Fewer approval prompts

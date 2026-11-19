@@ -32,7 +32,7 @@ export function makeWorld(on: any, w: Omit<World, 'calls' | 'prefixes' | 'sent'>
   on('fs.write', async (_$: any, e: any) => { world.files.set(abs(e.path), e.text); return { value: undefined } })
   if (w.tools) on('tool.list', async () => ({ value: world.tools!.map((name) => ({ name, description: '', isMcp: true })) }))
   on('tool.call', async (_$: any, e: any) => {
-    const m = /^(mcp__(?:plugin_kinitro-ai(?:-test)?_[A-Za-z0-9_]+?|kinitro_ai(?:_device|_Test)?|Kinitro(?:_Test)?|claude_ai_Kinitro(?:_Test)?)__)(.*)$/.exec(String(e.tool))
+    const m = /^(mcp__(?:plugin_kinitro-ai(?:-test)?_[A-Za-z0-9_]+?|kinitro_ai(?:_device(?:_test)?|_Test)?|Kinitro(?:_Test)?|claude_ai_Kinitro(?:_Test)?)__)(.*)$/.exec(String(e.tool))
     if (!m) throw new Error(`unexpected tool ${e.tool}`)
     const prefix = m[1] as string
     if (world.tools && !world.tools.some((n) => n.startsWith(prefix))) throw new Error(`no such tool ${e.tool}`)

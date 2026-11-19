@@ -51,7 +51,7 @@ const FETCH_MS = 60000
 const MAX_TEXT = 50000     // chars per prompt / answer sent to the chat
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = `${F.replace(/^\./, '')}.log`
-const VERSION = '0.26.0'
+const VERSION = '0.26.1'
 // update notice (PO 2026-10-16): at the first prompt, compare with the published marketplace.json on the download page
 const UPDATE_BASE = VARIANT.downloadBase   // the download page; the environment variable KINITRO_AI_DOWNLOAD_BASE overrides it
 const UPDATE_TIMEOUT_MS = 2500
@@ -98,7 +98,7 @@ const CONNECTOR_RX = /^mcp__(?:claude_ai_)?kinitro(?:_ai)?(?:_device)?(?:_test)?
 const HOOK_RX = new RegExp(`${OWN_RX.source}|${CONNECTOR_RX.source}`, 'i')   // the widened tool.call / tool.describe filter: own servers and connectors; the handler decides
 const CONNECTOR_ORDER: Record<Env, string[]> = {   // which listed connector is adopted first (lower case)
   PROD: ['mcp__kinitro__', 'mcp__claude_ai_kinitro__', 'mcp__kinitro_ai__', 'mcp__kinitro_ai_device__'],
-  TEST: ['mcp__kinitro_ai_test__', 'mcp__kinitro_test__', 'mcp__claude_ai_kinitro_test__'],
+  TEST: ['mcp__kinitro_ai_test__', 'mcp__kinitro_test__', 'mcp__claude_ai_kinitro_test__', 'mcp__kinitro_ai_device_test__'],   // 0.26.1: the last is the server a tester adds themselves (claude mcp add ... kinitro_ai_device_test)
 }
 // Each user message may start a fresh engine process while the kinitro.ai
 // connector is still connecting: the briefing and the hook state therefore
@@ -130,6 +130,8 @@ let pendingLoaded = false           // the prompts file of this session was read
 let autoSkipped = 0, inboxSkipped = 0
 let warnedAt = 0
 let compactedPending = false
+let personaGivenHere = false   // 0.26.1: this module instance has put persona and rules into a prompt (a reload starts over)
+let compactSid = ''   // 0.26.1: the session whose compaction compactedPending belongs to
 let testArmed = false
 let lastInjected: string[] = []
 let composeCount = 0
@@ -749,13 +751,17 @@ async function endSignIn($: any, why: string) {
 // R1 fallback: the device server of this build, connected; else the session goes to the OAuth path with the note
 async function deviceServer($: any): Promise<string | undefined> {
   if (deviceServerName) return deviceServerName
-  const wanted = (await envNow($)) === 'TEST' ? DEVICE_TEST_SERVER : DEVICE_SERVER   // 0.26.0 (P5)
+  const test = (await envNow($)) === 'TEST'
+  // 0.26.1: Test is not bundled; the bundled name is tried first (a packaged Test build), then the user-level name a tester adds themselves
+  const wanted = test ? [`plugin:${VARIANT.name}:${DEVICE_TEST_SERVER}`, DEVICE_TEST_SERVER] : [DEVICE_SERVER]   // 0.26.0 (P5)
   let c: any
-  try { c = await $.mcp.connect(wanted) } catch (err: any) { c = { isConnected: false, reason: String(err?.message ?? err).slice(0, 80) } }
-  if (c?.isConnected) { deviceServerName = String(c.server || `plugin_${VARIANT.name}_${wanted}`); return deviceServerName }
+  for (const name of wanted) {
+    try { c = await $.mcp.connect(name) } catch (err: any) { c = { isConnected: false, reason: String(err?.message ?? err).slice(0, 80) } }
+    if (c?.isConnected) { deviceServerName = String(c.server || (name.startsWith('plugin:') ? name : test ? name : `plugin_${VARIANT.name}_${name}`)); return deviceServerName }
+  }
   await log($, `device server not connected: ${c?.reason ?? 'unknown'}`)   // 0.25.6: stays on the device path (no OAuth server exists); the next call connects again
-  lastSignInFailure = { at: new Date().toISOString(), reason: `the kinitro.ai device server did not connect (${String(c?.reason ?? 'no reason given').slice(0, 100)})` }
-  try { await update($, bandNoteA, () => DEVICE_UNAVAILABLE) } catch { /* ignore */ }
+  lastSignInFailure = { at: new Date().toISOString(), reason: test ? TEST_ADD : `the kinitro.ai device server did not connect (${String(c?.reason ?? 'no reason given').slice(0, 100)})` }
+  try { await update($, bandNoteA, () => (test ? TEST_ADD : DEVICE_UNAVAILABLE)) } catch { /* ignore */ }
   return undefined
 }
 
@@ -782,7 +788,7 @@ function signInNow($: any): Promise<any> {
       const now = await nowMs($)
       if (si && now < si.requestedAt + RESEND_MS) return { status: 'too_soon', message: `A new code can be sent from ${clockText(si.requestedAt + RESEND_MS)}.` }
       const server = await deviceServer($)
-      if (!server) return { status: 'error', message: DEVICE_UNAVAILABLE }
+      if (!server) return { status: 'error', message: (await envNow($)) === 'TEST' ? TEST_ADD : DEVICE_UNAVAILABLE }
       const env = await labelEnv($)
       const args = { email, deviceLabel: deviceLabel(env), clientName: `Claude Code, ${VARIANT.name} ${VERSION}`.slice(0, 60), ...(si && key ? { domainRef: key } : {}) }
       let r: { text: string; isError: boolean; answer: any }
@@ -930,7 +936,22 @@ const SOURCE_LABEL: Record<KinitroSource, string> = { bundled: 'bundled plugin s
 export const AUTH_HINT = `Type /${VARIANT.command} domain to sign in`
 // 0.25.6: what the probe says when no kinitro.ai tool is usable. It says what is missing and the probe's own step, never "type /kinitro" (the answer is read inside that command: a loop)
 export const SIGNIN_NEEDED = `not signed in to kinitro.ai yet; the email-code sign-in starts with ${PROBE_TOOL} action sign-in`
-const noTools = (_path: SignInPath) => `no kinitro.ai tools are visible in this session: ${SIGNIN_NEEDED}.`
+// 0.26.1: what to do depends on the surface. Cowork has no plugin sign-in (the connector of the plugin on claude.ai does it) and the Test
+// server is never bundled (a tester adds it); the email-code sign-in is only advised where it exists (Claude Code).
+export const COWORK_CONNECT = 'Connect the kinitro.ai connector of the kinitro-ai plugin on claude.ai: Plugins > Kinitro ai > Connectors > kinitro_ai_device > Connect. Choose Sign in now, then Use your own OAuth client with client ID claude, then sign in on the kinitro.ai page. Then start a new chat.'
+export const TEST_URL = 'https://methos-test.kinitro.ai/mcp/device'
+export const TEST_ADD = `The kinitro.ai Test server is not connected. Add it yourself: in Claude Code run claude mcp add --transport http -s user ${DEVICE_TEST_SERVER} ${TEST_URL}; on claude.ai add a custom connector with the URL ${TEST_URL}. Then start a new session.`
+const coworkSync = (): boolean => coworkKnown?.v === true
+// 0.26.1: plugin commands are namespaced in Cowork and on claude.ai and typing one by hand fails there ('This command couldn't be loaded'); texts for those surfaces say
+// "ask in your own words" or pick "kinitro" from the "/" menu. Plain /kinitro is named only where it can be typed (the Claude Code terminal).
+const envSync = (): Env => envMirror?.env ?? envVarRead?.env ?? VARIANT.env
+/** The sentence that says what is missing when no kinitro.ai tool is visible, for the surface and environment in use. */
+function toolsNeeded(): string {
+  if (coworkSync()) return COWORK_CONNECT
+  if (envSync() === 'TEST') return TEST_ADD
+  return SIGNIN_NEEDED
+}
+const noTools = (_path: SignInPath) => (coworkSync() || envSync() === 'TEST' ? `no kinitro.ai tools are visible in this session. ${toolsNeeded()}` : `no kinitro.ai tools are visible in this session: ${SIGNIN_NEEDED}.`)
 
 // 0.26.0 (item 4.2.1-4672 P13): the one lookup of kinitro.ai prefixes in a tool list. bundled*: the plugin's own servers (Prod: the device
 // server and the legacy OAuth server; Test: the Test device server). connector*: account connectors by the rule
@@ -1088,7 +1109,8 @@ let secondChecked = false
 async function kinitroTools($: any): Promise<{ prefix: string | undefined; source: KinitroSource | undefined }> {
   if (toolPrefix) return { prefix: toolPrefix, source: toolSource }
   const path = (await pathState($)).path, env = await envNow($)
-  const adopt = await coworkNow($)
+  const cowork = await coworkNow($)
+  const adopt = cowork || env === 'TEST'   // 0.26.1: Test has no bundled server; a Test-named server the tester added is adopted on every surface
   try {
     const names: string[] = (await $.tool.list()).map((t: any) => String(t.name))
     const found = resolveKinitroTools(names, adopt ? 'device' : path, env, adopt)
@@ -1217,7 +1239,7 @@ function confirmation(slug: string, bound: { text: string; approval?: Approval }
   const ok = domainRef === slug && !!briefing
   return ok
     ? { bound: true, domain: briefing?.domainName ?? slug, agent: briefing?.agentName ?? null, seat: seatName ?? briefing?.agentName ?? null, domainView: message.split('domain view: ')[1] ?? null, ...(seatProblem ? { seatProblem, seats: seatChoices } : {}), sayToUser: `This session now works for ${briefing?.domainName ?? slug}${briefing?.agentName && briefing.agentName !== briefing.domainName ? ` with the agent ${briefing.agentName}` : ''}.${seatProblem ? ' ' + seatProblem : ''}` }
-    : { bound: false, reason: message, ...(toolSource ? {} : { sayToUser: `You are not signed in to kinitro.ai yet; I start the email-code sign-in now.` }) }
+    : { bound: false, reason: message, ...(toolSource ? {} : { sayToUser: coworkSync() ? COWORK_CONNECT : envSync() === 'TEST' ? TEST_ADD : `You are not signed in to kinitro.ai yet; I start the email-code sign-in now.` }) }
 }
 
 // a choice: the session record, the host, and the folder default of the session's home folder (for the next new session)
@@ -1391,7 +1413,7 @@ async function bindDomain($: any, slug: string): Promise<BindResult> {
   await update($, currentA, () => (ok ? slug : null))
   await update($, chooserA, () => !ok)
   // 0.24.1: the band never shows the server's text (criterion 2); the detail is in /kinitro status and the log
-  await update($, bandNoteA, () => (ok ? null : `kinitro.ai could not bind ${slug}. Run /${VARIANT.command} status for details.`))
+  await update($, bandNoteA, () => (ok ? null : `kinitro.ai could not bind ${slug}. ${coworkSync() ? 'Ask "kinitro status" for details.' : `Run /${VARIANT.command} status for details.`}`))
   if (!ok) return { text: `binding ${slug} failed: ${briefingError}` }
   if (await heldApproval($)) { await keepApproval($, null); await log($, `bound to ${slug}: the pending approval is dropped`) }   // review F1
   await update($, startPackA, () => true)
@@ -1492,6 +1514,7 @@ async function loadBriefing($: any) {
     briefing = { raw, sections, code: agentCode, loadedAt: new Date().toISOString(), source: 'kinitro.ai', domainCode, agentCode, domainRef, domainName: dom?.name, agentName: agent?.name, layers: layers.join(', ') }
     briefingError = undefined
     seatName = agent?.name ?? seatName
+    await clearStaleNote($)   // 0.26.1: a later successful binding removes the note of an earlier failure
     try { await update($, currentA, () => domainRef ?? '') } catch { /* ignore */ }
     try { await $.fs.write(await at($, CACHE_FILE), JSON.stringify(briefing)) } catch { /* ignore */ }
     await log($, `briefing loaded for domain ${domainCode} / agent ${agentCode} via ${route}: ${raw.length} chars, layers ${briefing.layers}`)
@@ -1507,6 +1530,11 @@ async function loadBriefing($: any) {
   }
 }
 let lastApprovalLogged = ''
+// 0.26.1: the band notes of a failed binding, refresh or sign-in are history once the seat's briefing loaded
+const STALE_NOTE_RX = /^(kinitro\.ai could not bind |Refresh failed:|kinitro\.ai sign-in failed)/
+async function clearStaleNote($: any) {
+  try { const n = await read($, bandNoteA); if (n && STALE_NOTE_RX.test(n)) await update($, bandNoteA, () => null) } catch { /* ignore */ }
+}
 
 // the connector may not be up yet at session start: retry lazily; never while an approval is pending (0.24.1: the next
 // prompt and the person's confirmation look again)
@@ -1535,7 +1563,11 @@ async function readState($: any) {
     const f = await at($, STATE_FILE)
     if (!(await $.fs.exists(f))) return
     const st = JSON.parse(await $.fs.read(f))
-    testArmed = !!st.testArmed; warnedAt = st.warnedAt ?? 0; compactedPending = !!st.compactedPending
+    // 0.26.1: a compaction counts only for the session it happened in; a file left by an earlier session (or a reload after the block went out) says nothing
+    compactSid = typeof st.compactSid === 'string' ? st.compactSid : ''
+    let curSid = ''
+    try { curSid = String(await $.session.id()) } catch { /* no session id */ }
+    testArmed = !!st.testArmed; warnedAt = st.warnedAt ?? 0; compactedPending = !!st.compactedPending && !!compactSid && compactSid === curSid
     compactions = st.compactions ?? 0; contextRenders = st.contextRenders ?? 0
     commentKey = st.commentKey ?? ''; commentInjectedAt = st.commentInjectedAt ?? 0; commentSid = st.commentSid ?? ''
     todoHash = st.todoHash ?? ''; todoSid = st.todoSid ?? ''
@@ -1546,7 +1578,7 @@ async function readState($: any) {
 
 async function writeState($: any) {
   try {
-    await $.fs.write(await at($, STATE_FILE), JSON.stringify({ testArmed, warnedAt, compactedPending, compactions, contextRenders, commentKey, commentInjectedAt, commentSid, todoHash, todoSid, mirror: mirrorOff ? 'off' : 'on', updateCheckedAt, updateLatest }))
+    await $.fs.write(await at($, STATE_FILE), JSON.stringify({ testArmed, warnedAt, compactedPending, compactSid, compactions, contextRenders, commentKey, commentInjectedAt, commentSid, todoHash, todoSid, mirror: mirrorOff ? 'off' : 'on', updateCheckedAt, updateLatest }))
   } catch { /* ignore */ }
 }
 
@@ -1785,7 +1817,7 @@ async function contextPercent($: any): Promise<number | undefined> {
 async function toolsLine($: any): Promise<string> {
   const { prefix, source } = await kinitroTools($)
   const other = seconds.length ? ` · not used: ${seconds.map((p) => p.slice(5, -2)).join(', ')} (a second kinitro.ai connection)` : ''
-  return (source ? `kinitro.ai tools: ${prefix}* (source: ${SOURCE_LABEL[source]})` : `kinitro.ai tools: none visible (${SIGNIN_NEEDED})`) + other
+  return (source ? `kinitro.ai tools: ${prefix}* (source: ${SOURCE_LABEL[source]})` : `kinitro.ai tools: none visible (${toolsNeeded()})`) + other
 }
 
 async function sessionLine($: any): Promise<string> {
@@ -1798,6 +1830,7 @@ async function sessionLine($: any): Promise<string> {
 }
 
 async function signInLine($: any): Promise<string> {
+  if (await coworkNow($)) return 'sign-in: connector login on claude.ai'   // 0.26.1: Cowork has no plugin sign-in path
   const st = await pathState($)
   const si = await heldSignIn($)
   const failed = lastSignInFailure ? ` · last sign-in attempt failed at ${lastSignInFailure.at.slice(11, 19)} UTC: ${lastSignInFailure.reason}` : ''
@@ -2210,14 +2243,28 @@ export function duplicateNotice(names: string[], kind: SurfaceKind): string {
 
 type Problem = { problem: string; fix: string }
 const FIX = {
-  signIn: { terminal: `Ask me to sign in to kinitro.ai; I start the email-code sign-in and give you the approval link.`, desktop: `Ask me to sign in to kinitro.ai; I start the email-code sign-in and give you the approval link.`, cowork: 'Open the kinitro.ai connector in your Claude account, sign in there, then ask me to choose a domain.', background: `Call ${PROBE_TOOL} with action sign-in.` },
-  noTools: { terminal: `Ask me to sign in to kinitro.ai; if the tools still do not show afterwards, type /reload-plugins.`, desktop: `Ask me to sign in to kinitro.ai; if the tools still do not show afterwards, type /reload-plugins.`, cowork: 'Add the kinitro.ai connector to your Claude account, switch it on for this chat and start a new chat.', background: `Call ${PROBE_TOOL} with action sign-in.` },
+  signIn: { terminal: `Ask me to sign in to kinitro.ai; I start the email-code sign-in and give you the approval link.`, desktop: `Ask me to sign in to kinitro.ai; I start the email-code sign-in and give you the approval link.`, cowork: COWORK_CONNECT, background: `Call ${PROBE_TOOL} with action sign-in.` },
+  noTools: { terminal: `Ask me to sign in to kinitro.ai; if the tools still do not show afterwards, type /reload-plugins.`, desktop: `Ask me to sign in to kinitro.ai; if the tools still do not show afterwards, type /reload-plugins.`, cowork: COWORK_CONNECT, background: `Call ${PROBE_TOOL} with action sign-in.` },
   domain: { terminal: `Tell me which domain to work in and I choose it.`, desktop: `Tell me which domain to work in and I choose it.`, cowork: 'Tell me which domain to work in and I will choose it.', background: `Call ${PROBE_TOOL} with action set-domain.` },
   approve: { terminal: 'Open the approval link, approve it, then tell me.', desktop: 'Open the approval link, approve it, then tell me.', cowork: 'Open the approval link, approve it, then tell me.', background: 'Approve it on the kinitro.ai page.' },
   load: { terminal: `Run /${VARIANT.command} refresh; if it keeps failing, ask me to choose the domain again.`, desktop: `Run /${VARIANT.command} refresh; if it keeps failing, ask me to choose the domain again.`, cowork: 'Ask me to refresh the instructions; if it keeps failing, ask me to choose the domain again.', background: `Call ${PROBE_TOOL} with action refresh.` },
   mirror: { terminal: `Wait a minute and run /${VARIANT.command} status again; if it stays, run /${VARIANT.command} refresh.`, desktop: `Wait a minute and run /${VARIANT.command} status again; if it stays, run /${VARIANT.command} refresh.`, cowork: 'Wait a minute and ask me for the status again; if it stays, ask me to refresh.', background: `Call ${PROBE_TOOL} with action refresh.` },
 } as const
-const fixOf = (k: keyof typeof FIX, kind: SurfaceKind) => FIX[k][kind]
+const fixOf = (k: keyof typeof FIX, kind: SurfaceKind) => (envSync() === 'TEST' && (k === 'noTools' || k === 'signIn') ? TEST_ADD : FIX[k][kind])   // 0.26.1: Test is added by the tester
+
+// 0.26.1: the active environment's connector is missing but the other environment's is listed (live: only kinitro_ai_device_test in a chat, Prod active)
+async function otherEnvOnly($: any, env: Env, kind: SurfaceKind): Promise<Problem | undefined> {
+  try {
+    const p = kinitroPrefixesOf((await $.tool.list()).map((t: any) => String(t.name)))
+    const hasProd = p.bundledProd.length + p.connectorProd.length > 0, hasTest = p.bundledTest.length + p.connectorTest.length > 0
+    if (env === 'PROD' && hasTest && !hasProd) {
+      return { problem: `The kinitro.ai Prod connector (${DEVICE_SERVER}) is not in this chat; only the Test connector is.`,
+        fix: kind === 'cowork' ? `Switch ${DEVICE_SERVER} on in this chat's + > Plugins menu, or start a new chat.` : `Switch ${DEVICE_SERVER} on for this session (the kinitro-ai plugin brings it; ${kind === 'terminal' || kind === 'desktop' ? 'try /reload-plugins' : 'start a new session'}).` }
+    }
+    if (env === 'TEST' && hasProd && !hasTest) return { problem: `The kinitro.ai Test connector (${DEVICE_TEST_SERVER}) is not in this chat; only the Prod connector is.`, fix: TEST_ADD }
+  } catch { /* nothing to compare */ }
+  return undefined
+}
 
 async function copiesNow($: any): Promise<string[]> { await scanCopies($, false); return dupState?.names ?? [] }
 
@@ -2232,7 +2279,7 @@ async function diagnose($: any): Promise<Record<string, unknown>> {
   const latest = updateLatest && compareVersions(updateLatest, VERSION) > 0 ? updateLatest : null
   const problems: Problem[] = []
   const add = (problem: string, k: keyof typeof FIX) => problems.push({ problem, fix: fixOf(k, sf.kind) })
-  if (!source) add('The plugin cannot see any kinitro.ai tools in this session.', 'noTools')
+  if (!source) { const other = await otherEnvOnly($, env, sf.kind); if (other) problems.push(other); else add('The plugin cannot see any kinitro.ai tools in this session.', 'noTools') }
   else if (si) add('The sign-in waits for your approval.', 'approve')
   else if (!key && !legacy && !ap) add('You are not signed in to kinitro.ai.', 'signIn')
   if (ap) add(`${ap.domainName} waits for your approval.`, 'approve')
@@ -2453,7 +2500,8 @@ async function switchEnv($: any, env: Env): Promise<string> {
     try { $.ui.invalidate('tool.describe') } catch { /* ignore */ }
     await log($, `environment switched to ${envName(env)}: key, binding and approval dropped`)
   }
-  return `kinitro.ai ${envName(env)} is active in this session. Choose a domain with /${VARIANT.command}.`
+  await coworkNow($)   // 0.26.1: the command name depends on the surface
+  return `kinitro.ai ${envName(env)} is active in this session. Choose a domain ${coworkSync() ? 'by asking "connect me to kinitro" or picking "kinitro" from the "/" menu' : `with /${VARIANT.command}`}.`
 }
 
 // ---- hooks -----------------------------------------------------------------
@@ -2576,6 +2624,7 @@ export const register: Register = (on, opts) => {
         options = { ...options, email: given }
         await log($, `email setting stored: ${emailMask(given)}`)
       }
+      if (await coworkNow($)) return { result: JSON.stringify({ status: 'error', message: COWORK_CONNECT }) }   // 0.26.1: Cowork has no plugin sign-in
       if ((await pathNow($)) !== 'device') return { result: JSON.stringify({ status: 'error', message: 'Sign-in by email code is off because the setting sign-in path is oauth, and the plugin no longer brings an OAuth server. Set the sign-in path to auto (probe action sign-in-path), then run /reload-plugins.' }) }
       return { result: JSON.stringify(await signInNow($)) }
     }
@@ -2744,7 +2793,7 @@ export const register: Register = (on, opts) => {
       if (si) { await withBudget($, checkSignIn($), READ_TIMEOUT_MS); si = await heldSignIn($) }
       else if (first && !(await heldKey($))) {
         const note = await read($, bandNoteA)
-        if (note !== SIGNIN_ENDED && !SIGNIN_FAILED_RX.test(String(note ?? '')) && note !== DEVICE_UNAVAILABLE && !RATE_NOTE_RX.test(String(note ?? ''))) {
+        if (note !== SIGNIN_ENDED && !SIGNIN_FAILED_RX.test(String(note ?? '')) && note !== DEVICE_UNAVAILABLE && note !== TEST_ADD && !RATE_NOTE_RX.test(String(note ?? ''))) {
           if (settingOf('email')) { await withBudget($, signInNow($), READ_TIMEOUT_MS); si = await heldSignIn($) }
           else signInBlocks.push(EMAIL_ASK)
         }
@@ -2884,8 +2933,9 @@ export const register: Register = (on, opts) => {
       // fires gets them once, not twice, and a normal turn carries state only.
       if (refreshedPending) { blocks.push('This refreshed briefing supersedes the earlier one in this session.'); injected.push('Refreshed'); refreshedPending = false }
       if (!needsDomain && (startPack || compactedPending || (await read($, contextKeyA)) !== personaKey())) {
-        add('persona', S.persona, startPack ? `domain ${briefing.domainName ?? domainRef}` : compactedPending ? 'after compaction' : turns === 0 ? 'session start' : 'updated')
+        add('persona', S.persona, startPack ? `domain ${briefing.domainName ?? domainRef}` : compactedPending ? 'after compaction' : turns === 0 || !personaGivenHere ? 'session start' : 'updated')   // 0.26.1: a reloaded module's first persona is the session-start label, not 'after compaction'
         add('rules', S.rules, '')
+        personaGivenHere = true
         await update($, contextKeyA, () => personaKey())
       }
       if (turns === 0 || testArmed || startPack) add('start', S.start, testArmed ? 'Test' : startPack ? 'domain chosen' : 'first turn')
@@ -2967,6 +3017,7 @@ export const register: Register = (on, opts) => {
     if (!r.skip && e.trigger !== 'precompute') {
       compactions++
       compactedPending = true
+      compactSid = await syncSession($)
       warnedAt = 0
       await writeState($)
     }
