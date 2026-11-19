@@ -1,6 +1,7 @@
-import { describe, expect } from 'claude-code/testing'
+import { describe, expect, mock } from 'claude-code/testing'
 import { test } from './kit'
 import { makeWorld } from './world'
+import { headlessDecision } from '../hooks/register'
 
 // Item 4.2.1-3696 criterion 6 (PO 20.10.2026 10:22): in a session with isInteractive === false (claude -p, build and worker
 // sessions) the plugin does nothing: it writes no file into the working folder, fetches no briefing, adds no context or note
@@ -9,12 +10,12 @@ import { makeWorld } from './world'
 const done = { reason: 'answer', durationMs: 1, isAborted: false } as const
 const CWD_FILES = (files: Map<string, string>) => [...files.keys()].filter((f) => f.startsWith('/w/')).sort()
 
-const mk = (on: any) => {
+const mk = (on: any, env?: Record<string, string>) => {
   const seen: string[] = [], registered: string[] = []
   on('tool.register', async (_$: any, e: any) => { registered.push(String(e.name)); return { value: undefined } })
   on('prompt.submit', async (_$: any, e: any) => { seen.push((e.context ?? []).join('\n')); return { text: e.text } })
   on('turn.complete', async () => ({ text: '' }))
-  const w = makeWorld(on, { files: new Map([['/w/b/.kinitro-ai-domain', 'beta\n']]), cwd: '/w/b', root: '/w/b', sid: 'H1' })
+  const w = makeWorld(on, { files: new Map([['/w/b/.kinitro-ai-domain', 'beta\n']]), cwd: '/w/b', root: '/w/b', sid: 'H1', ...(env ? { env } : {}) })
   return { w, seen, registered }
 }
 const run = async ($: any, interactive: boolean) => {
@@ -31,7 +32,7 @@ describe('headless sessions (item 4.2.1-3696 criterion 6)', () => {
     expect(CWD_FILES(w.files)).toEqual(CWD_FILES(before))                         // no file in the working folder, not even a log
     expect([...w.files.keys()].filter((f) => !before.has(f))).toEqual(['/u/.kinitro-ai/headless.log'])   // the one log line, in the home folder
     expect(w.sent).toEqual([])                                                    // no briefing, no mirror, nothing sent
-    expect(registered).toEqual([])                                                // no probe tool
+    expect(registered).toEqual(['wake'])                                          // 0.26.0 (P2): no probe tool, only the wake tool
     expect(seen.join('\n')).not.toContain('kinitro')                              // no context, no second-connection note
   })
 
@@ -78,5 +79,100 @@ describe('headless sessions (item 4.2.1-3696 criterion 6)', () => {
   test('H3 control: the same call in a session that is not headless carries the held key', async ($, on) => {
     const sent = await callWithKey($, on, false)
     expect(sent.find((s) => s.verb === 'list-domains')!.args.domainRef).toBe('kss_held_key')
+  })
+})
+
+// 0.26.0 (item 4.2.1-4672 P1, P2): the headless rule has the entrypoint in it, and an inert session has one tool, wake.
+const WAKE = 'mcp__kinitro-ai__wake'
+const wake = ($: any, action: string): Promise<any> => $.tool.call({ tool: WAKE, action })
+const textOf = (r: any) => String(r.text ?? r.result ?? '')
+const sends = (w: any) => w.sent.filter((s: any) => s.verb === 'mirror-messaging' && s.args.action === 'append').length
+
+describe('headless rule and wake tool (item 4.2.1-4672 P1, P2)', () => {
+  test('P1: the pure rule: inert only with isInteractive false and an unset or sdk entrypoint; KINITRO_AI_MODE overrides both ways', () => {
+    expect(headlessDecision(false, undefined, undefined)).toEqual({ inert: true, reason: 'inert (interactive=false, entrypoint=unset)' })
+    expect(headlessDecision(false, 'sdk-cli', undefined)).toEqual({ inert: true, reason: 'inert (interactive=false, entrypoint=sdk-cli)' })
+    expect(headlessDecision(false, 'remote_cowork', undefined)).toEqual({ inert: false, reason: 'active (interactive=false, entrypoint=remote_cowork)' })
+    expect(headlessDecision(true, 'cli', undefined).inert).toBe(false)
+    expect(headlessDecision(false, 'sdk-cli', 'on').inert).toBe(false)
+    expect(headlessDecision(true, 'cli', 'off').inert).toBe(true)
+  })
+
+  test('P1: the headless log line names the reason', async ($, on) => {
+    mock.clock(on)
+    const { w } = mk(on, { CLAUDE_CODE_ENTRYPOINT: 'sdk-cli' })
+    await run($, false)
+    expect(w.files.get('/u/.kinitro-ai/headless.log')).toContain('inert (interactive=false, entrypoint=sdk-cli)')
+  })
+
+  test('P1: entrypoint remote_cowork with isInteractive false is active (probe registered, work done, reason in the log)', async ($, on) => {
+    mock.clock(on)
+    const { w, seen, registered } = mk(on, { CLAUDE_CODE_ENTRYPOINT: 'remote_cowork' })
+    await run($, false)
+    expect(registered).toContain('probe')
+    expect(registered).not.toContain('wake')
+    expect(w.sent.length).toBeGreaterThan(0)
+    expect(seen.join('\n')).toContain('kinitro-ai')
+    expect(w.files.has('/u/.kinitro-ai/headless.log')).toBe(false)
+    expect(w.files.get('/w/b/kinitro-ai.log')).toContain('active (interactive=false, entrypoint=remote_cowork)')
+  })
+
+  test('P1: KINITRO_AI_MODE=on makes an sdk session active', async ($, on) => {
+    mock.clock(on)
+    const { w, seen, registered } = mk(on, { CLAUDE_CODE_ENTRYPOINT: 'sdk-cli', KINITRO_AI_MODE: 'on' })
+    await run($, false)
+    expect(registered).toContain('probe')
+    expect(w.sent.length).toBeGreaterThan(0)
+    expect(seen.join('\n')).toContain('kinitro-ai')
+  })
+
+  test('P1: KINITRO_AI_MODE=off makes an interactive session inert', async ($, on) => {
+    mock.clock(on)
+    const { w, seen, registered } = mk(on, { KINITRO_AI_MODE: 'off' })
+    await run($, true)
+    expect(registered).toEqual(['wake'])
+    expect(w.sent).toEqual([])
+    expect(seen.join('\n')).not.toContain('kinitro')
+  })
+
+  test('P2: wake on activates the session: the briefing comes back in the answer, the probe is registered, the mirror works', async ($, on) => {
+    mock.clock(on)
+    const { w, seen, registered } = mk(on)
+    await $.session.start({ isInteractive: false, surface: null, cwd: '/w/b' } as any).catch(() => undefined)
+    expect(registered).toEqual(['wake'])
+    const r = await wake($, 'on')
+    expect(textOf(r)).toContain('instruction-persona of')   // the briefing text, since no further prompt may come
+    expect(registered).toContain('probe')
+    await $.prompt.submit({ text: 'work', origin: { kind: 'composer' } } as any)
+    expect(seen.join('\n')).toContain('kinitro-ai')
+    await $.turn.complete({ ...done, turnId: 't1', answer: 'OK' } as any)
+    expect(sends(w)).toBe(1)
+  })
+
+  test('P2: wake off silences an active session: no briefing in the prompt, no mirror; the probe action on brings it back', async ($, on) => {
+    mock.clock(on)
+    const { w, seen } = mk(on)
+    await $.session.start({ isInteractive: true, surface: 'terminal', cwd: '/w/b' } as any).catch(() => undefined)
+    await $.prompt.submit({ text: 'one', origin: { kind: 'composer' } } as any)
+    await $.turn.complete({ ...done, turnId: 't1', answer: 'OK' } as any)
+    expect(seen[0]).toContain('kinitro-ai')
+    const before = sends(w)
+    expect(before).toBe(1)
+    expect(textOf(await wake($, 'off'))).toContain('off')
+    await $.prompt.submit({ text: 'two', origin: { kind: 'composer' } } as any)
+    await $.turn.complete({ ...done, turnId: 't2', answer: 'OK' } as any)
+    expect(seen[1] ?? '').not.toContain('kinitro')
+    expect(sends(w)).toBe(before)
+    expect(textOf(await $.tool.call({ tool: 'mcp__kinitro-ai__probe', action: 'on' }))).toContain('"status":"on"')
+    await $.prompt.submit({ text: 'three', origin: { kind: 'composer' } } as any)
+    expect(seen[2]).toContain('kinitro-ai')
+  })
+
+  test('P2: the wake state is host-held: a restarted module of a woken session stays active', async ($, on) => {
+    const { w, seen } = mk(on)
+    on('state.get', (_$: any, e: any, next: any) => (e.key === 'headless' ? { value: { value: true, version: 1 } } : e.key === 'wakeMode' ? { value: { value: 'on', version: 1 } } : next(e)))
+    await $.prompt.submit({ text: 'again', origin: { kind: 'composer' } } as any)
+    expect(w.sent.length).toBeGreaterThan(0)
+    expect(seen.join('\n')).toContain('kinitro-ai')
   })
 })

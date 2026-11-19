@@ -32,9 +32,13 @@ const SERVER = 'kinitro_ai'
 // The host state (atom) keys must be string literals: the packager rewrites `plugin: 'kinitro-ai'` for the Test build.
 const F = VARIANT.files
 const PROBE_TOOL = `mcp__${VARIANT.name}__probe`
-const MARK = VARIANT.showEnv ? `${VARIANT.name} ${VARIANT.env}` : VARIANT.name   // the prompt line marker: [kinitro-ai PROD 0.24.2] / [kinitro-ai-test TEST 0.24.2]
-const BRAND = VARIANT.showEnv ? `kinitro.ai ${VARIANT.env}` : 'kinitro.ai'      // the band title
+// 0.26.0 (item 4.2.1-4672 P5): one plugin serves Prod and Test; the environment is the SESSION's (envNow), so the marker and the
+// band title show TEST only while Test is active and show no environment for Prod (Test is hidden from normal users).
+type Env = 'PROD' | 'TEST'
+const markFor = (env: Env) => (env === 'TEST' ? `${VARIANT.name} TEST` : VARIANT.name)   // the prompt line marker: [kinitro-ai 0.26.0] / [kinitro-ai TEST 0.26.0]
+const brandFor = (env: Env | undefined) => (env === 'TEST' ? 'kinitro.ai TEST' : 'kinitro.ai')   // the band title
 const ENV_VAR = 'KINITRO_AI_ENV'
+const MODE_VAR = 'KINITRO_AI_MODE'   // 0.26.0 (P1): on|off overrides the headless rule both ways
 // Everything is resolved from the seat (current-seat): no domain codes are hard-wired.
 const WARN_PCT = 70        // auto-compaction fires at 80 % in this environment
 const REWARN_STEP = 5      // warn again when the fill rises this many more points
@@ -47,7 +51,7 @@ const FETCH_MS = 60000
 const MAX_TEXT = 50000     // chars per prompt / answer sent to the chat
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = `${F.replace(/^\./, '')}.log`
-const VERSION = '0.25.9'
+const VERSION = '0.26.0'
 // update notice (PO 2026-10-16): at the first prompt, compare with the published marketplace.json on the download page
 const UPDATE_BASE = VARIANT.downloadBase   // the download page; the environment variable KINITRO_AI_DOWNLOAD_BASE overrides it
 const UPDATE_TIMEOUT_MS = 2500
@@ -85,7 +89,17 @@ const BUNDLED_RX = new RegExp(`^mcp__plugin_${VARIANT.name}_kinitro_ai__`)  // t
 // One of the two is the session's (its sign-in path); the other one's tools are refused and described as not used.
 const DEVICE_SERVER = 'kinitro_ai_device'
 const DEVICE_RX = new RegExp(`^mcp__plugin_${VARIANT.name}_kinitro_ai_device__`)   // the own device server, exactly
-const OWN_RX = new RegExp(`^mcp__plugin_${VARIANT.name}_kinitro_ai(_device)?__`)   // either own server (tool.call, tool.describe)
+// 0.26.0 (item 4.2.1-4672 P5): the second own server, the Test device address (.mcp.json). Test has no OAuth server.
+const DEVICE_TEST_SERVER = 'kinitro_ai_device_test'
+const DEVICE_TEST_RX = new RegExp(`^mcp__plugin_${VARIANT.name}_kinitro_ai_device_test__`)
+const OWN_RX = new RegExp(`^mcp__plugin_${VARIANT.name}_kinitro_ai(_device(_test)?)?__`)   // any own server (tool.call, tool.describe)
+// 0.26.0 (P4): an account connector (Cowork, claude.ai, a user server): mcp__[claude_ai_]kinitro[_ai][_device][_test]__ in any case, never mcp__plugin_...
+const CONNECTOR_RX = /^mcp__(?:claude_ai_)?kinitro(?:_ai)?(?:_device)?(?:_test)?__/i
+const HOOK_RX = new RegExp(`${OWN_RX.source}|${CONNECTOR_RX.source}`, 'i')   // the widened tool.call / tool.describe filter: own servers and connectors; the handler decides
+const CONNECTOR_ORDER: Record<Env, string[]> = {   // which listed connector is adopted first (lower case)
+  PROD: ['mcp__kinitro__', 'mcp__claude_ai_kinitro__', 'mcp__kinitro_ai__', 'mcp__kinitro_ai_device__'],
+  TEST: ['mcp__kinitro_ai_test__', 'mcp__kinitro_test__', 'mcp__claude_ai_kinitro_test__'],
+}
 // Each user message may start a fresh engine process while the kinitro.ai
 // connector is still connecting: the briefing and the hook state therefore
 // live in files that survive the restart, refreshed from kinitro.ai in the background.
@@ -160,6 +174,10 @@ const contextKeyA = atom({ plugin: 'kinitro-ai', key: 'contextKey' } as const, '
 const boundA = atom({ plugin: 'kinitro-ai', key: 'bound' } as const, null as string | null)   // this session's slug, held by the host: survives reloads and a changed working folder
 const sessionKeyA = atom({ plugin: 'kinitro-ai', key: 'sessionKey' } as const, null as { sid: string; key: string } | null)   // 0.24.0: this Claude session's kinitro.ai session key, host-held for this session only
 const secondNoticeA = atom({ plugin: 'kinitro-ai', key: 'secondNotice' } as const, false)                // 0.24.0: the second connection was told in this session
+const wakeModeA = atom({ plugin: 'kinitro-ai', key: 'wakeMode' } as const, null as 'on' | 'off' | null)   // 0.26.0 (P2): a background session woken (on) or silenced (off) by the model or the person; host-held, a reload keeps it
+const envSessionA = atom({ plugin: 'kinitro-ai', key: 'envSession' } as const, null as 'prod' | 'test' | null)   // 0.26.0 (P5): the environment chosen for this session (probe action env); null = KINITRO_AI_ENV, else Prod
+const followA = atom({ plugin: 'kinitro-ai', key: 'follow' } as const, false)   // 0.26.0 (item 4.2.1-4672 P11): follow mode: the browser pane opens what the agent last wrote; default off
+const seatWishA = atom({ plugin: 'kinitro-ai', key: 'seatWish' } as const, null as SeatWish | null)   // 0.26.0 (item 4.2.1-4672, seat choice): the seat the person asked for with set-domain; kept until it is bound (an approval may come first)
 const headlessA = atom({ plugin: 'kinitro-ai', key: 'headless' } as const, false)                        // 0.24.3 (item 4.2.1-3696): this session is headless (isInteractive === false): the plugin stays inert; host-held, so a reload keeps it
 // 0.24.1 (item 4.2.1-3764): the approval this Claude session waits for, host-held so a reload never asks the server again
 const approvalA = atom({ plugin: 'kinitro-ai', key: 'approval' } as const, null as Approval | null)
@@ -186,6 +204,16 @@ let keyEverHeld = false       // fix round L5: once this session held a key it n
 let rebindP: Promise<boolean> | undefined
 let lastRebind = 0
 let bindLock: Promise<unknown> = Promise.resolve()
+// 0.26.0 (item 4.2.1-4672, seat choice): the seat (agent node) this session works as. seatName is display only; keySeatId is the agent node id the key's
+// session works as, as far as this module knows (from the open-domain answer). The plugin keeps NO mirror target: the server decides where the chat goes.
+export type SeatWish = { sid: string; slug: string; name?: string; id?: string }
+let seatName: string | undefined
+let keySeatId: string | undefined
+let seatProblem: string | undefined       // the last set-domain asked for a seat that was not found: said once in the answer
+let seatChoices: string[] = []
+let lastMirrorAt: string | undefined      // 0.26.0 (P8): when a turn last reached the chat
+let refreshedPending = false              // 0.26.0 (P9): the next prompt carries the refreshed briefing, marked as superseding the earlier one
+let lastWritten: { nodeCode?: string; nodeId?: string; what: string } | undefined   // 0.26.0 (P11): the node the agent wrote last in this turn (follow mode)
 
 // $.state holds the key for the Claude session (it survives a reload and a compaction); the module keeps a mirror, because
 // every $.state read of one dispatch sees one moment and would miss a key written earlier in the same dispatch.
@@ -197,6 +225,8 @@ function resetSessionKeyState() {
   keyMirror = undefined; legacy = false; keyEverHeld = false; keySlug = undefined; pendingApproval = undefined
   lastRebind = 0; followSeat = false; reloadDue = false; secondChecked = false
   pathMirror = undefined; signInMirror = undefined; firstDeviceSid = undefined; toolPrefix = undefined; toolSource = undefined
+  headlessKnown = undefined; wakeKnown = undefined; envMirror = undefined   // 0.26.0: the host holds them per session
+  seatName = undefined; keySeatId = undefined; seatProblem = undefined; seatChoices = []; lastWritten = undefined; dupState = undefined; dupToldSid = undefined; folderToldSid = undefined; refreshedPending = false
 }
 async function syncSession($: any): Promise<string> {
   let sid = ''
@@ -360,7 +390,11 @@ function checkApproval($: any): Promise<void> {
       ownRequests.add(ap.request)
       try { r = await mcp($, 'open-domain', { request: ap.request }) } finally { ownRequests.delete(ap.request) }
       const st = String(r?.status ?? '')
-      if (st === 'approved' || st === 'moved') {
+      if (r?.agentNode?.name) seatName = String(r.agentNode.name)
+      if (st === 'choose') {   // 0.26.0 (seat choice): the server wants a (new) choice on its page; the link may have changed, the request stays
+        const next = approvalFromAnswer({ ...r, request: r.request ?? ap.request }, ap.slug, ap.sid)
+        if (next.url) await keepApproval($, { ...next, domainName: next.domainName === ap.slug ? ap.domainName : next.domainName })
+      } else if (st === 'approved' || st === 'moved') {
         await keepApproval($, null)
         await log($, `approval for ${ap.slug}: ${st}; binding`)
         await bindDomain($, ap.slug)
@@ -377,7 +411,7 @@ function checkApproval($: any): Promise<void> {
 
 // P1/P5: start this Claude session's kinitro.ai session in a domain (no key yet: open-domain mints one), or add the domain
 // to the session (with the key: no new key). A domain the sign-in has not approved goes through the approval link first.
-async function openSession($: any, pick: { slug?: string; id?: string }): Promise<any> {
+async function openSession($: any, pick: { slug?: string; id?: string; agent?: string }): Promise<any> {
   return serial(async () => {
     binding = true
     try {
@@ -386,8 +420,11 @@ async function openSession($: any, pick: { slug?: string; id?: string }): Promis
       if (!d) throw new Error(pick.id ? `domain ${pick.id} not found in list-domains` : `domain slug '${pick.slug}' not found in list-domains`)
       const slug = String(d.slug)
       const held = await heldKey($)
-      if (held && keySlug === slug) return d
-      const agent = await seatAgent($)
+      // 0.26.0 (seat choice): an explicit seat (the person's choice, or a seat switch) reopens the SAME key's session with the agent; the seat
+      // setting file only decides the first open and never switches a session that already works in the domain
+      const explicit = pick.agent ?? (await seatWishFor($, slug))?.id
+      if (held && keySlug === slug && (!explicit || explicit === keySeatId)) return d
+      const agent = explicit ?? (await seatAgent($))
       // R4: the pending request is reused ({request}); a new {domain} is never sent for the pending slug, and never while
       // checkApproval asks for the same request (no two open-domain calls at once)
       const held0 = await heldApproval($)
@@ -406,6 +443,11 @@ async function openSession($: any, pick: { slug?: string; id?: string }): Promis
         if (pend) await keepApproval($, null)
         throw err
       }
+      // 0.26.0 (seat choice): choose = a link plus a request: the person picks or approves on the server's page; polled with the request like an approval
+      if (r?.status === 'choose' || (r?.status === 'pending' && !pend && r?.request)) {
+        const ap = approvalFromAnswer({ ...r, request: r.request ?? pend?.request }, slug, await syncSession($))
+        if (ap.request) { await keepApproval($, ap); throw new ApprovalNeeded(ap) }
+      }
       if (r?.status === 'pending' && pend) throw new ApprovalNeeded(pend)
       if (pend) await keepApproval($, null)
       if (r?.status === 'denied' || r?.status === 'expired' || r?.status === 'pending') throw new Error(`the person did not approve ${slug} (${r.status})`)
@@ -413,10 +455,72 @@ async function openSession($: any, pick: { slug?: string; id?: string }): Promis
       if (!key && keyEverHeld) throw new Error(`open-domain gave no session key although this session held one: not switched to the domain slug`)
       legacy = !key   // LEGACY (remove in the release after the server enforces the key): a server older than session keys
       keySlug = key ? slug : undefined
+      if (r?.agentNode?.name) seatName = String(r.agentNode.name)   // the seat's name comes from the answer
+      keySeatId = r?.agentNode?.id ? String(r.agentNode.id) : agent ?? undefined
       await log($, key ? `session ${held ? 'now also works in' : 'started in'} ${slug}${agent ? ' at the agent node of the seat setting' : ''}` : `open-domain gave no session key: a server without session keys; the domain goes on every call as before`)
       return d
     } finally { binding = false }
   })
+}
+
+// ---- seat choice (0.26.0, item 4.2.1-4672) ---------------------------------------------------------------------
+// set-domain takes an optional seat (an agent node name, or its id). A name is resolved with list-agents of the domain (case-insensitive, on the
+// seat's display name or its agent name); then open-domain {domain, agent} runs on the SAME held key. The wish is kept until it is bound.
+const UUID_RX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+class SeatNotFound extends Error {
+  name = 'SeatNotFound'
+  constructor(public wanted: string, public names: string[]) { super(`no seat called ${wanted}`) }
+}
+/** The seat of a list-agents answer that a name or id names, matched case-insensitively; undefined when none does. */
+export function matchSeat(agents: any[], wanted: string): { id: string; name: string } | undefined {
+  const w = String(wanted).trim().toLowerCase()
+  if (!w) return undefined
+  for (const a of agents ?? []) {
+    const id = String(a?.seatId ?? a?.agentNodeId ?? a?.id ?? '')
+    const names = [a?.displayName, a?.agent, a?.name].filter((x) => typeof x === 'string').map((x: string) => x.trim().toLowerCase())
+    if (id && (id.toLowerCase() === w || names.includes(w))) return { id, name: String(a?.displayName ?? a?.agent ?? a?.name ?? wanted) }
+  }
+  // 0.26.0 (review): a short name the user says ("analyst" for "MethOS Analyst" / methos-analyst) matches when it is a whole
+  // word of exactly one seat's names; two or more such seats are no match (the answer then lists the seats)
+  const hits = (agents ?? []).filter((a: any) => {
+    const id = String(a?.seatId ?? a?.agentNodeId ?? a?.id ?? '')
+    const words = [a?.displayName, a?.agent, a?.name].filter((x) => typeof x === 'string').flatMap((x: string) => x.toLowerCase().split(/[\s\-_]+/))
+    return !!id && words.includes(w)
+  })
+  if (hits.length === 1) { const a = hits[0]; return { id: String(a?.seatId ?? a?.agentNodeId ?? a?.id), name: String(a?.displayName ?? a?.agent ?? a?.name ?? wanted) } }
+  return undefined
+}
+async function seatWishFor($: any, slug: string): Promise<SeatWish | undefined> {
+  let v: SeatWish | null = null
+  try { v = await read($, seatWishA) } catch { /* ignore */ }
+  return v && v.sid === (await syncSession($)) && v.slug === slug ? v : undefined
+}
+async function keepSeatWish($: any, w: Omit<SeatWish, 'sid'> | null) {
+  const sid = await syncSession($)
+  try { await update($, seatWishA, () => (w ? { ...w, sid } : null)) } catch { /* ignore */ }
+}
+// the wish of this domain is bound now: resolve a name, then reopen the session with the agent. true when the session was switched.
+async function applySeat($: any, slug: string): Promise<boolean> {
+  const w = await seatWishFor($, slug)
+  if (!w) return false
+  let id = w.id
+  if (!id && w.name) {
+    const doms = await mcp($, 'list-domains', {})
+    const d = (doms?.domains ?? []).find((x: any) => x.slug === slug)
+    if (!d) return false
+    const r = await mcp($, 'list-agents', { domain: String(d.id) })
+    const agents: any[] = r?.agents ?? []
+    const hit = matchSeat(agents, w.name)
+    seatChoices = agents.map((a) => String(a?.displayName ?? a?.agent ?? '')).filter(Boolean)
+    if (!hit) { await keepSeatWish($, null); throw new SeatNotFound(w.name, seatChoices) }
+    id = hit.id
+    await keepSeatWish($, { slug, name: hit.name, id })
+  }
+  if (!id || id === keySeatId) { await keepSeatWish($, null); return false }
+  await openSession($, { slug, agent: id })
+  await keepSeatWish($, null)
+  await log($, `seat switched in ${slug} on the same session key`)
+  return true
 }
 
 // P7: a refused key (or none) is replaced once by a new session in the session's domain; at most once per REBIND_MS
@@ -544,7 +648,8 @@ function settingOf(field: 'signInPath' | 'email'): string {
   const v = options[field]
   return typeof v === 'string' ? v.trim() : ''
 }
-function ownPrefix(path: SignInPath): string { return path === 'device' ? DEVICE_PREFIX : BUNDLED_PREFIX }
+// 0.26.0 (P5): the own server of a session: Test always uses its device server; Prod follows the sign-in path (device, or the legacy OAuth server)
+function ownPrefix(path: SignInPath, env: Env = 'PROD'): string { return env === 'TEST' ? DEVICE_TEST_PREFIX : path === 'device' ? DEVICE_PREFIX : BUNDLED_PREFIX }
 function hintFor(path: SignInPath | undefined): string { return path === 'device' ? DEVICE_HINT : AUTH_HINT }
 
 // the environment variables the path rule and the device label read ($.env.get takes a literal name)
@@ -604,7 +709,12 @@ async function pathState($: any): Promise<SignInPathState> {
   await setPath($, c.path, c.reason, false)
   return pathMirror!
 }
-async function pathNow($: any): Promise<SignInPath> { return (await pathState($)).path }
+// 0.26.0: Cowork uses the account connector, which is signed in already: no plugin sign-in, so the path is the non-device one; Test has only its device server
+async function pathNow($: any): Promise<SignInPath> {
+  if (await coworkNow($)) return 'oauth'
+  if ((await envNow($)) === 'TEST') return 'device'
+  return (await pathState($)).path
+}
 
 async function heldSignIn($: any): Promise<SignIn | undefined> {
   const sid = await syncSession($)
@@ -639,9 +749,10 @@ async function endSignIn($: any, why: string) {
 // R1 fallback: the device server of this build, connected; else the session goes to the OAuth path with the note
 async function deviceServer($: any): Promise<string | undefined> {
   if (deviceServerName) return deviceServerName
+  const wanted = (await envNow($)) === 'TEST' ? DEVICE_TEST_SERVER : DEVICE_SERVER   // 0.26.0 (P5)
   let c: any
-  try { c = await $.mcp.connect(DEVICE_SERVER) } catch (err: any) { c = { isConnected: false, reason: String(err?.message ?? err).slice(0, 80) } }
-  if (c?.isConnected) { deviceServerName = String(c.server || `plugin_${VARIANT.name}_${DEVICE_SERVER}`); return deviceServerName }
+  try { c = await $.mcp.connect(wanted) } catch (err: any) { c = { isConnected: false, reason: String(err?.message ?? err).slice(0, 80) } }
+  if (c?.isConnected) { deviceServerName = String(c.server || `plugin_${VARIANT.name}_${wanted}`); return deviceServerName }
   await log($, `device server not connected: ${c?.reason ?? 'unknown'}`)   // 0.25.6: stays on the device path (no OAuth server exists); the next call connects again
   lastSignInFailure = { at: new Date().toISOString(), reason: `the kinitro.ai device server did not connect (${String(c?.reason ?? 'no reason given').slice(0, 100)})` }
   try { await update($, bandNoteA, () => DEVICE_UNAVAILABLE) } catch { /* ignore */ }
@@ -808,29 +919,57 @@ async function log($: any, line: string) {
 //   user       a server of the user named kinitro_ai: mcp__kinitro_ai__<verb>
 //   connector  the claude.ai connector inside Claude Code: mcp__claude_ai_Kinitro__<verb>
 //   other      any other server that has a current-seat tool and "kinitro" or "methos" in its name
-export type KinitroSource = 'bundled' | 'user' | 'connector' | 'other'
+export type KinitroSource = 'bundled' | 'user' | 'connector' | 'other' | 'connector-adopted'   // 0.26.0 (P4): connector-adopted = the account connector taken as the plugin's own connection (Cowork)
 const BUNDLED_PREFIX = `mcp__plugin_${VARIANT.name}_kinitro_ai__`
 const DEVICE_PREFIX = devicePrefixFor(VARIANT.name)   // 0.25.0: the own device server's tools
+const DEVICE_TEST_PREFIX = `mcp__plugin_${VARIANT.name}_kinitro_ai_device_test__`   // 0.26.0 (P5): the Test device server's tools
 const USER_PREFIX = `mcp__${SERVER}__`
 const CONNECTOR_PREFIX = 'mcp__claude_ai_Kinitro__'
 const SEAT_VERB = 'current-seat'
-const SOURCE_LABEL: Record<KinitroSource, string> = { bundled: 'bundled plugin server', user: 'user server', connector: 'claude.ai connector', other: 'other server' }
+const SOURCE_LABEL: Record<KinitroSource, string> = { bundled: 'bundled plugin server', user: 'user server', connector: 'claude.ai connector', other: 'other server', 'connector-adopted': 'account connector (adopted)' }
 export const AUTH_HINT = `Type /${VARIANT.command} domain to sign in`
 // 0.25.6: what the probe says when no kinitro.ai tool is usable. It says what is missing and the probe's own step, never "type /kinitro" (the answer is read inside that command: a loop)
 export const SIGNIN_NEEDED = `not signed in to kinitro.ai yet; the email-code sign-in starts with ${PROBE_TOOL} action sign-in`
 const noTools = (_path: SignInPath) => `no kinitro.ai tools are visible in this session: ${SIGNIN_NEEDED}.`
 
+// 0.26.0 (item 4.2.1-4672 P13): the one lookup of kinitro.ai prefixes in a tool list. bundled*: the plugin's own servers (Prod: the device
+// server and the legacy OAuth server; Test: the Test device server). connector*: account connectors by the rule
+// /^mcp__(claude_ai_)?kinitro(_ai)?(_device)?(_test)?__/i, never mcp__plugin_...; a connector is Test iff its prefix contains "test".
+// Connectors come in adoption order (CONNECTOR_ORDER first, then the others as listed).
+export type KinitroPrefixes = { bundledProd: string[]; bundledTest: string[]; connectorProd: string[]; connectorTest: string[] }
+export function kinitroPrefixesOf(names: string[]): KinitroPrefixes {
+  const has = (prefix: string) => names.some((n) => n.startsWith(prefix))
+  const connectors = new Map<string, string>()   // lower case prefix -> prefix as listed
+  for (const n of names) { const m = CONNECTOR_RX.exec(n); if (m && !n.startsWith('mcp__plugin_') && !connectors.has(m[0].toLowerCase())) connectors.set(m[0].toLowerCase(), m[0]) }
+  const ordered = (env: Env) => {
+    const mine = [...connectors.keys()].filter((p) => (env === 'TEST') === /test/i.test(p))
+    const rank = (p: string) => { const i = CONNECTOR_ORDER[env].indexOf(p); return i < 0 ? 99 : i }
+    return mine.map((p, i) => ({ p, i })).sort((a, b) => rank(a.p) - rank(b.p) || a.i - b.i).map((x) => connectors.get(x.p)!)
+  }
+  return {
+    bundledProd: [DEVICE_PREFIX, BUNDLED_PREFIX].filter(has), bundledTest: [DEVICE_TEST_PREFIX].filter(has),
+    connectorProd: ordered('PROD'), connectorTest: ordered('TEST'),
+  }
+}
+
 // pure: picks the kinitro.ai tool prefix from a list of tool names (the session's tool list). A server counts when it
 // has a current-seat tool; the bundled server wins over a user server, that over the claude.ai connector, that over the rest.
 // 0.25.0: the own server of the session's sign-in path is the bundled one; the inactive own server is never taken (the device
 // address lists its tools before any sign-in, the OAuth server none until it is authenticated).
-export function resolveKinitroTools(names: string[], path: SignInPath = 'oauth'): { prefix: string; source: KinitroSource } | undefined {
-  const own = ownPrefix(path), inactive = ownPrefix(path === 'device' ? 'oauth' : 'device')
-  const seats = new Set(names.filter((n) => n.endsWith(`__${SEAT_VERB}`) && !n.startsWith(inactive)))
+// 0.26.0 (P5): the own server also depends on the session's environment; the own servers of the other flavour and environment are never taken.
+// 0.26.0 (P4): with adopt (Cowork: no bundled server is started) the first listed account connector of the environment is taken as the plugin's own.
+export function resolveKinitroTools(names: string[], path: SignInPath = 'oauth', env: Env = 'PROD', adopt = false): { prefix: string; source: KinitroSource } | undefined {
+  const own = ownPrefix(path, env), inactive = [BUNDLED_PREFIX, DEVICE_PREFIX, DEVICE_TEST_PREFIX].filter((p) => p !== own)
+  const seats = new Set(names.filter((n) => n.endsWith(`__${SEAT_VERB}`) && !inactive.some((p) => n.startsWith(p))))
   const has = (prefix: string) => seats.has(prefix + SEAT_VERB)
   if (has(own)) return { prefix: own, source: 'bundled' }
   const bundled = [...seats].find((n) => n.startsWith(`mcp__plugin_${VARIANT.name}_`) && n.endsWith(`__${SEAT_VERB}`))   // the plugin's server under another server name
   if (bundled) return { prefix: bundled.slice(0, -SEAT_VERB.length), source: 'bundled' }
+  if (adopt) {
+    const p = kinitroPrefixesOf(names)
+    const first = (env === 'TEST' ? p.connectorTest : p.connectorProd)[0]
+    if (first) return { prefix: first, source: 'connector-adopted' }
+  }
   if (has(USER_PREFIX)) return { prefix: USER_PREFIX, source: 'user' }
   if (has(CONNECTOR_PREFIX)) return { prefix: CONNECTOR_PREFIX, source: 'connector' }
   const other = [...seats].find((n) => /^mcp__.+__current-seat$/.test(n) && /kinitro|methos/i.test(n))
@@ -838,47 +977,76 @@ export function resolveKinitroTools(names: string[], path: SignInPath = 'oauth')
   return undefined
 }
 
-/** 0.24.0 (criterion 8, choice 1b): the prefixes of kinitro.ai servers in the session that are not the plugin's own. */
-export function secondConnections(names: string[]): string[] {
+/** 0.24.0 (criterion 8, choice 1b): the prefixes of kinitro.ai servers in the session that are not the plugin's own.
+ *  0.26.0: for status only (the hook now refuses a model call to such a connector); servers of the other environment and the adopted connection are no second connection. */
+export function secondConnections(names: string[], env: Env = 'PROD', adopted?: string): string[] {
   const seats = names.filter((n) => n.endsWith(`__${SEAT_VERB}`) && !BUNDLED_RX.test(n) && !SIBLING_RX.test(n))
   const found = seats.filter((n) => n.startsWith(USER_PREFIX) || n.startsWith(CONNECTOR_PREFIX) || /kinitro|methos/i.test(n))
-  return [...new Set(found.map((n) => n.slice(0, -SEAT_VERB.length)))]
+  return [...new Set(found.map((n) => n.slice(0, -SEAT_VERB.length)))].filter((p) => p !== adopted && (env === 'TEST') === /test/i.test(p))
 }
 
 // Build variant (PO 21.10.2026): the bundled server of the OTHER kinitro.ai build (kinitro-ai beside kinitro-ai-test) is no
 // second connection to warn about; the gate below keeps a session to one of them.
-const SIBLING_RX = /^mcp__plugin_kinitro-ai(-test)?_kinitro_ai(_device)?__/   // review F4: exactly the two builds, each with its two own servers
+const SIBLING_RX = /^mcp__plugin_kinitro-ai(-test)?_kinitro_ai(_device(_test)?)?__/   // review F4: exactly the two builds, each with its two own servers
 
-/** Whether a build is active, given KINITRO_AI_ENV (Architect ruling R1, 21.10.2026): both builds are active by default, so
- *  one session can work on Production and look at Test. The variable is only an override that switches ONE build off:
- *  TEST switches the Production build off, PROD switches the Test build off. */
+/** Legacy (0.21 to 0.25): whether a BUILD was active given KINITRO_AI_ENV. 0.26.0 (item 4.2.1-4672 P5): the build no longer decides
+ *  activity; the SESSION's environment does (envNow). Kept only for a packaged Test build while it is retired. */
 export function activeIn(env: 'PROD' | 'TEST', value: string | undefined): boolean {
   const want = (value ?? '').trim().toUpperCase()
   return env === 'TEST' ? want !== 'PROD' : want !== 'TEST'
 }
 
-let activeP: Promise<{ on: boolean; value: string | undefined }> | undefined
-function activeNow($: any): Promise<{ on: boolean; value: string | undefined }> {
-  if (!activeP) {
-    activeP = (async () => {
-      let v: string | undefined
-      try { v = (await $.env.get('KINITRO_AI_ENV')) ?? undefined } catch { /* unset */ }
-      return { on: activeIn(VARIANT.env, v), value: v }
-    })()
+// ---- the session's environment (0.26.0, item 4.2.1-4672 P5) ---------------------------------------------------
+// Default Prod. KINITRO_AI_ENV=TEST (read once per session) or the probe action env (host atom envSession) selects Test.
+/** The environment a KINITRO_AI_ENV value names; anything else keeps the build's default (PROD in the source). */
+export function envFromValue(value: string | undefined): Env {
+  const want = (value ?? '').trim().toUpperCase()
+  return want === 'TEST' ? 'TEST' : want === 'PROD' ? 'PROD' : VARIANT.env
+}
+let envMirror: { sid: string; env: Env } | undefined
+let envVarRead: { sid: string; env: Env } | undefined
+async function envNow($: any): Promise<Env> {
+  const sid = await syncSession($)
+  if (envMirror?.sid === sid) return envMirror.env
+  let held: 'prod' | 'test' | null = null
+  try { held = await read($, envSessionA) } catch { /* ignore */ }
+  if (held) { envMirror = { sid, env: held === 'test' ? 'TEST' : 'PROD' }; return envMirror.env }
+  if (envVarRead?.sid !== sid) {
+    let v: string | undefined
+    try { v = (await $.env.get('KINITRO_AI_ENV')) ?? undefined } catch { /* unset */ }
+    envVarRead = { sid, env: envFromValue(v) }
   }
-  return activeP
+  return envVarRead.env
 }
 
-// 0.24.3 (item 4.2.1-3696 criterion 6): inert = this build is switched off (KINITRO_AI_ENV) or the session is headless
-// (claude -p, build and worker sessions). An inert plugin passes every event through and touches nothing.
-let headlessKnown: boolean | undefined   // read from the host once per module (a restarted module finds the flag there); set at session.start
+// ---- headless rule, wake (0.26.0, item 4.2.1-4672 P1, P2) -------------------------------------------------------
+/** P1: a session is inert iff isInteractive === false AND the entrypoint is unset/empty or starts with "sdk" (claude -p, SDK, build and
+ *  worker sessions). Cowork (remote_cowork) has isInteractive=false but a person works in it, so it is active. KINITRO_AI_MODE on|off
+ *  overrides both ways. The reason is the text of the log line. */
+export function headlessDecision(isInteractive: boolean, entrypoint: string | undefined, mode: string | undefined): { inert: boolean; reason: string } {
+  const ep = String(entrypoint ?? '').trim(), m = String(mode ?? '').trim().toLowerCase()
+  const facts = `interactive=${isInteractive}, entrypoint=${ep || 'unset'}`
+  if (m === 'on') return { inert: false, reason: `active (${MODE_VAR}=on, ${facts})` }
+  if (m === 'off') return { inert: true, reason: `inert (${MODE_VAR}=off, ${facts})` }
+  const inert = isInteractive === false && (ep === '' || ep.toLowerCase().startsWith('sdk'))
+  return { inert, reason: `${inert ? 'inert' : 'active'} (${facts})` }
+}
+
+let headlessKnown: boolean | undefined   // read from the host once per module (a restarted module finds the flag there); set at session start
 async function headlessNow($: any): Promise<boolean> {
   if (headlessKnown === undefined) headlessKnown = await read($, headlessA)
   return headlessKnown
 }
-async function inertNow($: any): Promise<boolean> {
-  return !(await activeNow($)).on || (await headlessNow($))
+let wakeKnown: 'on' | 'off' | null | undefined
+async function wakeMode($: any): Promise<'on' | 'off' | null> {
+  if (wakeKnown === undefined) { try { wakeKnown = await read($, wakeModeA) } catch { wakeKnown = null } }
+  return wakeKnown
 }
+async function setWake($: any, mode: 'on' | 'off' | null) { wakeKnown = mode; try { await update($, wakeModeA, () => mode) } catch { /* ignore */ } }
+// dormant: a headless session that was not woken: no hook does anything, a call of the own server passes through (item 3696)
+async function dormantNow($: any): Promise<boolean> { return (await headlessNow($)) && (await wakeMode($)) !== 'on' }
+// inert: dormant, or silenced by wake off / probe off (no briefing, no context, no mirror; the key handling stays)
+async function inertNow($: any): Promise<boolean> { return (await wakeMode($)) === 'off' || (await dormantNow($)) || dupSilent() }   // 0.26.0 (P8): also silent while a newer copy of the plugin is active
 
 // the one log line of a headless session: in the person's folder, never in the working folder
 async function headlessLog($: any, line: string) {
@@ -887,6 +1055,20 @@ async function headlessLog($: any, line: string) {
     if (home) await $.fs.write(joinPath(home, `${F}/headless.log`), `${new Date().toISOString()} ${line}
 `)
   } catch { /* ignore */ }
+}
+
+// 0.26.0 (P4): is this a Cowork-like session where the plugin's own .mcp.json servers are not started and the account connector is adopted?
+// (CLAUDE_CODE_SKIP_PLUGIN_MCP_SERVERS is 1 or true, or the entrypoint contains "cowork"); read once per module
+let coworkKnown: { sid: string; v: boolean } | undefined
+async function coworkNow($: any): Promise<boolean> {
+  const sid = await syncSession($)
+  if (coworkKnown?.sid !== sid) {
+    let skip = '', ep = ''
+    try { skip = String((await $.env.get('CLAUDE_CODE_SKIP_PLUGIN_MCP_SERVERS')) ?? '').trim().toLowerCase() } catch { /* unset */ }
+    try { ep = String((await $.env.get('CLAUDE_CODE_ENTRYPOINT')) ?? '') } catch { /* unset */ }
+    coworkKnown = { sid, v: skip === '1' || skip === 'true' || /cowork/i.test(ep) }
+  }
+  return coworkKnown.v
 }
 
 /** The one sentence that tells the person about a second connection and how to switch it off for this tool. */
@@ -905,26 +1087,30 @@ let seconds: string[] = []
 let secondChecked = false
 async function kinitroTools($: any): Promise<{ prefix: string | undefined; source: KinitroSource | undefined }> {
   if (toolPrefix) return { prefix: toolPrefix, source: toolSource }
-  const path = await pathNow($)
+  const path = (await pathState($)).path, env = await envNow($)
+  const adopt = await coworkNow($)
   try {
     const names: string[] = (await $.tool.list()).map((t: any) => String(t.name))
-    const found = resolveKinitroTools(names, path)
-    toolPrefix = found?.prefix === ownPrefix(path) ? found.prefix : undefined   // fix round L1: the exact own server, no lookalike
-    toolSource = toolPrefix ? 'bundled' : undefined
-    seconds = secondConnections(names)
+    const found = resolveKinitroTools(names, adopt ? 'device' : path, env, adopt)
+    // fix round L1: the exact own server, no lookalike. 0.26.0 (P4): in Cowork no own server is started, so the first account connector is adopted
+    const ownP = [ownPrefix(path, env), ownPrefix('device', env)]
+    toolPrefix = found && (found.source === 'connector-adopted' || ownP.includes(found.prefix)) ? found.prefix : undefined
+    toolSource = toolPrefix ? (found!.source === 'connector-adopted' ? 'connector-adopted' : 'bundled') : undefined
+    seconds = toolSource === 'connector-adopted' ? [] : secondConnections(names, env)   // in Cowork the other connectors are no second connection to switch off
   } catch { /* nothing is visible */ }
   return { prefix: toolPrefix, source: toolSource }
 }
 
 // the second connections in the session now (for the notice; read until it was told)
 async function secondConnectionsNow($: any): Promise<string[]> {
-  try { seconds = secondConnections((await $.tool.list()).map((t: any) => String(t.name))) } catch { /* keep the last */ }
+  try { seconds = secondConnections((await $.tool.list()).map((t: any) => String(t.name)), await envNow($)) } catch { /* keep the last */ }
+  if (toolSource === 'connector-adopted') seconds = []
   return seconds
 }
 
 // the prefix to show or to name in texts: the resolved one, else the bundled name
 async function kinitroPrefix($: any): Promise<string> {
-  return (await kinitroTools($)).prefix ?? ownPrefix(await pathNow($))
+  return (await kinitroTools($)).prefix ?? ownPrefix(await pathNow($), await envNow($))
 }
 
 // one call through the plugin's own server: the tool path (its tool.call hook adds the key), else the direct MCP route
@@ -933,7 +1119,7 @@ async function kinitroPrefix($: any): Promise<string> {
 async function mcpOnce($: any, tool: string, args: Record<string, unknown>): Promise<{ text: string; isError: boolean }> {
   const { prefix, source } = await kinitroTools($)
   const path = await pathNow($)
-  const p = prefix ?? ownPrefix(path)   // nothing visible yet (connecting, not signed in): the own server of the session's path
+  const p = prefix ?? ownPrefix(path, await envNow($))   // nothing visible yet (connecting, not signed in): the own server of the session's path
   const errs: string[] = []
   // fix round L4/M2: once the own server is listed, the tool path is the only route and a deny or a failure there is final
   // (the call may have run; it is never repeated on the direct route). Only while no own tool is listed (nothing can have
@@ -1030,7 +1216,7 @@ function confirmation(slug: string, bound: { text: string; approval?: Approval }
   const message = bound.text
   const ok = domainRef === slug && !!briefing
   return ok
-    ? { bound: true, domain: briefing?.domainName ?? slug, agent: briefing?.agentName ?? null, domainView: message.split('domain view: ')[1] ?? null, sayToUser: `This session now works for ${briefing?.domainName ?? slug}${briefing?.agentName && briefing.agentName !== briefing.domainName ? ` with the agent ${briefing.agentName}` : ''}.` }
+    ? { bound: true, domain: briefing?.domainName ?? slug, agent: briefing?.agentName ?? null, seat: seatName ?? briefing?.agentName ?? null, domainView: message.split('domain view: ')[1] ?? null, ...(seatProblem ? { seatProblem, seats: seatChoices } : {}), sayToUser: `This session now works for ${briefing?.domainName ?? slug}${briefing?.agentName && briefing.agentName !== briefing.domainName ? ` with the agent ${briefing.agentName}` : ''}.${seatProblem ? ' ' + seatProblem : ''}` }
     : { bound: false, reason: message, ...(toolSource ? {} : { sayToUser: `You are not signed in to kinitro.ai yet; I start the email-code sign-in now.` }) }
 }
 
@@ -1088,16 +1274,22 @@ async function switchedOnPage($: any, approved: DomainChoice[]): Promise<DomainC
 // open the domain view of the bound domain in the browser pane, straight from the plugin (no model turn).
 // 0.22.0: the link is the shell of the domain (open-page target 'shell'). A server that does not know the target answers
 // page_link_bad_target; then the plugin asks once more without a target and opens the page the older server gives.
+// 0.26.0 (item 4.2.1-4672 P11): the page to show is the seat's own page (target shell on the agent node) when the binding knows the agent node;
+// otherwise, or when the server refuses that page, the domain shell as before.
+async function viewPageUrl($: any): Promise<string | undefined> {
+  if (briefing?.agentCode) {
+    try { const u = (await mcp($, 'open-page', { target: 'shell', nodeCode: briefing.agentCode }))?.url; if (u) return u } catch (err: any) { await log($, `seat page not opened, the domain shell is used: ${String(err?.message ?? err).slice(0, 160)}`) }
+  }
+  try { return (await mcp($, 'open-page', { target: 'shell' }))?.url } catch (err: any) {
+    if (!String(err?.message ?? err).includes('page_link_bad_target')) throw err
+    await log($, 'open-page target shell not known by the server; asking again without a target')
+    return (await mcp($, 'open-page', {}))?.url
+  }
+}
 async function openDomainView($: any): Promise<string> {
   if (!domainRef) return 'no domain bound'
   let url: string | undefined
-  try {
-    try { url = (await mcp($, 'open-page', { target: 'shell' }))?.url } catch (err: any) {
-      if (!String(err?.message ?? err).includes('page_link_bad_target')) throw err
-      await log($, 'open-page target shell not known by the server; asking again without a target')
-      url = (await mcp($, 'open-page', {}))?.url
-    }
-  } catch (err: any) { return `open-page failed: ${err?.message ?? err}` }
+  try { url = await viewPageUrl($) } catch (err: any) { return `open-page failed: ${err?.message ?? err}` }
   if (!url) return 'open-page gave no url'
   return openInPane($, url, readableLink(url))
 }
@@ -1106,11 +1298,7 @@ async function openDomainView($: any): Promise<string> {
 async function domainViewLink($: any): Promise<string | undefined> {
   if (!domainRef) return undefined
   try {
-    let url: string | undefined
-    try { url = (await mcp($, 'open-page', { target: 'shell' }))?.url } catch (err: any) {
-      if (!String(err?.message ?? err).includes('page_link_bad_target')) throw err
-      url = (await mcp($, 'open-page', {}))?.url
-    }
+    const url = await viewPageUrl($)
     return url ? readableLink(url) : undefined
   } catch (err: any) { await log($, `domain view link failed: ${err?.message ?? err}`); return undefined }
 }
@@ -1268,6 +1456,11 @@ async function loadBriefing($: any) {
       else { domainId = d.id; agentId = d.defaultAgentNodeId }   // a server without session keys
       if (!agentId) throw new Error(noAgentNodeText(slug))
     }
+    // 0.26.0 (seat choice): the seat the person asked for with set-domain; a seat that is not found leaves the default seat bound and is said once
+    if (domainRef && (await heldKey($))) {
+      try { if (await applySeat($, domainRef)) { seat = await mcp($, 'current-seat', {}); domainId = seat?.domain?.id ?? domainId; agentId = seat?.agentNode?.id ?? agentId } }
+      catch (err: any) { if (err instanceof SeatNotFound) { seatProblem = `I did not find a seat called ${err.wanted} in this domain${err.names.length ? ` (seats: ${err.names.join(', ')})` : ''}; the default seat is bound.`; await log($, `seat ${err.wanted} not found`) } else throw err }
+    }
     if (!agentId) throw new Error(noAgentNodeText(seat?.domain?.name ?? 'bound domain'))
     const [dom, agent] = await Promise.all([mcp($, 'get-node', { nodeId: domainId }), mcp($, 'get-node', { nodeId: agentId })])
     const domainCode: string = dom?.code, agentCode: string = agent?.code
@@ -1298,6 +1491,7 @@ async function loadBriefing($: any) {
     const raw = Object.entries(sections).map(([k, v]) => `## ${k}\n${v}`).join('\n\n')
     briefing = { raw, sections, code: agentCode, loadedAt: new Date().toISOString(), source: 'kinitro.ai', domainCode, agentCode, domainRef, domainName: dom?.name, agentName: agent?.name, layers: layers.join(', ') }
     briefingError = undefined
+    seatName = agent?.name ?? seatName
     try { await update($, currentA, () => domainRef ?? '') } catch { /* ignore */ }
     try { await $.fs.write(await at($, CACHE_FILE), JSON.stringify(briefing)) } catch { /* ignore */ }
     await log($, `briefing loaded for domain ${domainCode} / agent ${agentCode} via ${route}: ${raw.length} chars, layers ${briefing.layers}`)
@@ -1358,6 +1552,7 @@ async function writeState($: any) {
 
 // the mirroring switch, read from STATE_FILE at every use (survives reloads; absent file or field = on)
 async function mirrorEnabled($: any): Promise<boolean> {
+  if ((await wakeMode($)) === 'off' || dupSilent()) return false   // 0.26.0 (P2): wake off / probe off silences the mirror for this session; P8: so does a newer copy
   try {
     const f = await at($, STATE_FILE)
     mirrorOff = (await $.fs.exists(f)) ? JSON.parse(await $.fs.read(f)).mirror === 'off' : false
@@ -1478,7 +1673,8 @@ async function flushOutbox($: any) {
         o.sent = true; o.domainRef = ref; changed = true
         o.result = r?.alreadyPresent ? 'alreadyPresent' : `rows ${(r?.rowIds ?? []).length}`
         if (r?.alreadyPresent) mirrorDup++; else mirrorSent++
-        lastMirrorTarget = r?.target?.agentNodeId ?? lastMirrorTarget
+        lastMirrorTarget = r?.target?.agentNodeId ?? lastMirrorTarget   // display only: the server decides where the chat goes
+        lastMirrorAt = new Date().toISOString()
         lastMirrorError = undefined
       } catch (err: any) { lastMirrorError = String(err?.message ?? err).slice(0, 300); await log($, `mirror append failed: ${lastMirrorError}`); break }
     }
@@ -1608,12 +1804,20 @@ async function signInLine($: any): Promise<string> {
   return `sign-in path: ${st.path} (${st.reason})${si ? ` · pending: a code was sent to ${si.mask}, request expires ${si.expiresAt || '-'}` : ''}${failed}`
 }
 
+// 0.26.0 (P12): the domain recorded for this working folder (the folder's own file, else the session home's)
+async function folderDomain($: any): Promise<string | undefined> {
+  let cwd = ''
+  try { cwd = await $.session.cwd() } catch { /* ignore */ }
+  return (cwd ? await readFileTrim($, joinPath(cwd, DOMAIN_FILE)) : undefined) ?? (await readFileTrim($, await at($, DOMAIN_FILE)))
+}
+
 async function statusText($: any): Promise<string> {
   const pct = await contextPercent($)
   const apS = await heldApproval($)   // review F5
   return [
-    `${MARK} ${VERSION}`,
+    `${markFor(await envNow($))} ${VERSION}`,
     `briefing: ${!briefing && apS ? `pending approval (${apS.slug})` : briefing ? `domain ${briefing.domainCode ?? '?'} / agent ${briefing.agentCode ?? '?'} (${briefing.raw.length} chars, source ${briefing.source}, loaded ${briefing.loadedAt}, route ${route})` : `MISSING (${briefingError})`}`,
+    `seat: ${seatName ?? briefing?.agentName ?? '-'}`,
     `domain: ${domainRef ?? (needsDomain ? 'NOT SET - ' + needsDomain : 'seat-bound connection')} · session home ${homeDir ?? '-'} · record ${recordPath ?? 'none (no user home or session id)'}`,
     await toolsLine($),
     await sessionLine($),
@@ -1904,9 +2108,13 @@ export function publishedVersion(json: string): string | undefined {
   return typeof v === 'string' && /^\d+(\.\d+)*/.test(v) ? v : undefined
 }
 
-export function updateNotice(latest: string, running: string, page: string): string | undefined {
+// 0.26.0 (item 4.2.1-4672 P8): the notice names the step of the user's surface; without a surface it names both
+export function updateNotice(latest: string, running: string, page: string, kind?: SurfaceKind): string | undefined {
   if (!latest || compareVersions(latest, running) <= 0) return undefined
-  return `${VARIANT.name} ${latest} is available (you run ${running}). Claude Code: run /${VARIANT.command} update. Cowork/Desktop: re-upload the plugin from ${page}.`
+  const terminal = `Claude Code: run /${VARIANT.command} update.`
+  const managed = `The plugin is managed in your Claude account (organisation plugins: your admin re-uploads it); ask me to fetch the new package from ${page}.`
+  const step = kind === 'cowork' ? managed : kind === 'terminal' || kind === 'desktop' ? terminal : `${terminal} Cowork/Desktop: re-upload the plugin from ${page}.`
+  return `${VARIANT.name} ${latest} is available (you run ${running}). ${step}`
 }
 
 async function downloadBase($: any): Promise<string> {
@@ -1917,7 +2125,7 @@ async function downloadBase($: any): Promise<string> {
 }
 
 // at the first prompt: fetch marketplace.json at most once per 24 h (2.5 s, silent on any error, logged), then compare
-async function updateCheck($: any): Promise<string | undefined> {
+async function updateCheck($: any, kind?: SurfaceKind): Promise<string | undefined> {
   const base = await downloadBase($)
   let now = Date.now()
   try { now = await $.clock.now() } catch { /* the wall clock */ }
@@ -1939,7 +2147,109 @@ async function updateCheck($: any): Promise<string | undefined> {
     } finally { stop.abort() }
     await writeState($)
   }
-  return updateNotice(updateLatest, VERSION, base)
+  return updateNotice(updateLatest, VERSION, base, kind)
+}
+
+// ---- surface, duplicates, diagnosis (0.26.0, item 4.2.1-4672 P7, P8) ---------------------------------------------
+export type SurfaceKind = 'terminal' | 'desktop' | 'cowork' | 'background'
+const SURFACE_NAME: Record<SurfaceKind, string> = { terminal: 'Claude Code (terminal)', desktop: 'Claude Code (desktop)', cowork: 'Cowork', background: 'background session' }
+/** Which surface a session runs on, from the entrypoint, the drawing surfaces and the Cowork marker. */
+export function surfaceKind(inert: boolean, entrypoint: string, surfaces: string[], coworkMarker: boolean): SurfaceKind {
+  if (/cowork/i.test(entrypoint)) return 'cowork'
+  if (inert) return 'background'
+  if (/desktop/i.test(entrypoint) || surfaces.some((x) => x === 'desktop')) return 'desktop'
+  if (surfaces.length === 0 && coworkMarker) return 'cowork'
+  return 'terminal'
+}
+async function surfaceNow($: any): Promise<{ kind: SurfaceKind; name: string; band: boolean }> {
+  let surfaces: string[] = [], ep = ''
+  try { surfaces = (await $.session.surfaces()).map((x: any) => String(x)) } catch { /* none */ }
+  try { ep = String((await $.env.get('CLAUDE_CODE_ENTRYPOINT')) ?? '') } catch { /* unset */ }
+  const kind = surfaceKind(await inertNow($), ep, surfaces, await coworkNow($))
+  return { kind, name: SURFACE_NAME[kind], band: surfaces.length > 0 }
+}
+
+/** The other kinitro.ai plugin copies in a tool list: another plugin's probe or wake tool, or its plugin-scoped kinitro server. A copy of 0.26+ says its version in its tool description. */
+export function findCopies(tools: { name: string; description?: string }[], self: string, running: string): { names: string[]; higher: string | undefined } {
+  const names = new Set<string>()
+  let higher: string | undefined
+  for (const t of tools) {
+    const own = /^mcp__(kinitro-ai[A-Za-z0-9-]*)__(?:probe|wake)$/.exec(t.name)
+    const scoped = /^mcp__plugin_(kinitro[A-Za-z0-9-]*)_kinitro_ai/.exec(t.name)
+    const name = own?.[1] ?? scoped?.[1]
+    if (!name || name === self) continue
+    names.add(name)
+    const v = /version (\d+\.\d+\.\d+)/.exec(String(t.description ?? ''))?.[1]
+    if (own && v && compareVersions(v, running) > 0 && (!higher || compareVersions(v, higher) > 0)) higher = v
+  }
+  return { names: [...names], higher }
+}
+let dupState: { sid: string; names: string[]; higher?: string; atPrompt: boolean } | undefined
+let dupToldSid: string | undefined
+let folderToldSid: string | undefined
+// at session start and again at the first prompt (the other plugin's tools may not be listed at the start); never throws
+async function scanCopies($: any, atPrompt: boolean) {
+  const sid = await syncSession($)
+  if (dupState?.sid === sid && (dupState.atPrompt || !atPrompt)) return
+  try {
+    const found = findCopies((await $.tool.list()).map((t: any) => ({ name: String(t.name), description: String(t.description ?? '') })), VARIANT.name, VERSION)
+    const was = dupState?.sid === sid ? dupState.higher : undefined
+    dupState = { sid, ...found, atPrompt }
+    if (found.names.length && found.higher && !was) await headlessLog($, `${VERSION}: another kinitro.ai plugin (${found.names.join(', ')}) runs version ${found.higher}; this copy stays silent in this session`)
+  } catch { dupState = { sid, names: [], atPrompt } }
+}
+// a higher copy is active: this one injects nothing and mirrors nothing (the older copies cannot be changed, so the newest speaks)
+function dupSilent(): boolean { return !!dupState?.higher }
+function removeSteps(kind: SurfaceKind): string {
+  return kind === 'cowork' ? 'open the plugin list of your Claude account and remove it (organisation plugins: your admin removes it)'
+    : 'type /plugin, open the installed plugins, choose it and uninstall it, then type /reload-plugins'
+}
+export function duplicateNotice(names: string[], kind: SurfaceKind): string {
+  return `Another kinitro.ai plugin is active in this session (${names.join(', ')}). Remove it: ${removeSteps(kind)}.`
+}
+
+type Problem = { problem: string; fix: string }
+const FIX = {
+  signIn: { terminal: `Ask me to sign in to kinitro.ai; I start the email-code sign-in and give you the approval link.`, desktop: `Ask me to sign in to kinitro.ai; I start the email-code sign-in and give you the approval link.`, cowork: 'Open the kinitro.ai connector in your Claude account, sign in there, then ask me to choose a domain.', background: `Call ${PROBE_TOOL} with action sign-in.` },
+  noTools: { terminal: `Ask me to sign in to kinitro.ai; if the tools still do not show afterwards, type /reload-plugins.`, desktop: `Ask me to sign in to kinitro.ai; if the tools still do not show afterwards, type /reload-plugins.`, cowork: 'Add the kinitro.ai connector to your Claude account, switch it on for this chat and start a new chat.', background: `Call ${PROBE_TOOL} with action sign-in.` },
+  domain: { terminal: `Tell me which domain to work in and I choose it.`, desktop: `Tell me which domain to work in and I choose it.`, cowork: 'Tell me which domain to work in and I will choose it.', background: `Call ${PROBE_TOOL} with action set-domain.` },
+  approve: { terminal: 'Open the approval link, approve it, then tell me.', desktop: 'Open the approval link, approve it, then tell me.', cowork: 'Open the approval link, approve it, then tell me.', background: 'Approve it on the kinitro.ai page.' },
+  load: { terminal: `Run /${VARIANT.command} refresh; if it keeps failing, ask me to choose the domain again.`, desktop: `Run /${VARIANT.command} refresh; if it keeps failing, ask me to choose the domain again.`, cowork: 'Ask me to refresh the instructions; if it keeps failing, ask me to choose the domain again.', background: `Call ${PROBE_TOOL} with action refresh.` },
+  mirror: { terminal: `Wait a minute and run /${VARIANT.command} status again; if it stays, run /${VARIANT.command} refresh.`, desktop: `Wait a minute and run /${VARIANT.command} status again; if it stays, run /${VARIANT.command} refresh.`, cowork: 'Wait a minute and ask me for the status again; if it stays, ask me to refresh.', background: `Call ${PROBE_TOOL} with action refresh.` },
+} as const
+const fixOf = (k: keyof typeof FIX, kind: SurfaceKind) => FIX[k][kind]
+
+async function copiesNow($: any): Promise<string[]> { await scanCopies($, false); return dupState?.names ?? [] }
+
+// the plain-words diagnosis the probe action status returns
+async function diagnose($: any): Promise<Record<string, unknown>> {
+  const sf = await surfaceNow($)
+  const env = await envNow($)
+  const { prefix, source } = await kinitroTools($)
+  const key = !!(await heldKey($)), si = await heldSignIn($), ap = await heldApproval($)
+  const mirror = await mirrorEnabled($)
+  const copies = await copiesNow($)
+  const latest = updateLatest && compareVersions(updateLatest, VERSION) > 0 ? updateLatest : null
+  const problems: Problem[] = []
+  const add = (problem: string, k: keyof typeof FIX) => problems.push({ problem, fix: fixOf(k, sf.kind) })
+  if (!source) add('The plugin cannot see any kinitro.ai tools in this session.', 'noTools')
+  else if (si) add('The sign-in waits for your approval.', 'approve')
+  else if (!key && !legacy && !ap) add('You are not signed in to kinitro.ai.', 'signIn')
+  if (ap) add(`${ap.domainName} waits for your approval.`, 'approve')
+  else if (needsDomain) add('No domain is chosen for this session.', 'domain')
+  else if (!briefing && briefingError && source && key) add(`The seat's instructions could not be loaded (${briefingError.replace(/\s+/g, ' ').slice(0, 120)}).`, 'load')
+  if (mirror && lastMirrorError) add(`Your chat does not reach the kinitro.ai chat (${lastMirrorError.slice(0, 120)}).`, 'mirror')
+  if (copies.length) problems.push({ problem: `Another kinitro.ai plugin is active in this session (${copies.join(', ')})${dupState?.higher ? '; it is newer, so this copy stays silent' : ''}.`, fix: `Remove it: ${removeSteps(sf.kind)}.` })
+  return {
+    version: VERSION, surface: sf.name, environment: envName(env),
+    connection: { kind: source === 'connector-adopted' ? 'account connector' : source === 'bundled' ? 'bundled' : source ? SOURCE_LABEL[source] : 'none', prefix: prefix ?? null },
+    signedIn: key ? 'yes' : si ? 'pending' : 'no', keyHeld: key,
+    domain: briefing?.domainName ?? domainRef ?? null, seat: seatName ?? briefing?.agentName ?? null,
+    mirror: { on: mirror, lastSentAt: lastMirrorAt ?? null, lastError: lastMirrorError ?? null },
+    briefingLoadedAt: briefing?.loadedAt ?? null,
+    duplicates: copies, updateAvailable: latest, ...(latest ? { updateStep: updateNotice(latest, VERSION, UPDATE_BASE, sf.kind) } : {}),
+    problems,
+  }
 }
 
 // ---- the domain band as a pure model (round 2: testable without a renderer) ----
@@ -1947,12 +2257,13 @@ export type BandItem =
   | { kind: 'link'; key: string; label: string; href: string }
   | { kind: 'button'; key: string; label: string; act: 'change' | 'approved' | 'bind' | 'refresh' | 'close' | 'signin-approved' | 'signin-resend' | 'signin-again' | 'signin-device'; slug?: string; primary?: boolean; dim?: boolean }
 export type BandModel = { compact: boolean; title: string; items: BandItem[]; selector?: string; note?: string }
-export type BandState = { approved: DomainChoice[]; current: string | null; chooser: boolean; url: string | null; note: string | null; pend: Approval | null; signIn?: SignIn | null; now?: number; offerDevice?: boolean }
+export type BandState = { approved: DomainChoice[]; current: string | null; chooser: boolean; url: string | null; note: string | null; pend: Approval | null; signIn?: SignIn | null; now?: number; offerDevice?: boolean; env?: Env; seat?: string | null; mirror?: boolean; version?: string }
 
 /** R6: what the band shows. With a pending approval: the "Approve <Domain>" link (the picker entry of the pending domain)
  *  and "I approved it"; never the server's prose or Markdown. */
 export function bandModel(s: BandState): BandModel {
   const name = (slug: string | null) => s.approved.find((d) => d.slug === slug)?.name ?? slug
+  const BRAND = brandFor(s.env)   // 0.26.0 (P5): TEST only while Test is active
   // 0.25.0 (R5, R6): a pending device sign-in: the mask, the approval link, "I approved it", "Send a new code" (dim for 60 s)
   if (s.signIn) {
     const early = (s.now ?? Date.now()) < s.signIn.requestedAt + RESEND_MS
@@ -1968,7 +2279,10 @@ export function bandModel(s: BandState): BandModel {
   }
   if (s.note === SIGNIN_ENDED) return { compact: false, title: SIGNIN_ENDED, items: [{ kind: 'button', key: 'kin-signin-again', label: 'Sign in again', act: 'signin-again', primary: true }] }
   if (!s.chooser && s.current && !s.pend) {
-    return { compact: true, title: `${BRAND} · ${name(s.current)} (${s.current}) `, items: [{ kind: 'button', key: 'kin-change', label: 'Change domain', act: 'change', dim: true }] }
+    // 0.26.0 (item 4.2.1-4672 P7): the band carries the status: seat, mirror, version (TEST only while Test is active, through the brand)
+    const status = s.seat !== undefined || s.mirror !== undefined || s.version !== undefined
+    const title = status ? `${BRAND} · ${name(s.current)}${s.seat ? ` · seat ${s.seat}` : ''}${s.mirror === undefined ? '' : ` · mirror ${s.mirror ? 'on' : 'off'}`}${s.version ? ` · ${s.version}` : ''}` : `${BRAND} · ${name(s.current)} (${s.current}) `
+    return { compact: true, title, items: [{ kind: 'button', key: 'kin-change', label: 'Change domain', act: 'change', dim: true }] }
   }
   const items: BandItem[] = []
   if (s.pend) {
@@ -1985,68 +2299,214 @@ export function bandModel(s: BandState): BandModel {
   return { compact: false, title, items, ...(s.url ? { selector: s.url } : {}), ...(s.note ? { note: s.note } : {}) }
 }
 
+// ---- session start, probe and wake registration (0.26.0, item 4.2.1-4672 P1, P2, P3) ---------------------------
+const PROBE_DESCRIPTION = `${VARIANT.name} harness control, version ${VERSION}. action "status" (default): diagnostics; "comments": check the open UI comments of the bound domain now and return them with the check time; "test-mode" with value on|off: refresh the instructions every 2 minutes instead of daily; "mirror" with value on|off: switch the chat mirror into the kinitro.ai chat of the agent on or off (default on; off sends and fetches nothing, on resumes from the next turn without backfill); "selection-start": remember the approved domains and return the selection page address (call before the user chooses on that page); "selection-done": compare with that list and bind the newly approved domain, or return the list to ask from; "set-domain" with domain "<slug>" and optional seat "<agent node name>": bind this session to a kinitro.ai domain (slug from list-domains), at that seat (another seat of the same domain switches the seat), and reload; "choices": the approved domains, the current one and the one this folder last worked in; "refresh": re-read the instructions from kinitro.ai, they apply from the next message; "follow" with value on|off: the browser pane opens what the agent writes; "reload": re-read the briefing from kinitro.ai; "arm-test": inject EVERY briefing section, conditional ones included, into the next user prompt, marked [TEST]; "invalidate-context": re-render the first-message context block (persona) on the next request; "sign-in" with optional email "<address>": sign this session in by an email code (kinitro.ai mails the code; the user types it only on the kinitro.ai page, never here), or send a new code; "sign-in-check": look whether the user approved the sign-in; "sign-in-path" with value auto|oauth|device: store the sign-in path setting (applies from the next Claude session); "off": switch ${VARIANT.name} off for this session (no briefing, no mirror); "on": switch it on again.`
+const PROBE_SCHEMA = { type: 'object', properties: { action: { type: 'string', enum: ['status', 'comments', 'test-mode', 'mirror', 'choices', 'open-domain', 'selection-start', 'selection-done', 'set-domain', 'reload', 'arm-test', 'invalidate-context', 'sign-in', 'sign-in-path', 'sign-in-check', 'on', 'off', 'env', 'refresh', 'follow'] }, domain: { type: 'string', description: 'domain slug for set-domain, e.g. verum' }, seat: { type: 'string', description: 'for set-domain: the agent node (seat) name to work as; none = the domain\'s default seat' }, value: { type: 'string', description: 'on|off for test-mode, mirror and follow; auto|oauth|device for sign-in-path' }, email: { type: 'string', description: "for sign-in: the email address of the user's kinitro.ai account" } } }
+// P2: the one tool of an inert (background) session. The description is at most 300 characters.
+const WAKE_TOOL = `mcp__${VARIANT.name}__wake`
+const WAKE_DESCRIPTION = `${VARIANT.name} is off in this background session (version ${VERSION}). Call action on only if your task needs your seat's briefing, todos or chat mirror; never for build, test or review work. off switches it off again.`
+const WAKE_SCHEMA = { type: 'object', properties: { action: { type: 'string', enum: ['on', 'off'] } }, required: ['action'] }
+
+let probeSid: string | undefined, wakeSid: string | undefined
+// 0.25.4: the probe is registered FIRST, before any file read, state load or timer, so that it is already in the session's tool
+// list when the first prompt ("/kinitro domain") asks ToolSearch for it. /kinitro is a static command file (commands/kinitro.md).
+async function registerProbe($: any) {
+  const sid = await syncSession($)
+  if (probeSid === sid) return
+  probeSid = sid
+  try { await $.tool.register({ name: 'probe', description: PROBE_DESCRIPTION, inputSchema: PROBE_SCHEMA }) } catch (err: any) { await log($, `tool.register failed: ${err?.message ?? err}`) }
+}
+async function registerWake($: any) {
+  const sid = await syncSession($)
+  if (wakeSid === sid) return
+  wakeSid = sid
+  try { await $.tool.register({ name: 'wake', description: WAKE_DESCRIPTION, inputSchema: WAKE_SCHEMA }) } catch (err: any) { await headlessLog($, `tool.register wake failed: ${String(err?.message ?? err).slice(0, 160)}`) }
+}
+
+let timersSid: string | undefined
+// the active part of a session start: state, cache, timers. full=false (the lazy start, P3) leaves the timers and the first seat read to session.start.
+async function activateSession($: any, full: boolean) {
+  const sid = await syncSession($)
+  await pathState($)   // 0.25.0 (R1): the sign-in path of this Claude session, decided once and logged
+  await readState($)
+  await loadCache($)
+  if (!full) return
+  timersSid = sid
+  $.clock.every(FETCH_MS, () => { flushOutbox($).then(() => fetchInbox($)) })
+  try { await log($, `surfaces: ${JSON.stringify(await $.session.surfaces())}`) } catch (err: any) { await log($, `surfaces failed: ${err?.message ?? err}`) }
+  refreshChoices($)
+  let tries = 0
+  const timer = $.clock.every(3000, () => {
+    if (refreshing || refreshDone) return
+    refreshing = true
+    tries++
+    refreshTick($).then((done) => {
+      refreshing = false
+      if (done || tries > 40 || needsDomain || pendingApproval) { refreshDone = true; timer.cancel(); log($, `refresh ${done ? 'done' : 'gave up'} after ${tries} tries`) }
+    })
+  })
+}
+
+let startedSid: string | undefined
+let startP: Promise<void> | undefined
+// session.start (info given) or, when no session.start ran for this session (P3), the first prompt.submit or tool.call (lazy: no info,
+// interactivity unknown and taken as true). P1 decides: inert (headless: nothing but the wake tool) or active.
+async function startSession($: any, info?: { isInteractive: boolean; surface: unknown }) {
+  const sid = await syncSession($)
+  startedSid = sid
+  const lazy = !info
+  let inert: boolean
+  if (lazy && (await read($, headlessA).catch(() => false)) === true) { inert = true; headlessKnown = true }   // the host already holds the decision of this session (a restarted module): nothing is decided or written again
+  else {
+    let mode: string | undefined, ep: string | undefined
+    try { mode = (await $.env.get('KINITRO_AI_MODE')) ?? undefined } catch { /* unset */ }
+    try { ep = (await $.env.get('CLAUDE_CODE_ENTRYPOINT')) ?? undefined } catch { /* unset */ }
+    const d = headlessDecision(info ? info.isInteractive : true, ep, mode)
+    inert = d.inert
+    headlessKnown = inert
+    await update($, headlessA, () => inert)
+    // 0.24.3 (item 4.2.1-3696 criterion 6): a headless session gets nothing from this plugin: no state or log file in the working
+    // folder, no briefing, no probe tool, no timer, no mirror, no note; one line in the person's folder. 0.26.0 (P1): the line names the reason.
+    if (inert) await headlessLog($, `session.start ${VERSION}: ${d.reason}${lazy ? ' (no session.start seen)' : ''}: the plugin stays inert in this session`)
+    else {
+      await registerProbe($)
+      await log($, `session.start ${VERSION} ${d.reason}, surface=${(info as any)?.surface ?? '-'}${lazy ? ' (lazy start: no session.start seen)' : ''}`)
+    }
+  }
+  if (inert && (await wakeMode($)) !== 'on') { await registerWake($); return }   // P2: the one tool of an inert session
+  await registerProbe($)
+  await activateSession($, !lazy)
+}
+async function ensureStarted($: any) {
+  if (startP) await startP
+  const sid = await syncSession($)
+  if (startedSid === sid) return
+  startP = startSession($).finally(() => { startP = undefined })
+  await startP
+}
+
+// P2: wake on. The start path runs as in an active session; the briefing comes back in the answer (no further prompt may come).
+async function wakeOn($: any): Promise<Record<string, unknown>> {
+  await setWake($, 'on')
+  await registerProbe($)
+  if (timersSid !== (await syncSession($))) await activateSession($, true)
+  if (!briefing) await withBudget($, waitForBriefing($), TOOL_BUDGET_MS)
+  if (!briefing) {
+    const why = needsDomain ?? (await heldApproval($) ? 'the domain waits for the user\'s approval' : briefingError ?? 'the briefing is not available yet')
+    return { status: 'on', briefing: null, note: scrubKey(`${VARIANT.name} is on, but no briefing is loaded yet: ${why}`) }
+  }
+  await update($, contextKeyA, () => personaKey())
+  const start = sec(S.start)
+  return { status: 'on', domain: briefing.domainName ?? domainRef ?? null, agent: briefing.agentName ?? null, briefing: scrubKey(briefingBlock() + (start ? `\n\n## ${S.start}\n${start}` : '')), note: `${VARIANT.name} is on: the chat mirror and the briefing work from now on in this session.` }
+}
+async function wakeOff($: any): Promise<Record<string, unknown>> {
+  await setWake($, 'off')
+  await log($, 'wake off: no briefing, no context and no mirror from now on in this session')
+  return { status: 'off', note: `${VARIANT.name} is off in this session: no briefing, no mirror.` }
+}
+
+// ---- follow mode (0.26.0, item 4.2.1-4672 P11) -------------------------------------------------------------------
+// After a turn in which the agent wrote a node or an item on the active connection, the browser pane opens the last one written (once per turn).
+const FOLLOW_VERBS = new Set(['create-node', 'update-content', 'create-content', 'wm-add', 'wm-update'])
+/** The node a write answer names: nodeCode or code, else a node id (a UUID), also inside node / item / content; undefined when it names none. */
+export function writtenNode(verb: string, text: string): { nodeCode?: string; nodeId?: string; what: string } | undefined {
+  let j: any
+  try { j = JSON.parse(text) } catch { return undefined }
+  for (const o of [j, j?.node, j?.item, j?.content]) {
+    if (!o || typeof o !== 'object') continue
+    const code = [o.nodeCode, o.code].find((x) => typeof x === 'string' && /^\d+(\.\d+)*$/.test(x))
+    const id = [o.nodeId, o.id].find((x) => typeof x === 'string' && UUID_RX.test(x))
+    if (code) return { nodeCode: code, what: verb }
+    if (id) return { nodeId: id, what: verb }
+  }
+  return undefined
+}
+async function followOpen($: any) {
+  const w = lastWritten
+  lastWritten = undefined
+  if (!w || !(await read($, followA).catch(() => false))) return
+  try {
+    const names = (await $.tool.list()).map((t: any) => String(t.name))
+    if (!BROWSER_TOOLS.some((b) => names.includes(b))) return
+    const url = (await mcp($, 'open-page', { target: 'shell', ...(w.nodeCode ? { nodeCode: w.nodeCode } : { nodeId: w.nodeId }) }))?.url
+    if (url) await openInPane($, String(url), readableLink(String(url)))
+  } catch (err: any) { await log($, `follow: not opened: ${String(err?.message ?? err).slice(0, 160)}`) }
+}
+
+// ---- environment switch (0.26.0, item 4.2.1-4672 P5) ---------------------------------------------------------------
+const envName = (env: Env) => (env === 'TEST' ? 'Test' : 'Prod')
+async function switchEnv($: any, env: Env): Promise<string> {
+  const sid = await syncSession($)
+  const same = (await envNow($)) === env
+  envMirror = { sid, env }
+  try { await update($, envSessionA, () => (env === 'TEST' ? 'test' : 'prod')) } catch { /* ignore */ }
+  if (!same) {
+    // the key, the binding and the approval state of the other environment are dropped; the next binding uses the new server or connector
+    await keepKey($, null); keySlug = undefined; legacy = false; keyEverHeld = false
+    await keepApproval($, null); await keepSignIn($, null)
+    briefing = undefined; domainRef = undefined; needsDomain = undefined; briefingError = undefined; followSeat = false; reloadDue = false
+    toolPrefix = undefined; toolSource = undefined; seconds = []; deviceServerName = undefined; firstDeviceSid = undefined; lastSignInFailure = undefined
+    try { await update($, currentA, () => null); await update($, chooserA, () => true); await update($, approvedA, () => []); await update($, boundA, () => null); await update($, bandNoteA, () => null); await update($, contextKeyA, () => '') } catch { /* ignore */ }
+    await sessionHome($)
+    if (recordPath && sessionRecord) { sessionRecord = { ...sessionRecord, domain: null, updatedAt: new Date().toISOString() }; try { await $.fs.write(recordPath, JSON.stringify(sessionRecord)) } catch { /* ignore */ } }
+    try { await $.fs.write(await at($, CACHE_FILE), '{}') } catch { /* ignore */ }   // the briefing cache of the other environment
+    try { $.ui.invalidate('tool.describe') } catch { /* ignore */ }
+    await log($, `environment switched to ${envName(env)}: key, binding and approval dropped`)
+  }
+  return `kinitro.ai ${envName(env)} is active in this session. Choose a domain with /${VARIANT.command}.`
+}
+
 // ---- hooks -----------------------------------------------------------------
 export const register: Register = (on, opts) => {
   options = (opts ?? {}) as Record<string, unknown>   // 0.25.0: the userConfig values (signInPath, email)
-  // Build variant (PO 21.10.2026, ruling R1): every hook first asks activeNow; a build switched off by KINITRO_AI_ENV passes
-  // every other event through untouched and refuses its own server's calls (review F1). Each build's hooks match only its own
-  // server and probe (BUNDLED_RX, PROBE_TOOL).
+  // 0.26.0 (item 4.2.1-4672 P5): one plugin serves Prod and Test. The build no longer switches itself off; the session's environment
+  // (envNow) decides which own server and which connector the hooks use, and the calls to the other environment's tools are refused.
   on('session.start', async ($, e, next) => {
-    if (!(await activeNow($)).on) return next(e)   // build variant: inactive in this session
-    // 0.24.3 (item 4.2.1-3696 criterion 6): a headless session (claude -p, build and worker sessions) gets nothing from this
-    // plugin: no state or log file in the working folder, no briefing, no probe tool, no timer, no mirror, no note
-    if (e.isInteractive === false) {
-      headlessKnown = true
-      await update($, headlessA, () => true)
-      await headlessLog($, `session.start ${VERSION} (interactive=false): the plugin stays inert in this session`)
-      return next(e)
-    }
-    // 0.25.4: the probe is registered FIRST, before any file read, state load or timer, so that it is already in the session's tool
-    // list when the first prompt ("/kinitro domain") asks ToolSearch for it; it used to be registered after those awaits.
-    // /kinitro is a static command file (commands/kinitro.md): the Claude app lists only those
-    try {
-      await $.tool.register({
-        name: 'probe',
-        description: `${VARIANT.name} harness control. action "status" (default): diagnostics; "comments": check the open UI comments of the bound domain now and return them with the check time; "test-mode" with value on|off: refresh the instructions every 2 minutes instead of daily; "mirror" with value on|off: switch the chat mirror into the kinitro.ai chat of the agent on or off (default on; off sends and fetches nothing, on resumes from the next turn without backfill); "selection-start": remember the approved domains and return the selection page address (call before the user chooses on that page); "selection-done": compare with that list and bind the newly approved domain, or return the list to ask from; "set-domain" with domain "<slug>": bind this session to a kinitro.ai domain (slug from list-domains) and reload; "reload": re-read the briefing from kinitro.ai; "arm-test": inject EVERY briefing section, conditional ones included, into the next user prompt, marked [TEST]; "invalidate-context": re-render the first-message context block (persona) on the next request; "sign-in" with optional email "<address>": sign this session in by an email code (kinitro.ai mails the code; the user types it only on the kinitro.ai page, never here), or send a new code; "sign-in-check": look whether the user approved the sign-in; "sign-in-path" with value auto|oauth|device: store the sign-in path setting (applies from the next Claude session).`,
-        inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['status', 'comments', 'test-mode', 'mirror', 'choices', 'open-domain', 'selection-start', 'selection-done', 'set-domain', 'reload', 'arm-test', 'invalidate-context', 'sign-in', 'sign-in-path', 'sign-in-check'] }, domain: { type: 'string', description: 'domain slug for set-domain, e.g. verum' }, value: { type: 'string', enum: ['on', 'off', 'auto', 'oauth', 'device'], description: 'on|off for test-mode and mirror; auto|oauth|device for sign-in-path' }, email: { type: 'string', description: "for sign-in: the email address of the user's kinitro.ai account" } } },
-      })
-    } catch (err: any) { await log($, `tool.register failed: ${err?.message ?? err}`) }
-    await log($, `session.start ${VERSION} (interactive=${e.isInteractive}, surface=${e.surface})`)
-    await pathState($)   // 0.25.0 (R1): the sign-in path of this Claude session, decided once and logged
-    await readState($)
-    await loadCache($)
-    $.clock.every(FETCH_MS, () => { flushOutbox($).then(() => fetchInbox($)) })
-    try { await log($, `surfaces: ${JSON.stringify(await $.session.surfaces())}`) } catch (err: any) { await log($, `surfaces failed: ${err?.message ?? err}`) }
-    refreshChoices($)
-    let tries = 0
-    const timer = $.clock.every(3000, () => {
-      if (refreshing || refreshDone) return
-      refreshing = true
-      tries++
-      refreshTick($).then((done) => {
-        refreshing = false
-        if (done || tries > 40 || needsDomain || pendingApproval) { refreshDone = true; timer.cancel(); log($, `refresh ${done ? 'done' : 'gave up'} after ${tries} tries`) }
-      })
-    })
+    startP = startSession($, { isInteractive: e.isInteractive, surface: e.surface })
+    try { await startP } finally { startP = undefined }
     return next(e)
   })
+
+  // 0.26.0 (item 4.2.1-4672 P2): the wake tool of an inert session. on = the normal start path, briefing in the answer; off = silent again.
+  on('tool.call', { tool: WAKE_TOOL }, async ($, e: any, next) => {
+    await ensureStarted($)
+    const action = String(e.action ?? '')
+    if (action === 'on') return { result: JSON.stringify(await wakeOn($)) }
+    if (action === 'off') return { result: JSON.stringify(await wakeOff($)) }
+    return { result: JSON.stringify({ status: 'error', message: 'action is on or off' }) }
+  }).catch(() => ({ result: JSON.stringify({ status: 'error', message: `${VARIANT.name} could not switch in this session; try the probe action on or off.` }) }))
 
   // 0.24.0 (P3, P4, P6, P7): every call of the plugin's own kinitro.ai server, the model's included. The session key goes in
   // domainRef (a slug the model passes is replaced); a refused key is replaced once by a new session and the call repeated
   // once; a key in an answer is kept and stripped before the model reads it. Other kinitro.ai connections do not match the
   // matcher, so no key ever goes through them.
   // 0.25.0 (item 4.2.1-3910): both own servers; the session's path decides which one is used, the other one is refused.
-  on('tool.call', { tool: OWN_RX }, async ($, e: any, next) => {
-    const isDevice = DEVICE_RX.test(String(e.tool))
-    const verb = String(e.tool).replace(isDevice ? DEVICE_RX : BUNDLED_RX, '')
+  // 0.26.0 (P4): the filter is widened to the own servers (both environments) and the account connectors; the handler decides whether the call
+  // belongs to the active connection (own server, or the adopted connector) and passes every foreign call through untouched.
+  on('tool.call', { tool: HOOK_RX }, async ($, e: any, next) => {
+    await ensureStarted($)   // 0.26.0 (P3): a session without a completed start is started now
+    const tool = String(e.tool)
+    const isOwn = OWN_RX.test(tool)
+    const flavour: 'device-test' | 'device' | 'bundled' = DEVICE_TEST_RX.test(tool) ? 'device-test' : DEVICE_RX.test(tool) ? 'device' : 'bundled'
+    const isDevice = isOwn && flavour !== 'bundled'
+    const connPrefix = isOwn ? '' : (CONNECTOR_RX.exec(tool)?.[0] ?? '')
+    const verb = isOwn ? tool.replace(flavour === 'device-test' ? DEVICE_TEST_RX : flavour === 'device' ? DEVICE_RX : BUNDLED_RX, '') : tool.slice(connPrefix.length)
     const authVerb = verb === 'authenticate' || verb === 'complete_authentication'
     if (!verb) return next(e)
-    // review F1: a build switched off by KINITRO_AI_ENV fails closed on its own server: the call is refused, so no answer (and
-    // no session key in it) ever reaches the model unfiltered. A project's settings can set the variable.
-    if (!(await activeNow($)).on) return authVerb ? next(e) : { deny: `${VARIANT.name} (${VARIANT.env}) is switched off in this session (KINITRO_AI_ENV); its kinitro.ai tools are not used.` }
-    if (await headlessNow($)) return next(e)   // 0.24.3: a headless session holds no key and adds nothing; the call passes through
+    if (await dormantNow($)) return next(e)   // 0.24.3: a headless session holds no key and adds nothing; the call passes through
+    // 0.26.0 (P5): the tools of the inactive environment (own server or connector) are refused, so no key of one environment goes to the other
+    const env = await envNow($)
+    const callEnv: Env = isOwn ? (flavour === 'device-test' ? 'TEST' : 'PROD') : (/test/i.test(connPrefix) ? 'TEST' : 'PROD')
+    if (callEnv !== env) return authVerb ? next(e) : { deny: `kinitro.ai ${envName(env)} is active in this session.` }
+    let adopted = false
+    if (!isOwn) {
+      const conn = await kinitroTools($)
+      if (conn.source === 'connector-adopted' && conn.prefix === connPrefix) adopted = true
+      else if (conn.source === 'bundled') return { deny: `Use the ${VARIANT.name} plugin's own kinitro.ai tools (${conn.prefix}<verb>) in this session.` }   // P8 steering
+      else return next(e)   // a foreign connection: untouched
+    }
     const path = await pathNow($)
-    if (isDevice !== (path === 'device')) return { deny: `${VARIANT.name} works through ${ownPrefix(path)} in this session; use those tools.` }   // R2
+    if (isOwn && !(await coworkNow($)) && isDevice !== (path === 'device')) return { deny: `${VARIANT.name} works through ${ownPrefix(path, env)} in this session; use those tools.` }   // R2
     if (authVerb) return next(e)
     // R5: the plugin signs in itself, never through the model. 0.25.7: the host shows the plugin's OWN $.mcp.call to this hook too
     // (measured 26.10.2026 on Claude Code 2.1.310: "$.mcp.call(...sign-in) refused: The kinitro-ai plugin signs in itself"), so
@@ -2057,11 +2517,14 @@ export const register: Register = (on, opts) => {
       return { deny: MODEL_SIGN_IN }
     }
     let key = await heldKey($)
+    // 0.26.0 (P4): a model that passes its own key to the adopted connector (it may hold one from a manual open-domain) keeps it; none held: it is adopted host-side
+    const given = adopted && typeof e.domainRef === 'string' && e.domainRef.startsWith(SESSION_KEY_PREFIX) ? e.domainRef : undefined
+    if (given && !key) { await keepKey($, given); legacy = false; key = given }
     if (!key && !legacy && !binding && !KEYLESS_VERBS.has(verb) && (await rebindOnce($))) key = await heldKey($)
-    let r: any = await next(withSession(e, verb, key))
+    let r: any = await next(withSession(e, verb, given ?? key))
     if (r?.isError && !binding && !KEYLESS_VERBS.has(verb) && isKeyRefusal(resultText(r)) && (await rebindOnce($))) {
       key = await heldKey($)
-      if (key) r = await next(withSession(e, verb, key))
+      if (key) r = await next(withSession(e, verb, given ?? key))
     }
     const text = resultText(r)
     // R5: a pending key answers sign_in_pending; the model gets the plugin's own result (the link, no server text)
@@ -2076,6 +2539,7 @@ export const register: Register = (on, opts) => {
       if (k) { await keepKey($, k); legacy = false }
       if (!binding && !(e.request !== undefined && ownRequests.has(String(e.request)))) { followSeat = true; reloadDue = true; await log($, 'open-domain called by the agent: the binding follows the session at the next prompt') }
     }
+    if (!r?.isError && !r?.deny && FOLLOW_VERBS.has(verb) && (await read($, followA).catch(() => false))) { const w = writtenNode(verb, text); if (w) lastWritten = w }   // 0.26.0 (P11): follow mode
     // fix round L3: the whole result is looked at; with anything to strip, the answer is built from the scrubbed text only,
     // and a deny or an error stays an error
     const clean = scrubKey(text)
@@ -2086,9 +2550,16 @@ export const register: Register = (on, opts) => {
   }).catch(() => ({ deny: `${VARIANT.name}: the call failed in the plugin session check and was not run again. ${MAY_HAVE_RUN}` }))
 
   on('tool.call', { tool: PROBE_TOOL }, async ($, e: any, next) => {
-    if (!(await activeNow($)).on) return { result: `${VARIANT.name} (${VARIANT.env}) is switched off in this session (KINITRO_AI_ENV)` }   // build variant
-    if (await headlessNow($)) return next(e)   // 0.24.3: no probe in a headless session
+    await ensureStarted($)   // 0.26.0 (P3)
+    if (await dormantNow($)) return next(e)   // 0.24.3: no probe in a headless session (until it is woken)
     const action = e.action ?? 'status'
+    if (action === 'off') return { result: JSON.stringify(await wakeOff($)) }   // 0.26.0 (P2): silences this session; "on" brings it back
+    if (action === 'on') return { result: JSON.stringify(await wakeOn($)) }
+    if (action === 'env') {   // 0.26.0 (P5): not listed in the probe description: Test is hidden from normal users
+      const v = String(e.value ?? '').trim().toLowerCase()
+      if (v !== 'prod' && v !== 'test') return { result: JSON.stringify({ status: 'error', message: 'The environment is prod or test.' }) }
+      return { result: JSON.stringify({ status: 'ok', message: await switchEnv($, v === 'test' ? 'TEST' : 'PROD') }) }
+    }
     if (action === 'open-domain') return { result: await openDomainView($) }
     // 0.25.0 (R3, R7, R11): the device sign-in through the probe; never a password, never the code
     if (action === 'sign-in') {
@@ -2130,7 +2601,8 @@ export const register: Register = (on, opts) => {
       const approved: DomainChoice[] = (seat?.approved ?? []).map((d: any) => ({ slug: String(d.slug), name: String(d.name) }))
       await update($, approvedA, () => approved)
       const ap = await heldApproval($)
-      return { result: JSON.stringify({ approved, current: domainRef ? (briefing?.domainName ?? domainRef) : null, ...(ap ? { pending: { slug: ap.slug, ...approvalResult(ap) } } : {}) }) }
+      // 0.26.0 (P12): the picker data: approved domains {name, slug}, the current domain (slug) and the domain this folder last worked in
+      return { result: JSON.stringify({ approved, current: domainRef ?? null, currentName: domainRef ? (briefing?.domainName ?? domainRef) : null, lastInFolder: (await folderDomain($)) ?? null, ...(ap ? { pending: { slug: ap.slug, ...approvalResult(ap) } } : {}) }) }
     }
     if (action === 'selection-start') {
       // R7: selectorUrl is returned also when the pane opened (the Desktop pane may open hidden); the approval link while pending
@@ -2172,9 +2644,13 @@ export const register: Register = (on, opts) => {
     if (action === 'set-domain') {
       const slug = String(e.domain ?? '').trim()
       if (!slug) return { result: 'set-domain needs domain: "<slug>" (see list-domains)' }
+      // 0.26.0 (seat choice): the optional seat is a wish, bound with the domain (after an approval too); none given: the server's default seat
+      const seatArg = String(e.seat ?? '').trim()
+      seatProblem = undefined; seatChoices = []
+      await keepSeatWish($, seatArg ? (UUID_RX.test(seatArg) ? { slug, id: seatArg } : { slug, name: seatArg }) : null)
       // R3: an already pending slug answers at once from the held approval (no network), and looks again in the background
       const ap = await heldApproval($)
-      if (ap && ap.slug === slug) {
+      if (ap && ap.slug === slug && !seatArg) {
         checkApproval($)
         openInPane($, ap.url).catch(() => undefined)
         return { result: JSON.stringify(approvalResult(ap)) }
@@ -2184,6 +2660,21 @@ export const register: Register = (on, opts) => {
       if (r.approval) openInPane($, r.approval.url).catch(() => undefined)
       return { result: JSON.stringify(confirmation(slug, r)) }
     }
+    if (action === 'refresh') {   // 0.26.0 (P9): alias of reload; the start-moment briefing is re-read and injected once at the next prompt
+      needsDomain = undefined
+      const kept = briefing
+      await loadBriefing($)
+      if (!briefing) { briefing = kept; return { result: JSON.stringify({ status: 'error', message: scrubKey(`The instructions could not be refreshed${briefingError ? `: ${briefingError.slice(0, 160)}` : ''}.`) }) } }
+      refreshedPending = true; await update($, startPackA, () => true)
+      return { result: JSON.stringify({ status: 'ok', message: 'Instructions refreshed from kinitro.ai. They apply from your next message.' }) }
+    }
+    if (action === 'follow') {   // 0.26.0 (P11): follow mode, host-held, default off
+      const enable = String(e.value ?? 'on') !== 'off'
+      await update($, followA, () => enable)
+      if (!enable) lastWritten = undefined
+      return { result: JSON.stringify({ status: 'ok', follow: enable, message: enable ? 'The browser pane now opens what the agent writes.' : 'The browser pane no longer follows what the agent writes.' }) }
+    }
+    if (action === 'status') return { result: JSON.stringify({ ...(await diagnose($)), details: (await statusText($)).split('\n') }) }
     if (action === 'reload') { needsDomain = undefined; await loadBriefing($) }
     if (action === 'test-mode') { const enable = String(e.value ?? 'on') !== 'off'; await update($, testModeA, () => enable); await log($, `test mode ${enable ? 'on' : 'off'}`) }
     if (action === 'mirror') await setMirror($, String(e.value ?? 'on') !== 'off')
@@ -2195,10 +2686,15 @@ export const register: Register = (on, opts) => {
   })
 
   // 0.25.0 (R2): the tools of the own server the session does not use are described as such and wait behind ToolSearch
-  on('tool.describe', { tool: OWN_RX }, async ($, e: any, next) => {
+  on('tool.describe', { tool: HOOK_RX }, async ($, e: any, next) => {
     if (await inertNow($)) return next(e)
-    if (DEVICE_RX.test(String(e.tool)) === ((await pathNow($)) === 'device')) return next(e)
-    return { description: 'Not used in this session.', isDeferred: true }
+    const tool = String(e.tool), env = await envNow($)
+    const NOT_USED = { description: 'Not used in this session.', isDeferred: true }
+    if (!OWN_RX.test(tool)) return (/test/i.test(CONNECTOR_RX.exec(tool)?.[0] ?? '') ? 'TEST' : 'PROD') === env ? next(e) : NOT_USED   // a connector of the other environment
+    const flavour = DEVICE_TEST_RX.test(tool) ? 'device-test' : DEVICE_RX.test(tool) ? 'device' : 'bundled'
+    if ((flavour === 'device-test' ? 'TEST' : 'PROD') !== env) return NOT_USED
+    if ((await coworkNow($)) || (flavour !== 'bundled') === ((await pathNow($)) === 'device')) return next(e)
+    return NOT_USED
   })
 
   // FIRST-MESSAGE CONTEXT BLOCK: Persona + Working rules. Rendered once per
@@ -2229,7 +2725,9 @@ export const register: Register = (on, opts) => {
 
   // EVERY USER PROMPT: marker, start (first prompt), per-turn, 70 %, post-compaction
   on('prompt.submit', async ($, e, next) => {
-    if (await inertNow($)) return next(e)   // inert: build switched off, or a headless session
+    await ensureStarted($)   // 0.26.0 (P3): a session without a completed start is started now (probe, state, activity decision)
+    await scanCopies($, true)   // 0.26.0 (P8): other kinitro.ai plugin copies; a newer one silences this copy (inertNow)
+    if (await inertNow($)) return next(e)   // inert: a headless session not woken, or switched off
     // 0.25.0 (R3-R6, R9): on the device path the first user turn signs in (or asks for the email once); each turn while the
     // sign-in is pending looks again (at most 3 s) and tells the agent the link; a code typed here is not mirrored
     const signInBlocks: string[] = []
@@ -2303,12 +2801,27 @@ export const register: Register = (on, opts) => {
     const pct = await contextPercent($)
     const turns = await $.session.turns().catch(() => -1)
     const tag = testArmed ? '[TEST] ' : ''
-    const blocks: string[] = [`[${MARK} ${VERSION}] context ${pct ?? '?'} % · briefing ${briefing ? briefing.code : apNow ? `pending approval (${apNow.slug})` : 'MISSING (' + briefingError + ')'}`]
+    // 0.26.0 (item 4.2.1-4672 P7): where a surface draws the band, the band shows the status and the marker stays as before; where none does
+    // (Cowork) the marker is the one status line: [kinitro-ai 0.26.0] <Domain> · <Seat> · mirror on · context N %
+    const surf = await surfaceNow($)
+    const mark = `[${markFor(await envNow($))} ${VERSION}]`
+    const briefingState = briefing ? briefing.code : apNow ? `pending approval (${apNow.slug})` : 'MISSING (' + briefingError + ')'
+    const seatShown = seatName ?? briefing?.agentName
+    const statusLine = briefing
+      ? [briefing.domainName ?? domainRef, seatShown && seatShown !== (briefing.domainName ?? domainRef) ? seatShown : undefined, `mirror ${(await mirrorEnabled($)) ? 'on' : 'off'}`].filter(Boolean).join(' · ')
+      : `briefing ${briefingState}`
+    const blocks: string[] = [surf.band ? `${mark} context ${pct ?? '?'} % · briefing ${briefingState}` : `${mark} ${statusLine} · context ${pct ?? '?'} %`]
     const injected: string[] = ['marker']
     // update notice: first prompt only; one line when the download page publishes a newer version
-    if (turns === 0 && !(e as any).agentId) { const note = await updateCheck($); if (note) { blocks.push(note); injected.push('Update notice') } }
+    if (turns === 0 && !(e as any).agentId) { const note = await updateCheck($, surf.kind); if (note) { blocks.push(note); injected.push('Update notice') } }
+    // 0.26.0 (P8): another copy of the plugin is named once in the context (a newer copy silences this one before we get here)
+    if (!(e as any).agentId && dupState?.sid === (await syncSession($)) && dupState.names.length && dupToldSid !== dupState.sid) {
+      dupToldSid = dupState.sid
+      blocks.push(duplicateNotice(dupState.names, surf.kind)); injected.push('Other plugin copy')
+      await log($, `another kinitro.ai plugin copy named: ${dupState.names.join(', ')}`)
+    }
     // 0.24.0 (criterion 8): a second kinitro.ai connection is told once per Claude session; the plugin never uses it
-    if (!(e as any).agentId && !secondChecked && !(await read($, secondNoticeA))) {
+    if (!(e as any).agentId && !secondChecked && !(await coworkNow($)) && !(await read($, secondNoticeA))) {
       secondChecked = true   // looked at once per module load; told once per Claude session
       const others = await secondConnectionsNow($)
       if (others.length) {
@@ -2339,7 +2852,17 @@ export const register: Register = (on, opts) => {
       if (msgs.length) { blocks.push(`New messages in your kinitro.ai chat (${msgs.length}), sent there since your last turn - read them and answer in your reply where they concern the work:\n${msgs.map((m) => `- ${m.at ? String(m.at).slice(0, 16).replace('T', ' ') + ' ' : ''}${m.from ? '(' + m.from + ') ' : ''}${m.text.slice(0, 2000)}`).join('\n')}`); injected.push('Chat inbox') }
     }
     if (needsDomain) { /* domain block above */ }
-    else if (domainRef) blocks[0] += ` · domain ${domainRef} (the plugin passes this session on every ${await kinitroPrefix($)}* call; never pass domainRef yourself and never ask for a session key)`
+    else if (domainRef) {
+      const passNote = `the plugin passes this session on every ${await kinitroPrefix($)}* call; never pass domainRef yourself and never ask for a session key`
+      if (surf.band) blocks[0] += ` · domain ${domainRef} (${passNote})`
+      else if (turns === 0 || (await read($, startPackA))) blocks.push(`kinitro.ai: ${passNote}.`)
+    }
+    // 0.26.0 (P12): no binding, but this folder last worked in a domain: said once, never bound by itself
+    if (!domainRef && !apNow && turns === 0 && folderToldSid !== (await syncSession($))) {
+      folderToldSid = await syncSession($)
+      const last = await folderDomain($)
+      if (last) { const nm = (await read($, approvedA)).find((d) => d.slug === last)?.name ?? last; blocks.push(`kinitro.ai: this folder last worked in ${nm}. If the user wants it, bind it with ${PROBE_TOOL} action set-domain.`); injected.push('Folder domain') }
+    }
     const add = (key: string, title: string, why: string) => {
       const t = sec(title)
       if (!t) return
@@ -2352,8 +2875,12 @@ export const register: Register = (on, opts) => {
       // persona and working rules: when the agent does not hold the current ones (domain switch, refresh with changes, stale start block)
       // after choosing a domain always: a re-render request does not reach a running conversation (measured 2026-10-08)
       // 0.23.1: after a compaction too - the summary does not keep the general procedures (review of the agent 101 draft)
+      // 0.26.0 (P3b): in Cowork neither prompt.context nor prompt.compose fires, so this block is the only way persona and working rules arrive
+      // (start moment, after a compaction, a changed set). The key is the one prompt.context records (contextKeyA), so a host where that hook
+      // fires gets them once, not twice, and a normal turn carries state only.
+      if (refreshedPending) { blocks.push('This refreshed briefing supersedes the earlier one in this session.'); injected.push('Refreshed'); refreshedPending = false }
       if (!needsDomain && (startPack || compactedPending || (await read($, contextKeyA)) !== personaKey())) {
-        add('persona', S.persona, startPack ? `domain ${briefing.domainName ?? domainRef}` : compactedPending ? 'after compaction' : 'updated')
+        add('persona', S.persona, startPack ? `domain ${briefing.domainName ?? domainRef}` : compactedPending ? 'after compaction' : turns === 0 ? 'session start' : 'updated')
         add('rules', S.rules, '')
         await update($, contextKeyA, () => personaKey())
       }
@@ -2456,6 +2983,7 @@ export const register: Register = (on, opts) => {
     const r = await next(e)
     if (automatic) { autoSkipped++; await log($, `turn.complete reason=${e.reason} automatic turn (schedule, notice or system reminder only): the answer is mirrored, the prompt text is not`) }
     await queueTurn($, planTurn(taken, e.turnId, e.answer ?? ''))
+    await withBudget($, followOpen($), TOOL_BUDGET_MS)   // 0.26.0 (P11): follow mode, at most one page per turn
     await log($, `turn.complete reason=${e.reason} mirrorSent=${mirrorSent} dup=${mirrorDup}${lastMirrorError ? ' error=' + lastMirrorError : ''}`)
     return r
   })
@@ -2473,8 +3001,8 @@ export const register: Register = (on, opts) => {
     const note = await read($, bandNoteA)
     const pend = (await heldApproval($)) ?? null   // R6: the pending approval of this session; an expired one is dropped (F2)
     const signIn = (await heldSignIn($)) ?? null   // 0.25.0 (R5): the pending device sign-in
-    const offerDevice = (await pathNow($)) === 'oauth' && !(await kinitroTools($)).prefix   // R1 escape: no own tool listed yet
-    const m = bandModel({ approved, current, chooser, url, note, pend, signIn, now: await nowMs($), offerDevice })
+    const offerDevice = (await pathNow($)) === 'oauth' && !(await coworkNow($)) && !(await kinitroTools($)).prefix   // R1 escape: no own tool listed yet
+    const m = bandModel({ approved, current, chooser, url, note, pend, signIn, now: await nowMs($), offerDevice, env: await envNow($), seat: seatName ?? briefing?.agentName ?? null, mirror: await mirrorEnabled($), version: VERSION })
     const press = (b: Extract<BandItem, { kind: 'button' }>) => () => {
       if (b.act === 'change') { update($, chooserA, () => true); refreshChoices($) }
       else if (b.act === 'approved') checkApproval($)

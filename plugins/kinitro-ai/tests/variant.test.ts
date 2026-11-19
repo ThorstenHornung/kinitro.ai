@@ -27,13 +27,13 @@ describe('build variant', () => {
     expect(secondConnections([T, 'mcp__kinitro_ai__current-seat', 'mcp__claude_ai_Kinitro__current-seat'])).toEqual(['mcp__kinitro_ai__', 'mcp__claude_ai_Kinitro__'])
     expect(resolveKinitroTools([T])?.source).toBe('other')   // never 'bundled': the Production build does not take the Test server
   })
-  test('Production names of the local files are unchanged; the prompt line names PROD (R4)', async ($, on) => {
+  test('Production names of the local files are unchanged; the prompt line carries no environment for Prod (P5)', async ($, on) => {
     const seen: string[] = []
     on('prompt.submit', async (_$: any, e: any) => { seen.push((e.context ?? []).join('\n')); return { text: e.text } })
     const w = makeWorld(on, { files: new Map([['/w/b/.kinitro-ai-domain', 'beta\n']]), cwd: '/w/b', root: '/w/b', sid: 'SV' })
     expect(await probe($, 'reload')).toContain('domain: beta')
     await $.prompt.submit({ text: 'a', origin: { kind: 'composer' } } as any)
-    expect(seen[0]).toMatch(/^\[kinitro-ai PROD 0.25.9\] context /)
+    expect(seen[0]).toMatch(/^\[kinitro-ai 0.26.0\] .*context /)   // 0.26.0 (P5): Prod shows no environment; Test shows [kinitro-ai TEST 0.26.0]
     expect(w.files.has('/u/.kinitro-ai/sessions/SV.json')).toBe(true)
     expect(w.files.has('/w/b/kinitro-ai.log')).toBe(true)
   })

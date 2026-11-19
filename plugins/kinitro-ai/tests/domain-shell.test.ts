@@ -38,7 +38,8 @@ test('a server that does not know the shell target is asked once more without a 
 
   const view = await probe($, 'open-domain')
 
-  expect(openPages(w).map((c) => c.args.target)).toEqual(['shell', undefined])
+  // 0.26.0 (P11): the seat page (shell on the agent node) is tried first, then the domain shell, then without a target
+  expect(openPages(w).map((c) => c.args.target)).toEqual(['shell', 'shell', undefined])
   expect(view).toContain('https://methos.example/page/node')
   expect(view).not.toContain('PAGEPAYLOAD')
   expect(w.files.get('/w/b/kinitro-ai.log')).toMatch(/target shell not known by the server; asking again without a target/)
@@ -50,7 +51,7 @@ test('the retry happens once: a second page_link_bad_target ends in a failure an
 
   const view = await probe($, 'open-domain')
 
-  expect(openPages(w)).toHaveLength(2)
+  expect(openPages(w)).toHaveLength(3)   // seat page, domain shell, once more without a target
   expect(view).toMatch(/^open-page failed: /)
 })
 
@@ -60,6 +61,6 @@ test('any other error does not trigger the retry', async ($, on) => {
 
   const view = await probe($, 'open-domain')
 
-  expect(openPages(w)).toHaveLength(1)
+  expect(openPages(w)).toHaveLength(2)   // the seat page, then the domain shell; neither is retried without a target
   expect(view).toMatch(/^open-page failed: .*open_page_no_session/)
 })

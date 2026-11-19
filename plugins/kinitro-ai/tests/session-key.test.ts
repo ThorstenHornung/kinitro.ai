@@ -117,7 +117,7 @@ describe('session key', () => {
     expect(srv.minted).toHaveLength(1)
     expect(noKeyInFiles(w)).toEqual([])
     expect(await probe($, 'status')).not.toContain('kss_')
-    expect(r).toContain('kinitro-ai PROD 0.25.9')
+    expect(r).toContain('[kinitro-ai 0.26.0]')   // 0.26.0 (P5): no environment in the Prod marker
     expect(r).not.toContain('kss_')
     expect(r).not.toContain("pass domainRef:'beta'")
   })
@@ -196,11 +196,11 @@ describe('session key', () => {
     await $.prompt.submit({ text: 'two', origin: { kind: 'composer' } } as any)
     expect(w.ctx[0]).toContain('A second kinitro.ai connection')
     expect(w.ctx[1]).not.toContain('A second kinitro.ai connection')
-    await ($ as any).tool.call({ tool: `${U}list-nodes` })
-    const last = w.sent[w.sent.length - 1]!
-    expect(last.verb).toBe('list-nodes')
-    expect(last.args.domainRef).toBeUndefined()
-    expect(new Set(w.prefixes.slice(0, -1))).toEqual(new Set([B]))   // the plugin's own calls use only its own server
+    // 0.26.0 (P4, P8 steering): a model call to an account connector of the same environment while the own server is active is refused with a pointer
+    const refused: any = await ($ as any).tool.call({ tool: `${U}list-nodes` })
+    expect(String(refused.deny)).toContain(`Use the kinitro-ai plugin's own kinitro.ai tools (${B}<verb>) in this session.`)
+    expect(w.sent.some((s) => s.verb === 'list-nodes')).toBe(false)   // it never reached the other connection, with or without the key
+    expect(new Set(w.prefixes)).toEqual(new Set([B]))   // the plugin's own calls use only its own server
   })
 
   test('P8: an unsent turn of another Claude session is not sent with this session\'s key', async ($, on) => {

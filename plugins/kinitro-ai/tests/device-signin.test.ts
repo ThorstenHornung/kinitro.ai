@@ -121,7 +121,7 @@ describe('pure parts', () => {
   test('D4 band model: the mask, the link and "I approved it"; "Send a new code" dim for 60 s', () => {
     const si = { sid: 'S', url: URL, mask: MASK, expiresAt: '2026-10-25T10:00:00.000Z', requestedAt: 1_000_000 }
     const early = bandModel({ approved: [], current: null, chooser: false, url: null, note: null, pend: null, signIn: si, now: 1_030_000 })
-    expect(early.title).toBe(`kinitro.ai PROD · a code was sent to ${MASK}.`)
+    expect(early.title).toBe(`kinitro.ai · a code was sent to ${MASK}.`)
     expect(early.items[0]).toEqual({ kind: 'link', key: 'kin-signin-link', label: 'Approve this sign-in', href: URL })
     expect(early.items[1]).toMatchObject({ kind: 'button', label: 'I approved it', act: 'signin-approved', primary: true })
     expect(early.items[2]).toMatchObject({ kind: 'button', label: 'Send a new code', act: 'signin-resend', dim: true })
@@ -186,7 +186,7 @@ describe('device sign-in (criteria 1-9)', () => {
     const s = signIns(srv)
     expect(s).toHaveLength(1)
     expect(s[0]!.server).toBe('plugin:kinitro-ai:kinitro_ai_device')
-    expect(s[0]!.args).toEqual({ email: EMAIL, deviceLabel: 'WS-1', clientName: 'Claude Code, kinitro-ai 0.25.9' })
+    expect(s[0]!.args).toEqual({ email: EMAIL, deviceLabel: 'WS-1', clientName: 'Claude Code, kinitro-ai 0.26.0' })
     expect(w.sent.filter((x) => x.verb === 'open-domain')).toHaveLength(0)
     // the model's call carries the held key (the plugin adds it), and the answer is the plugin's pending result
     const r: any = await ($ as any).tool.call({ tool: `${DEV}current-seat` })
@@ -212,7 +212,7 @@ describe('device sign-in (criteria 1-9)', () => {
     await start($)
     await submit($, 'hello')
     const ui = await $.ui.mount({ ...BAND, surface: 'terminal' } as any)
-    expect((await ui.find({ type: 'Text', text: /a code was sent/ }))?.text).toBe(`kinitro.ai PROD · a code was sent to ${MASK}.`)
+    expect((await ui.find({ type: 'Text', text: /a code was sent/ }))?.text).toBe(`kinitro.ai · a code was sent to ${MASK}.`)
     const link = await ui.find({ type: 'Link' })   // a Link carries no key in the drawn tree
     expect(link?.props.href).toBe(URL)
     expect(link?.props.label).toBe('Approve this sign-in')
@@ -270,7 +270,7 @@ describe('device sign-in (criteria 1-9)', () => {
     expect(w.sent.some((x) => x.verb === 'get-briefing')).toBe(true)
     expect(w.sent.filter((x) => x.verb === 'open-domain')).toHaveLength(0)
     expect(w.ctx[1]).toContain('PERSONA')
-    expect(w.ctx[1]).toContain('domain beta')
+    expect(w.ctx[1]).toContain('name-dom-beta')   // 0.26.0 (P7): without a band surface the marker is the status line: domain name, seat, mirror
     expect(w.ctx[1]).not.toContain('sign-in waits')
     expect(w.sent.every((x) => x.args.domainRef === srv.minted[0])).toBe(true)
     expect(srv.mirrored.length).toBeGreaterThan(0)                      // the held turn went out after binding
