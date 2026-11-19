@@ -6,7 +6,7 @@
 |---|---|---|
 | 1 | kinitro or partner | Account and agent seat |
 | 2 | Setup person | Install the plugin (it brings the kinitro.ai server) |
-| 3 | Setup person | Sign in once: type `/kinitro domain` (email code) |
+| 3 | Setup person | Sign in once: `/mcp` > kinitro > Authenticate (browser), then `/kinitro domain` |
 | 4 | Business user | Start the first conversation |
 
 ## Before you start
@@ -35,7 +35,7 @@ You install once per machine, not per Claude account. In a Claude Code session, 
 
 ```
 /plugin marketplace add ThorstenHornung/kinitro.ai
-/plugin install kinitro-ai@kinitro-ai
+/plugin install kinitro@kinitro-ai
 ```
 
 Choose **user scope** when asked. The plugin is active in every later session. No GitHub account is needed.
@@ -46,9 +46,9 @@ If the install fails, check that `git` is installed and the machine can reach gi
 
 ## Step 3: Sign in once
 
-The plugin ships the kinitro.ai MCP server, so there is no separate connector to set up and no browser callback on your machine. After installing, type `/kinitro domain` in Claude Code or in the Claude desktop app. kinitro.ai mails you a 6-digit code (the plugin asks once for your account email); open the link **Approve this sign-in**, type the code on the kinitro.ai page, then choose your domain. Until you are signed in the plugin tells you: "Type /kinitro domain to sign in".
+The plugin ships the kinitro.ai MCP server `kinitro` (the normal endpoint with the OAuth client `claude`). Claude Code shows the kinitro server as needing a login at the first use. Sign in once per Claude Code config folder: type /mcp, choose kinitro, press Authenticate and finish the login in the browser on the same machine. Every later session in that folder reuses the token, with no email code. Then type `/kinitro domain` and choose your domain.
 
-**The email code works everywhere.** Locally, over SSH and in a cloud session the plugin signs in by itself: at your first message kinitro.ai mails you a 6-digit code (the plugin asks for your account email once if the setting **kinitro.ai account email** is empty). Open the link **Approve this sign-in** on any device, type the code on methos.kinitro.ai, choose your domain and agent, then send any message or press **I approved it**. Never type the code in the chat. Change the path with `/kinitro sign-in-path auto|oauth|device` (it applies from the next session).
+**No local browser (SSH, cloud session)?** If the browser login fails (no local browser, for example over SSH), add the email-code server by hand (`claude mcp add --transport http -s user kinitro_device https://methos.kinitro.ai/mcp/device`), set the sign-in path to device (`/kinitro sign-in-path device`) and start a new session; the plugin then signs in by email code. The plugin then signs in by itself: at your first message kinitro.ai mails you a 6-digit code (the plugin asks for your account email once if the setting **kinitro.ai account email** is empty). Open the link **Approve this sign-in** on any device, type the code on methos.kinitro.ai, choose your domain and agent, then send any message or press **I approved it**. Never type the code in the chat. Change the path with `/kinitro sign-in-path auto|oauth|device` (it applies from the next session).
 
 **You already have the kinitro.ai connector or a `kinitro_ai` server of your own?** From 0.24.0 the plugin works only with its own server: it keeps this session's kinitro.ai session key and passes it on every call, and it never sends the key through another connection. Switch the other one off for this tool (`claude mcp remove kinitro_ai` for a server of your own; for the claude.ai connector in Claude Code switch it off for this tool only: `/mcp`, choose the claude.ai connector, Disable. Leave it connected in the claude.ai settings: the browser, Desktop and mobile need it); the plugin tells you once per session when it sees one.
 
@@ -63,7 +63,7 @@ Then write your first message. Write in your own language. The agent answers in 
 What you will see:
 
 - The agent behaves as its persona describes. It follows the working rules of your domain.
-- Each prompt begins with a short marker line from the plugin: `[kinitro-ai <version>] context ... % · briefing ... · domain <slug>`.
+- Each prompt begins with a short marker line from the plugin: `[kinitro <version>] context ... % · briefing ... · domain <slug>`.
 - After each turn, your question and the answer appear in the agent's chat in kinitro.ai. Open the agent's chat there. Several sessions of the same agent share one chat.
 
 ## Check status at any time
@@ -81,7 +81,7 @@ The `probe` status then shows `briefing: MISSING (...)` followed by a reason. Wo
 
 1. **Wait a moment and send another message.** The server may still be connecting. The plugin retries on its own.
 2. **Run `probe` with action `reload`.** This reads the briefing again.
-3. **Check the sign-in.** If the status says `kinitro.ai tools: none visible`, type `/kinitro domain`; it signs you in by email code.
+3. **Check the sign-in.** If the status says `kinitro.ai tools: none visible`, follow the browser login above (`/mcp` > kinitro > Authenticate), or on a machine without a browser the email-code server.
 4. **Read the reason in the status line.** The [troubleshooting table](plugin-reference.md#troubleshooting) maps typical messages to a fix.
 5. **Ask your contact** to check the agent node, its AIAgent and the agent instructions.
 

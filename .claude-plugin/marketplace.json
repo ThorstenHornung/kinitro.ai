@@ -10,8 +10,8 @@
   },
   "plugins": [
     {
-      "name": "kinitro-ai",
-      "source": "./plugins/kinitro-ai",
+      "name": "kinitro",
+      "source": "./plugins/kinitro",
       "version": "0.26.1",
       "description": "Briefs a kinitro.ai agent from the platform at the right moments and mirrors each turn into kinitro.ai."
     }

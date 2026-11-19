@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "kinitro_ai_device": {
-      "type": "http",
-      "url": "https://methos.kinitro.ai/mcp/device"
-    }
-  }
-}

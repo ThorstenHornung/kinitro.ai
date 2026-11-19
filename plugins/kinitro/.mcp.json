@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "kinitro": {
+      "type": "http",
+      "url": "https://methos.kinitro.ai/mcp",
+      "oauth": {
+        "clientId": "claude",
+        "callbackPort": 33418
+      }
+    }
+  }
+}

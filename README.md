@@ -2,7 +2,7 @@
 
 <p align="center"><strong>The agentic collaboration and solution platform.</strong></p>
 
-<p align="center">Beta 0.8 · plugin <code>kinitro-ai</code> 0.25.0</p>
+<p align="center">Beta 0.8 · plugin <code>kinitro</code> 0.25.0</p>
 
 ---
 
@@ -10,7 +10,7 @@
 
 ## About kinitro.ai
 
-kinitro.ai is an AI-native workspace for teams that work with AI agents. Each team or project gets its own **domain**: a governed place where its agents, knowledge, data and work management (tasks, todos, documents) live together. **Agents** in a domain carry a persona, working rules and procedures that the domain owner maintains, so they know the business and act the same way every time. **Knowledge** and memory stay in the domain instead of in a single chat, and every conversation is mirrored back into it. The `kinitro-ai` plugin for Claude Desktop and Claude Code connects Claude to your kinitro.ai tenant through MCP (`https://methos.kinitro.ai/mcp`), briefs Claude as your domain agent and keeps the work in kinitro.ai.
+kinitro.ai is an AI-native workspace for teams that work with AI agents. Each team or project gets its own **domain**: a governed place where its agents, knowledge, data and work management (tasks, todos, documents) live together. **Agents** in a domain carry a persona, working rules and procedures that the domain owner maintains, so they know the business and act the same way every time. **Knowledge** and memory stay in the domain instead of in a single chat, and every conversation is mirrored back into it. The `kinitro` plugin for Claude Desktop and Claude Code connects Claude to your kinitro.ai tenant through MCP (`https://methos.kinitro.ai/mcp`), briefs Claude as your domain agent and keeps the work in kinitro.ai.
 
 ## What kinitro.ai is
 
@@ -24,7 +24,7 @@ kinitro.ai is an AI-native workspace for teams that work with AI agents. Each te
 
 | Path | What it is |
 |---|---|
-| `plugins/kinitro-ai/` | The Claude Code plugin `kinitro-ai` (version 0.25.0). It briefs your agent from kinitro.ai and mirrors each conversation turn into your domain. |
+| `plugins/kinitro/` | The Claude Code plugin `kinitro` (version 0.25.0). It briefs your agent from kinitro.ai and mirrors each conversation turn into your domain. |
 | `.claude-plugin/marketplace.json` | The marketplace entry that lets Claude Code install the plugin. |
 | `docs/` | Guides for users, setup people and partners. |
 | `assets/` | The kinitro ai logo. |
@@ -41,7 +41,7 @@ Install the plugin once per machine, in a Claude Code session:
 
 ```
 /plugin marketplace add ThorstenHornung/kinitro.ai
-/plugin install kinitro-ai@kinitro-ai
+/plugin install kinitro@kinitro-ai
 ```
 
 The plugin is active at once and in every later session. Choose your domain with:
@@ -58,7 +58,7 @@ It opens the kinitro.ai domain selection and binds the session to the domain you
 
   ```
   /plugin marketplace add https://methos.kinitro.ai/download/plugins/claude/marketplace.json
-  /plugin install kinitro-ai@kinitro-ai
+  /plugin install kinitro@kinitro-ai
   ```
 
 - **GitHub (Claude Code):** `/plugin marketplace add ThorstenHornung/kinitro.ai`, as in the quick start above.
@@ -71,7 +71,7 @@ From 0.23.2 the plugin checks once a day, at the first prompt of a session, whet
 /kinitro update
 ```
 
-It runs `claude plugin marketplace update kinitro-ai` and then `claude plugin update kinitro-ai@kinitro-ai`. Claude Code **asks for your permission** before these commands run, so nothing changes without your approval. Then run `/reload-plugins` to load the new version. In Cowork and the Claude desktop app, download the new zip from the download page and upload it again.
+It runs `claude plugin marketplace update kinitro-ai` and then `claude plugin update kinitro@kinitro-ai`. Claude Code **asks for your permission** before these commands run, so nothing changes without your approval. Then run `/reload-plugins` to load the new version. In Cowork and the Claude desktop app, download the new zip from the download page and upload it again.
 
 ## How the plugin briefs your agent
 
