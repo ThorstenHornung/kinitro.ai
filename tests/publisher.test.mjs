@@ -66,7 +66,7 @@ test('the plugin source bundles one server, kinitro: the normal endpoint with th
   const raw = read('plugins/kinitro/.mcp.json');
   const servers = JSON.parse(raw).mcpServers;
   assert.deepEqual(Object.keys(servers), ['kinitro']);
-  assert.deepEqual(servers.kinitro, { type: 'http', url: 'https://methos.kinitro.ai/mcp', oauth: { clientId: 'claude' } });
+  assert.deepEqual(servers.kinitro, { type: 'http', url: 'https://methos.kinitro.ai/mcp' });
   assert.ok(!/\/mcp\/device/.test(raw));
 });
 

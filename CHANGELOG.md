@@ -2,6 +2,9 @@
 
 All notable changes to the `kinitro` plugin (called `kinitro-ai` up to 0.26.0; the marketplace is still `kinitro-ai`) are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.26.2 (19.11.2026)
+- The bundled server `kinitro` (https://methos.kinitro.ai/mcp) declares no OAuth settings any more, as in 0.26.0. With `oauth` (client `claude`, callback port 33418) in .mcp.json, the claude.ai connector login failed after a successful kinitro.ai login (reference ofid_88d28cedb1373b18): the plugin's settings override the user's choice in the connect dialog. Users connect with Sign in now, Use your own OAuth client, client ID `claude` until the backend supports CIMD or DCR (item 4.2.1-4673).
+
 ## [0.26.1] - 2026-11-19
 
 ### Changed
