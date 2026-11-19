@@ -60,13 +60,13 @@ test('no tracked file names the person', () => {
 });
 
 // 0.26.1 (architect decision 15:08): the device endpoint /mcp/device ignores the claude.ai OAuth login, so the bundled Prod server `kinitro`
-// is the normal endpoint /mcp with the OAuth client `claude` (callback port 33418, the plugin's earlier Claude Code port). The email-code device
+// is the normal endpoint /mcp with the OAuth client `claude` (no fixed callback port since 0.26.2: on claude.ai a fixed localhost port broke the login). The email-code device
 // server is NOT bundled; a user adds it as `kinitro_device`. Pinned here because the plugin test kit loads no JSON import.
 test('the plugin source bundles one server, kinitro: the normal endpoint with the OAuth client claude; no device server', () => {
   const raw = read('plugins/kinitro/.mcp.json');
   const servers = JSON.parse(raw).mcpServers;
   assert.deepEqual(Object.keys(servers), ['kinitro']);
-  assert.deepEqual(servers.kinitro, { type: 'http', url: 'https://methos.kinitro.ai/mcp', oauth: { clientId: 'claude', callbackPort: 33418 } });
+  assert.deepEqual(servers.kinitro, { type: 'http', url: 'https://methos.kinitro.ai/mcp', oauth: { clientId: 'claude' } });
   assert.ok(!/\/mcp\/device/.test(raw));
 });
 
