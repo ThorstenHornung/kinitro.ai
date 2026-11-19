@@ -2484,6 +2484,10 @@ export const register: Register = (on, opts) => {
   // 0.26.0 (P4): the filter is widened to the own servers (both environments) and the account connectors; the handler decides whether the call
   // belongs to the active connection (own server, or the adopted connector) and passes every foreign call through untouched.
   on('tool.call', { tool: HOOK_RX }, async ($, e: any, next) => {
+    // 0.26.0 (review, live test 19.11.): a call another plugin's hook made (an older kinitro copy, e.g. kinitro-ai-em) passes
+    // untouched: it never gets this session's key, so an old copy cannot brief or mirror a second time through this copy
+    const by = String((next as any)?.origin?.plugin ?? 'engine')
+    if (by !== 'engine' && by !== VARIANT.name) return next(e)
     await ensureStarted($)   // 0.26.0 (P3): a session without a completed start is started now
     const tool = String(e.tool)
     const isOwn = OWN_RX.test(tool)
