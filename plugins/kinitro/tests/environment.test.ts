@@ -7,8 +7,8 @@ import { kinitroPrefixesOf, resolveKinitroTools } from '../hooks/register'
 // action env) decides which own server is used; the tools of the other environment are refused.
 // 0.26.1: the bundled server is the OAuth server B; the email-code server (kinitro_device) and the Test server (kinitro_test) are user-added connectors, adopted
 const DEV = 'mcp__kinitro_device__'
-const DEV_TEST = 'mcp__kinitro_test__'
-const B = 'mcp__plugin_kinitro_kinitro__'
+const DEV_TEST = 'mcp__kinitro_ai_test__'
+const B = 'mcp__plugin_kinitro_kinitro_ai__'
 const seat = (p: string) => `${p}current-seat`
 const DEVICE = { options: { signInPath: 'device' } }
 
@@ -17,7 +17,7 @@ describe('one plugin for Prod and Test (P5)', () => {
     makeWorld(on, { files: new Map(), cwd: '/w/b', root: '/w/b', sid: 'E1', tools: [seat(B), seat(DEV_TEST)] })
     const s = await probe($, 'status')
     expect(s).toContain(`kinitro.ai tools: ${B}* (source: bundled plugin server)`)
-    expect(JSON.parse(s).details[0]).toBe('kinitro 0.26.2')
+    expect(JSON.parse(s).details[0]).toBe('kinitro 0.26.3')
     const r: any = await ($ as any).tool.call({ tool: `${DEV_TEST}list-nodes` })
     expect(String(r.deny)).toBe('kinitro.ai Prod is active in this session.')
   })
@@ -26,7 +26,7 @@ describe('one plugin for Prod and Test (P5)', () => {
     const w = makeWorld(on, { files: new Map(), cwd: '/w/b', root: '/w/b', sid: 'E2', tools: [seat(B), seat(DEV_TEST), seat('mcp__kinitro_ai__'), 'mcp__kinitro_ai__list-nodes'], env: { KINITRO_AI_ENV: 'TEST' } })
     const s = await probe($, 'status')
     expect(s).toContain(`kinitro.ai tools: ${DEV_TEST}* (source: account connector (adopted))`)
-    expect(JSON.parse(s).details[0]).toBe('kinitro TEST 0.26.2')
+    expect(JSON.parse(s).details[0]).toBe('kinitro TEST 0.26.3')
     const prod: any = await ($ as any).tool.call({ tool: `${B}list-nodes` })
     expect(String(prod.deny)).toBe('kinitro.ai Test is active in this session.')
     const conn: any = await ($ as any).tool.call({ tool: 'mcp__kinitro_ai__list-nodes' })
@@ -45,11 +45,11 @@ describe('one plugin for Prod and Test (P5)', () => {
     expect(s).not.toContain('session key held')
     expect(s).toContain('session: none yet')
     expect(s).toContain('briefing: MISSING')
-    expect(JSON.parse(s).details[0]).toBe('kinitro TEST 0.26.2')
+    expect(JSON.parse(s).details[0]).toBe('kinitro TEST 0.26.3')
     expect(w.files.get('/w/b/kinitro-ai-domain') ?? '').not.toContain('kss_')
     const back: any = await $.tool.call({ tool: 'mcp__kinitro__probe', action: 'env', value: 'prod' })
     expect(JSON.parse(String(back.result)).message).toBe('kinitro.ai Prod is active in this session. Choose a domain with /kinitro.')
-    expect(JSON.parse(await probe($, 'status')).details[0]).toBe('kinitro 0.26.2')
+    expect(JSON.parse(await probe($, 'status')).details[0]).toBe('kinitro 0.26.3')
   })
 
   test('the Test environment shows TEST in the prompt line; Prod shows no environment', async ($, on) => {
@@ -59,8 +59,8 @@ describe('one plugin for Prod and Test (P5)', () => {
     await $.prompt.submit({ text: 'a', origin: { kind: 'composer' } } as any)
     await $.tool.call({ tool: 'mcp__kinitro__probe', action: 'env', value: 'test' })
     await $.prompt.submit({ text: 'b', origin: { kind: 'composer' } } as any)
-    expect(seen[0]).toMatch(/^\[kinitro 0\.26\.2\] /)
-    expect(seen[1]).toMatch(/^\[kinitro TEST 0\.26\.2\] /)
+    expect(seen[0]).toMatch(/^\[kinitro 0\.26\.3\] /)
+    expect(seen[1]).toMatch(/^\[kinitro TEST 0\.26\.3\] /)
   })
 
   test('Cowork with Test adopts mcp__kinitro_ai_Test__ and not mcp__kinitro_ai__', async ($, on) => {
@@ -76,23 +76,24 @@ describe('one plugin for Prod and Test (P5)', () => {
     expect(w.sent.some((x) => x.verb === 'list-nodes')).toBe(true)
   })
 
-  test('0.26.2: the plugin\'s own control tools mcp__kinitro__probe and mcp__kinitro__wake are no connector, no seat and no second connection', () => {
+  test('0.26.3: the plugin\'s own control tools mcp__kinitro__probe and mcp__kinitro__wake are no connector, no seat and no second connection', () => {
     const names = ['mcp__kinitro__probe', 'mcp__kinitro__wake', 'mcp__kinitro-ai__probe', seat(B)]
     expect(kinitroPrefixesOf(names)).toEqual({ bundledProd: [B], bundledTest: [], connectorProd: [], connectorTest: [] })
     expect(resolveKinitroTools(names, 'oauth', 'PROD', true)).toEqual({ prefix: B, source: 'bundled' })
-    expect(kinitroPrefixesOf(['mcp__kinitro__probe', 'mcp__kinitro__current-seat']).connectorProd).toEqual(['mcp__kinitro__'])   // the connector verbs still count
+    expect(kinitroPrefixesOf(['mcp__kinitro__probe', 'mcp__kinitro__current-seat', 'mcp__kinitro__list-nodes']).connectorProd).toEqual([])   // mcp__kinitro__ is the plugin's own namespace: whatever the verb, never a connector
+    expect(kinitroPrefixesOf(['mcp__Kinitro__probe']).connectorProd).toEqual(['mcp__Kinitro__'])   // the legacy claude.ai spelling with a capital K stays a connector (its probe is no special case)
   })
 
   test('the lookup helper knows every prefix; the resolver takes the environment into account', () => {
     const names = [seat(DEV), seat(DEV_TEST), seat(B), 'mcp__claude_ai_Kinitro__x', 'mcp__kinitro_ai__x', 'mcp__Kinitro__x', 'mcp__claude_ai_Kinitro_Test__x', 'mcp__Kinitro_Test__x', 'mcp__kinitro_ai_Test__x', 'mcp__kinitro__probe', 'mcp__plugin_other_kinitro_ai__x']
     expect(kinitroPrefixesOf(names)).toEqual({
       bundledProd: [B], bundledTest: [],   // mcp__kinitro__probe is the plugin's own control tool, never a connector
-      connectorProd: ['mcp__Kinitro__', 'mcp__claude_ai_Kinitro__', 'mcp__kinitro_device__', 'mcp__kinitro_ai__'],
-      connectorTest: ['mcp__kinitro_test__', 'mcp__claude_ai_Kinitro_Test__', 'mcp__kinitro_ai_Test__'],
+      connectorProd: ['mcp__kinitro_ai__', 'mcp__claude_ai_Kinitro__', 'mcp__kinitro_device__', 'mcp__Kinitro__'],
+      connectorTest: ['mcp__kinitro_ai_test__', 'mcp__Kinitro_Test__', 'mcp__claude_ai_Kinitro_Test__'],   // the lower-case duplicate mcp__kinitro_ai_Test__ folds into the first
     })
     expect(resolveKinitroTools(names, 'oauth', 'PROD')).toEqual({ prefix: B, source: 'bundled' })
     expect(resolveKinitroTools(names, 'device', 'PROD', true)).toEqual({ prefix: DEV, source: 'connector-adopted' })
     expect(resolveKinitroTools(names, 'oauth', 'TEST', true)).toEqual({ prefix: DEV_TEST, source: 'connector-adopted' })
-    expect(resolveKinitroTools(names.filter((n) => !n.startsWith('mcp__plugin_') && !n.includes('kinitro_test') && !n.includes('kinitro_device')), 'oauth', 'TEST', true)).toEqual({ prefix: 'mcp__Kinitro_Test__', source: 'connector-adopted' })
+    expect(resolveKinitroTools(names.filter((n) => !n.startsWith('mcp__plugin_') && !n.toLowerCase().includes('kinitro_ai_test') && !n.includes('kinitro_device')), 'oauth', 'TEST', true)).toEqual({ prefix: 'mcp__Kinitro_Test__', source: 'connector-adopted' })
   })
 })

@@ -6,13 +6,13 @@
   },
   "metadata": {
     "description": "kinitro.ai plugins for running kinitro.ai agents in Claude.",
-    "version": "0.26.2"
+    "version": "0.26.3"
   },
   "plugins": [
     {
       "name": "kinitro",
       "source": "./plugins/kinitro",
-      "version": "0.26.2",
+      "version": "0.26.3",
       "description": "Briefs a kinitro.ai agent from the platform at the right moments and mirrors each turn into kinitro.ai."
     }
   ]

@@ -10,7 +10,7 @@ import { makeWorld, probe } from './world'
 // shapes: pending, sign_in_pending, ready, domain_ref_unknown, sign_in_rate_limited).
 
 const DEV = 'mcp__kinitro_device__'   // 0.26.1: the user-added device server, a connector the plugin adopts on the device path
-const OAUTH = 'mcp__plugin_kinitro_kinitro__'
+const OAUTH = 'mcp__plugin_kinitro_kinitro_ai__'
 const URL = 'https://methos.example/page/approvals/SIGNIN1'
 const PROSE = 'SERVER-PROSE-never-shown'
 const KEYMSG = 'KEY-MESSAGE-never-shown'
@@ -190,7 +190,7 @@ describe('device sign-in (criteria 1-9)', () => {
     const s = signIns(srv)
     expect(s).toHaveLength(1)
     expect(s[0]!.server).toBe('kinitro_device')
-    expect(s[0]!.args).toEqual({ email: EMAIL, deviceLabel: 'WS-1', clientName: 'Claude Code, kinitro 0.26.2' })
+    expect(s[0]!.args).toEqual({ email: EMAIL, deviceLabel: 'WS-1', clientName: 'Claude Code, kinitro 0.26.3' })
     expect(w.sent.filter((x) => x.verb === 'open-domain')).toHaveLength(0)
     // the model's call carries the held key (the plugin adds it), and the answer is the plugin's pending result
     const r: any = await ($ as any).tool.call({ tool: `${DEV}current-seat` })

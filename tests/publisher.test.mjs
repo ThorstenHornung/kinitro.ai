@@ -59,14 +59,14 @@ test('no tracked file names the person', () => {
   assert.deepEqual(offenders, []);
 });
 
-// 0.26.1 (architect decision 15:08): the device endpoint /mcp/device ignores the claude.ai OAuth login, so the bundled Prod server `kinitro`
+// 0.26.1 (architect decision 15:08): the device endpoint /mcp/device ignores the claude.ai OAuth login, so the bundled Prod server (`kinitro_ai` since 0.26.3)
 // is the normal endpoint /mcp with the OAuth client `claude` (no fixed callback port since 0.26.2: on claude.ai a fixed localhost port broke the login). The email-code device
 // server is NOT bundled; a user adds it as `kinitro_device`. Pinned here because the plugin test kit loads no JSON import.
-test('the plugin source bundles one server, kinitro: the normal endpoint with the OAuth client claude; no device server', () => {
+test('the plugin source bundles one server, kinitro_ai: the normal endpoint with the OAuth client claude; no device server', () => {
   const raw = read('plugins/kinitro/.mcp.json');
   const servers = JSON.parse(raw).mcpServers;
-  assert.deepEqual(Object.keys(servers), ['kinitro']);
-  assert.deepEqual(servers.kinitro, { type: 'http', url: 'https://methos.kinitro.ai/mcp' });
+  assert.deepEqual(Object.keys(servers), ['kinitro_ai']);
+  assert.deepEqual(servers.kinitro_ai, { type: 'http', url: 'https://methos.kinitro.ai/mcp' });
   assert.ok(!/\/mcp\/device/.test(raw));
 });
 
@@ -77,7 +77,7 @@ test('/kinitro works without the probe: direct flow, no retry loop, no route que
   assert.ok(md.includes('do not wait or retry: go straight to the Direct flow'));
   assert.ok(!md.includes('sleep 3') && !/up to 5 tries/.test(md));
   assert.ok(md.includes('no question about routes'));
-  assert.ok(md.includes('mcp__plugin_kinitro_kinitro__<verb>') && md.includes('mcp__claude_ai_Kinitro__'));
+  assert.ok(md.includes('mcp__plugin_kinitro_kinitro_ai__<verb>') && md.includes('mcp__claude_ai_Kinitro__'));
   assert.ok(md.includes("Keep the answer's `sessionKey`"));
   assert.ok(md.includes('Never tell the user to run the command again'));
   assert.ok(md.includes('the bare word `domain` or `connect` or no arguments name none'));

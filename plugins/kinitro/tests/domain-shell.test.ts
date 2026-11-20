@@ -12,7 +12,7 @@ const refuse = (text: string) => () => ({ result: text, isError: true })
 const BAD_TARGET = refuse('open-page: {"error":"page_link_bad_target","message":"Target shell opens your current domain; it takes no node."}')
 
 // one visible server, as in a real session: a failing call is then not repeated on a second server name
-const BUNDLED_TOOLS = ['mcp__plugin_kinitro_kinitro__current-seat', 'mcp__plugin_kinitro_kinitro__open-page']
+const BUNDLED_TOOLS = ['mcp__plugin_kinitro_kinitro_ai__current-seat', 'mcp__plugin_kinitro_kinitro_ai__open-page']
 
 const bound = (on: any, verbs: Record<string, (args: Record<string, unknown>) => unknown>) =>
   makeWorld(on, { files: new Map([['/w/b/.kinitro-ai-domain', 'beta\n']]), cwd: '/w/b', root: '/w/b', sid: 'S3', tools: BUNDLED_TOOLS, verbs })

@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Brings every Claude Code configuration directory on this machine to kinitro 0.26.1
+  Brings every Claude Code configuration directory on this machine to kinitro 0.26.3
   and removes the deprecated kinitro pieces.
 
 .DESCRIPTION
@@ -13,7 +13,7 @@
        kinitro-ai (any marketplace; the plugin was renamed to kinitro in 0.26.1),
        and kinitro from any marketplace other than `kinitro-ai`;
     5. installs or updates kinitro@kinitro-ai;
-    6. lists deprecated user-scope MCP servers (kinitro_ai, kinitro-ai, kinitro_ai_test, kinitro_ai_device, kinitro_ai_device_test) and removes them only
+    6. lists deprecated user-scope MCP servers (kinitro, kinitro_ai, kinitro-ai, kinitro_ai_device, kinitro_ai_device_test; kinitro_ai_test is the Test server a tester adds since 0.26.3 and is kept) and removes them only
        with -RemoveMcp (a running Architect or seat session may still rely on one);
     7. verifies the result (plugin version equals the marketplace version, nothing deprecated left).
   It also REPORTS (never changes) project-level .mcp.json files that name a kinitro server, in
@@ -22,7 +22,7 @@
   Default is a dry run: it only reports what it would do. Nothing is printed from credential files;
   .credentials.json is only tested for existence.
 
-  NOT covered (not scriptable, use the manual steps of docs/testing/TEST_PLAN_0.26.1.md, section 0):
+  NOT covered (not scriptable, use the manual steps of docs/testing/TEST_PLAN_0.26.3.md, section 0):
   the Claude desktop app (chat, Cowork, Code tab) and claude.ai on the web. Plugins and connectors
   there are managed in the Claude account or organisation.
 
@@ -65,7 +65,7 @@ $MarketplaceSource = 'ThorstenHornung/kinitro.ai'
 $PluginName        = 'kinitro'
 $PluginId          = "$PluginName@$Marketplace"
 $DeprecatedPlugins = @('kinitro-ai-em', 'kinitro-ai-test', 'kinitro-ai')
-$DeprecatedMcp     = @('kinitro_ai', 'kinitro-ai', 'kinitro_ai_test', 'kinitro_ai_device', 'kinitro_ai_device_test')   # 'methos' and project servers are only reported, never removed
+$DeprecatedMcp     = @('kinitro', 'kinitro_ai', 'kinitro-ai', 'kinitro_ai_device', 'kinitro_ai_device_test')   # 0.26.3: user-level servers only (plugin-bundled servers are not listed by `claude mcp list`); `kinitro` and `kinitro_ai` collide with the plugin's own namespace or its bundled server; `kinitro_ai_test` is the valid tester-added Test server and is NOT deprecated; 'methos' and project servers are only reported, never removed
 
 $LogFile = Join-Path $env:TEMP ('Update-KinitroClients_{0}.log' -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
 
@@ -311,7 +311,7 @@ Write-Log 'Project .mcp.json files naming a kinitro server (reported, not change
 if ($proj.Count -eq 0) { Write-Log '  none' } else { foreach ($p in $proj) { Write-Log "  $p" 'Yellow' } }
 
 Write-Log ''
-Write-Log 'Manual steps still needed: Claude desktop app and claude.ai (see docs/testing/TEST_PLAN_0.26.1.md, section 0). Restart open Claude Code sessions.'
+Write-Log 'Manual steps still needed: Claude desktop app and claude.ai (see docs/testing/TEST_PLAN_0.26.3.md, section 0). Restart open Claude Code sessions.'
 Write-Log "Log: $LogFile"
 
 $problemCount = @($rows | ForEach-Object { $_.Problems } | Where-Object { $_ }).Count

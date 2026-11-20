@@ -24,7 +24,7 @@ describe('build variant', () => {
   })
   test('the other build\'s server is no second connection; a user server and the connector still are', () => {
     const T = 'mcp__plugin_kinitro-ai-test_kinitro_ai__current-seat'
-    expect(secondConnections([T, 'mcp__plugin_kinitro_kinitro__current-seat'])).toEqual([])
+    expect(secondConnections([T, 'mcp__plugin_kinitro_kinitro_ai__current-seat'])).toEqual([])
     expect(secondConnections([T, 'mcp__kinitro_ai__current-seat', 'mcp__claude_ai_Kinitro__current-seat'])).toEqual(['mcp__kinitro_ai__', 'mcp__claude_ai_Kinitro__'])
     expect(resolveKinitroTools([T])?.source).toBe('other')   // never 'bundled': the Production build does not take the Test server
   })
@@ -34,18 +34,18 @@ describe('build variant', () => {
     const w = makeWorld(on, { files: new Map([['/w/b/.kinitro-ai-domain', 'beta\n']]), cwd: '/w/b', root: '/w/b', sid: 'SV' })
     expect(await probe($, 'reload')).toContain('domain: beta')
     await $.prompt.submit({ text: 'a', origin: { kind: 'composer' } } as any)
-    expect(seen[0]).toMatch(/^\[kinitro 0.26.2\] .*context /)   // 0.26.0 (P5): Prod shows no environment; Test shows [kinitro TEST 0.26.1]
+    expect(seen[0]).toMatch(/^\[kinitro 0.26.3\] .*context /)   // 0.26.0 (P5): Prod shows no environment; Test shows [kinitro TEST 0.26.3]
     expect(w.files.has('/u/.kinitro-ai/sessions/SV.json')).toBe(true)
     expect(w.files.has('/w/b/kinitro-ai.log')).toBe(true)
   })
   // Item 4.2.1-3910 (Architect ruling Q4, 25.10.2026): each build's device prefix matches only its own device server; the
   // Production device URL is pinned in tests/publisher.test.mjs (the kit loads no JSON import); the Test build's URL is
   // proven by the Novatect packager test only.
-  test('0.26.2: the device server is user-added and never plugin-scoped; the bundled server is the OAuth server kinitro', () => {
+  test('0.26.3: the device server is user-added and never plugin-scoped; the bundled server is the OAuth server kinitro_ai', () => {
     expect(devicePrefixFor('kinitro')).toBe('mcp__kinitro_device__')
     expect(devicePrefixFor('kinitro-ai-test')).toBe('mcp__kinitro_device__')
     const own = (prefix: string, name: string) => name.startsWith(prefix)
-    expect(own(devicePrefixFor('kinitro'), 'mcp__plugin_kinitro_kinitro__current-seat')).toBe(false)
+    expect(own(devicePrefixFor('kinitro'), 'mcp__plugin_kinitro_kinitro_ai__current-seat')).toBe(false)
     expect(own(devicePrefixFor('kinitro'), 'mcp__kinitro_device__current-seat')).toBe(true)
   })
 })

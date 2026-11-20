@@ -7,7 +7,7 @@ import { makeWorld, probe } from './world'
 // without one; the plugin obtains the key with open-domain, keeps it per Claude session ($.state), adds it to every call of
 // its own server (the model's calls included), never shows it to the model and never writes it anywhere.
 
-const B = 'mcp__plugin_kinitro_kinitro__'
+const B = 'mcp__plugin_kinitro_kinitro_ai__'
 const U = 'mcp__kinitro_ai__'
 const C = 'mcp__claude_ai_Kinitro__'
 const DOMAINS = ['alpha', 'beta', 'gamma']
@@ -117,7 +117,7 @@ describe('session key', () => {
     expect(srv.minted).toHaveLength(1)
     expect(noKeyInFiles(w)).toEqual([])
     expect(await probe($, 'status')).not.toContain('kss_')
-    expect(r).toContain('[kinitro 0.26.2]')   // 0.26.0 (P5): no environment in the Prod marker
+    expect(r).toContain('[kinitro 0.26.3]')   // 0.26.0 (P5): no environment in the Prod marker
     expect(r).not.toContain('kss_')
     expect(r).not.toContain("pass domainRef:'beta'")
   })

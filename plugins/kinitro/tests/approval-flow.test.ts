@@ -268,7 +268,7 @@ describe('round 2', () => {
     await probe($, 'set-domain', { domain: 'gamma' })   // pending: starts the check, whose {request} stays open
     for (let i = 0; i < 10 && !srv.release; i++) await probe($, 'status')   // the check runs in the background
     expect(typeof srv.release).toBe('function')
-    await ($ as any).tool.call({ tool: 'mcp__plugin_kinitro_kinitro__open-domain', domain: 'dom-alpha' })   // the agent's own call
+    await ($ as any).tool.call({ tool: 'mcp__plugin_kinitro_kinitro_ai__open-domain', domain: 'dom-alpha' })   // the agent's own call
     expect(w.files.get('/w/b/kinitro-ai.log') ?? '').toContain('open-domain called by the agent')
     srv.release!(ok({ status: 'pending' }))
     await probe($, 'status')

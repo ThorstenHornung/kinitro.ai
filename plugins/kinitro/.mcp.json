@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "kinitro": {
+    "kinitro_ai": {
       "type": "http",
       "url": "https://methos.kinitro.ai/mcp"
     }

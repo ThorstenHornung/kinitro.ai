@@ -1,6 +1,6 @@
 {
   "name": "kinitro",
-  "version": "0.26.2",
+  "version": "0.26.3",
   "description": "Briefs a kinitro.ai agent with its seat's instructions, mirrors each turn into the seat's kinitro.ai chat and keeps the kinitro.ai session key hidden. Works in Claude Code and in Cowork, on claude.ai and in the desktop app. To start, connect the kinitro connector (Claude Code: sign in once with /mcp > kinitro > Authenticate), then pick \"kinitro\" from the \"/\" menu or just ask, for example \"kinitro status\".",
   "author": {
     "name": "Kinitro Consulting",

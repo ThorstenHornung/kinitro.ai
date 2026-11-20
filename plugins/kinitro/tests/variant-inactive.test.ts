@@ -11,13 +11,13 @@ describe('KINITRO_AI_ENV=TEST selects Test; the Prod own server is refused', () 
     on('prompt.submit', async (_$: any, e: any) => { seen.push((e.context ?? []).join('\n')); return { text: e.text } })
     const w = makeWorld(on, { files: new Map([['/w/b/.kinitro-ai-domain', 'beta\n']]), cwd: '/w/b', root: '/w/b', sid: 'SX', env: { KINITRO_AI_ENV: 'TEST' } })
     w.verbs = { 'open-domain': () => ({ result: JSON.stringify({ status: 'ok', sessionKey: 'kss_raw_key_1' }) }) }
-    const r: any = await $.tool.call({ tool: 'mcp__plugin_kinitro_kinitro__open-domain', domain: 'dom-beta' })
+    const r: any = await $.tool.call({ tool: 'mcp__plugin_kinitro_kinitro_ai__open-domain', domain: 'dom-beta' })
     expect(String(r.deny)).toContain('kinitro.ai Test is active in this session.')
     expect(JSON.stringify(r)).not.toContain('kss_')                 // the keyless open-domain never shows a raw key
     const l: any = await $.tool.call({ tool: 'mcp__kinitro_device__list-domains' })
     expect(String(l.deny)).toContain('is active in this session')
     expect(w.sent).toEqual([])                                       // nothing reached the server
     await $.prompt.submit({ text: 'a', origin: { kind: 'composer' } } as any)
-    expect(seen[0] ?? '').toContain('[kinitro TEST 0.26.2]')
+    expect(seen[0] ?? '').toContain('[kinitro TEST 0.26.3]')
   })
 })

@@ -2,6 +2,12 @@
 
 All notable changes to the `kinitro` plugin (called `kinitro-ai` up to 0.26.0; the marketplace is still `kinitro-ai`) are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.26.3 (20.11.2026)
+- RENAME of the bundled server: `kinitro` becomes `kinitro_ai` (URL unchanged, https://methos.kinitro.ai/mcp, still no OAuth block), and the tester-added Test server `kinitro_test` becomes `kinitro_ai_test` (https://methos-test.kinitro.ai/mcp). Why (measured live 20.11.): the plugin is called `kinitro`, so its own tools are `mcp__kinitro__probe` and `mcp__kinitro__wake`; the bundled server was also called `kinitro`, and on claude.ai it became the connector prefix `mcp__kinitro__<verb>`. One namespace hid the other: in one session the probe vanished when the connector tools arrived, in another the connector won and the probe never existed.
+- New names: Claude Code `mcp__plugin_kinitro_kinitro_ai__<verb>`; claude.ai connector `mcp__kinitro_ai__<verb>` (first in the Prod adoption order), Test connector `mcp__kinitro_ai_test__<verb>` (legacy `mcp__kinitro_ai_Test__`, `mcp__kinitro_test__`). `mcp__kinitro__` is the plugin's own namespace again and never a connector: the 0.26.1 special case that kept probe and wake out of the connector rule is gone, `CONNECTOR_RX` excludes `mcp__kinitro__` as a whole (the legacy claude.ai spelling `mcp__Kinitro__` with a capital K stays a connector, so the connector rule is now case-explicit).
+- Texts and docs follow the names (register.tsx, commands/kinitro.md, the skill and its references, README, plugin reference, test plan, now `docs/testing/TEST_PLAN_0.26.3.md`). The claude.ai connector to connect is called `kinitro_ai`; the old plugin "Kinitro" (and an old "Kinitro ai") with its connector `kinitro` is removed first.
+- `tools/Update-KinitroClients.ps1`: the deprecated user-level MCP names gain `kinitro`; `kinitro_ai_test` is no longer deprecated, it is the Test server a tester adds.
+
 ## 0.26.2 (19.11.2026)
 - The bundled server `kinitro` (https://methos.kinitro.ai/mcp) declares no OAuth settings any more, as in 0.26.0. With `oauth` (client `claude`, callback port 33418) in .mcp.json, the claude.ai connector login failed after a successful kinitro.ai login (reference ofid_88d28cedb1373b18): the plugin's settings override the user's choice in the connect dialog. Users connect with Sign in now, Use your own OAuth client, client ID `claude` until the backend supports CIMD or DCR (item 4.2.1-4673).
 

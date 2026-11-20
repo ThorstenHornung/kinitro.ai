@@ -6,7 +6,7 @@ import { COWORK_CONNECT, TEST_ADD } from '../hooks/register'
 // 0.26.1: the Test server is no longer bundled (a tester adds it); Cowork texts never suggest the email-code sign-in; a later success clears
 // the band note of an earlier failure; a reloaded module labels its first persona as session start.
 const COWORK_ENV = { CLAUDE_CODE_ENTRYPOINT: 'remote_cowork', CLAUDE_CODE_SKIP_PLUGIN_MCP_SERVERS: '1' }
-const TEST_PREFIX = 'mcp__kinitro_test__'
+const TEST_PREFIX = 'mcp__kinitro_ai_test__'
 const VERBS = ['current-seat', 'list-domains', 'open-domain', 'list-nodes']
 const json = (t: string) => JSON.parse(t)
 const submit = ($: any, text = 'a') => $.prompt.submit({ text, origin: { kind: 'composer' } } as any)
@@ -24,16 +24,16 @@ describe('Test server a tester adds themselves (A)', () => {
     expect(w.prefixes).toContain(TEST_PREFIX)
   })
 
-  test('deviceServer for Test tries the bundled name first, then the user-level name kinitro_test', DEVICE, async ($, on) => {
+  test('deviceServer for Test tries the bundled name first, then the user-level name kinitro_ai_test', DEVICE, async ($, on) => {
     const connects: string[] = [], called: string[] = []
-    on('mcp.connect', async (_$: any, e: any) => { connects.push(String(e.server)); return { value: e.server === 'kinitro_test' ? { isConnected: true, server: 'kinitro_test' } : { isConnected: false, reason: 'unknown server' } } })
+    on('mcp.connect', async (_$: any, e: any) => { connects.push(String(e.server)); return { value: e.server === 'kinitro_ai_test' ? { isConnected: true, server: 'kinitro_ai_test' } : { isConnected: false, reason: 'unknown server' } } })
     on('mcp.call', async (_$: any, e: any) => { called.push(`${e.server}:${e.tool}`); return { value: { content: [{ type: 'text', text: JSON.stringify({ status: 'pending', sessionKey: 'kss_testkey1', approvalUrl: 'https://methos-test.example/a', expiresAt: new Date(Date.now() + 600000).toISOString(), email: 't***@example.com' }) }], isError: false } } })
     on('config.set', async (_$: any, e: any) => ({ value: e.value }))
     makeWorld(on, { files: new Map(), cwd: '/w/b', root: '/w/b', sid: 'N2', env: { KINITRO_AI_ENV: 'TEST' }, tools: [] })
     await $.session.start({ isInteractive: true, surface: 'terminal', cwd: '/w/b' } as any).catch(() => undefined)
     await probe($, 'sign-in')
-    expect(connects).toEqual(['plugin:kinitro:kinitro_test', 'kinitro_test'])
-    expect(called).toEqual(['kinitro_test:sign-in'])
+    expect(connects).toEqual(['plugin:kinitro:kinitro_ai_test', 'kinitro_ai_test'])
+    expect(called).toEqual(['kinitro_ai_test:sign-in'])
   })
 
   test('when neither Test server connects the problem says how a tester adds it', DEVICE, async ($, on) => {
@@ -41,7 +41,7 @@ describe('Test server a tester adds themselves (A)', () => {
     makeWorld(on, { files: new Map(), cwd: '/w/b', root: '/w/b', sid: 'N3', env: { KINITRO_AI_ENV: 'TEST' }, tools: [] })
     await $.session.start({ isInteractive: true, surface: 'terminal', cwd: '/w/b' } as any).catch(() => undefined)
     const r = await probe($, 'sign-in')
-    expect(r).toContain('claude mcp add --transport http -s user --client-id claude kinitro_test https://methos-test.kinitro.ai/mcp')
+    expect(r).toContain('claude mcp add --transport http -s user --client-id claude kinitro_ai_test https://methos-test.kinitro.ai/mcp')
     expect(r).toContain('custom connector')
     const st = json(await probe($, 'status'))
     expect(st.problems[0].fix).toBe(TEST_ADD)
@@ -54,7 +54,7 @@ describe('Test server a tester adds themselves (A)', () => {
     await $.session.start({ isInteractive: true, surface: 'terminal', cwd: '/w/b' } as any).catch(() => undefined)
     const r = await probe($, 'sign-in')
     expect(connects).toEqual(['kinitro_device'])
-    expect(r).not.toMatch(/Test|kinitro_test/)
+    expect(r).not.toMatch(/Test|kinitro_ai_test/)
   })
 })
 
@@ -64,7 +64,7 @@ describe('Cowork texts (B)', () => {
     const raw = await probe($, 'status')
     const st = json(raw)
     expect(st.problems[0].fix).toBe(COWORK_CONNECT)
-    expect(COWORK_CONNECT).toBe('Connect the kinitro.ai connector of the kinitro plugin on claude.ai: Plugins > kinitro > Connectors > kinitro > Connect (remove the old plugin Kinitro ai and its connectors kinitro_ai_device and kinitro_ai_device_test first). Choose Sign in now, then Use your own OAuth client with client ID claude, then sign in on the kinitro.ai page. Then start a new chat.')
+    expect(COWORK_CONNECT).toBe('Connect the kinitro.ai connector of the kinitro plugin on claude.ai: Plugins > kinitro > Connectors > kinitro_ai > Connect (remove the old plugin Kinitro first, also an old Kinitro ai, with its connectors kinitro, kinitro_ai_device and kinitro_ai_device_test). Choose Sign in now, then Use your own OAuth client with client ID claude, then sign in on the kinitro.ai page. Then start a new chat.')
     expect(st.details).toContain('sign-in: connector login on claude.ai')
     expect(st.details.some((l: string) => /^sign-in path:/.test(l))).toBe(false)
     expect(st.details.join('\n')).toContain(`kinitro.ai tools: none visible (${COWORK_CONNECT})`)
@@ -114,8 +114,8 @@ describe('the other environment is present (I) and namespaced commands (H)', () 
   test('Prod active, only the Test connector in the chat: the problem says so, not the generic add text', async ($, on) => {
     makeWorld(on, { files: new Map(), cwd: '/w/b', root: '/w/b', sid: 'O1', env: COWORK_ENV, tools: VERBS.map((v) => TEST_PREFIX + v) })
     const st = json(await probe($, 'status'))
-    expect(st.problems[0].problem).toBe('The kinitro.ai Prod connector (kinitro) is not in this chat; only the Test connector is.')
-    expect(st.problems[0].fix).toBe("Switch kinitro on in this chat's + > Plugins menu, or start a new chat.")
+    expect(st.problems[0].problem).toBe('The kinitro.ai Prod connector (kinitro_ai) is not in this chat; only the Test connector is.')
+    expect(st.problems[0].fix).toBe("Switch kinitro_ai on in this chat's + > Plugins menu, or start a new chat.")
     expect(JSON.stringify(st.problems)).not.toContain('Connect the kinitro.ai connector')
   })
 

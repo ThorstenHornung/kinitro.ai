@@ -16,7 +16,7 @@ kinitro.ai agents have a seat: instructions, memory and a chat in kinitro.ai. Th
 You do not need to type commands. Ask in your own words ("kinitro status", "connect me to kinitro", "switch to the Analyst seat", "mirror off") or pick "kinitro" from the "/" menu. Only in the Claude Code terminal can you also type `/kinitro` yourself.
 
 **claude.ai and the Claude desktop app (Cowork)**
-1. Open Plugins > kinitro > Connectors > `kinitro` and press Connect. (If you still have the old plugin "Kinitro ai" or its connectors `kinitro_ai_device` / `kinitro_ai_device_test`, remove them first.)
+1. Open Plugins > kinitro > Connectors > `kinitro_ai` and press Connect. (If you still have the old plugin "Kinitro" (or "Kinitro ai") or its connectors `kinitro`, `kinitro_ai_device` / `kinitro_ai_device_test`, remove them first.)
 2. Choose "Sign in now" (German: "Jetzt anmelden"). Do not accept the preselected "No sign-in" ("Keine Anmeldung"): it fails.
 3. Choose "Use your own OAuth client" ("Eigenen OAuth-Client verwenden"), enter the client ID `claude` and leave the secret empty.
 4. Sign in on the kinitro.ai page with your email and password. The connector now shows Connected.

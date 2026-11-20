@@ -1,10 +1,10 @@
-# Test plan kinitro 0.26.1 (the plugin was renamed from kinitro-ai)
+# Test plan kinitro 0.26.3 (the bundled server is now kinitro_ai; the plugin was renamed from kinitro-ai in 0.26.1)
 
 Runs on the product owner's two machines (Surface, HP Omen), guided by the Architect. Item 4.2.1-4672.
 Mark each test Pass or Fail in the box. Tests marked **[backend]** depend on server work that is not part of the plugin; a miss there is a known limit, not a failure (see "Known limits").
 
 **Evidence kinds** (use the short names in the tables):
-- **marker**: the one-line marker the plugin adds to each prompt, e.g. `[kinitro 0.26.1] MethOS · Architect · mirror on`. Prod shows no environment; Test shows `TEST` after the version. Ask: "Repeat the kinitro line you were given, word for word."
+- **marker**: the one-line marker the plugin adds to each prompt, e.g. `[kinitro 0.26.3] MethOS · Architect · mirror on`. Prod shows no environment; Test shows `TEST` after the version. Ask: "Repeat the kinitro line you were given, word for word."
 - **log**: `~/.kinitro-ai/` (headless.log, plugin log) or `kinitro-ai.log` in the working folder (the local file prefix keeps the old name on purpose).
 - **chat**: the kinitro chat node of the seat, showing the mirrored turns.
 - **shot**: a screenshot.
@@ -41,7 +41,7 @@ Mark each test Pass or Fail in the box. Tests marked **[backend]** depend on ser
 |---|---|---|
 | 1 | In PowerShell: `.\tools\Update-KinitroClients.ps1` (dry run) | Table lists every config dir (default, `C:\Develop\claude-private`, the third one). If one is missing, add `-ConfigDirs <path>`. Exit 1 is normal when changes are due. |
 | 2 | Read the table: removed items, project `.mcp.json` hits | Only deprecated items listed. |
-| 3 | `.\tools\Update-KinitroClients.ps1 -Apply` | After column shows 0.26.1 for each dir; the old plugin kinitro-ai is listed as removed, Problems empty, exit 0. |
+| 3 | `.\tools\Update-KinitroClients.ps1 -Apply` | After column shows 0.26.3 for each dir; the old plugin kinitro-ai is listed as removed, Problems empty, exit 0. |
 | 4 | Run it again dry | Nothing to change, exit 0. |
 | 5 | Keep the log (`%TEMP%\Update-KinitroClients_*.log`) | Evidence. |
 - [ ] Surface   - [ ] Omen   Third config dir found: ______ (path)
@@ -50,10 +50,10 @@ Project `.mcp.json` hits are only reported. Decide per file whether to remove th
 
 ### 0.2 Account or organisation plugin (Claude desktop app or claude.ai, UI names "(check)")
 1. Open Settings, then Plugins (check) or Organization settings, then Plugins (check).
-2. Remove the OLD plugin "Kinitro ai" (name kinitro-ai, 0.25.9) and its connectors `kinitro_ai_device` and `kinitro_ai_device_test` first. Remove `kinitro-ai-em` and `kinitro-ai-test` (check).
-3. Upload the 0.26.1 package (the zip of `plugins/kinitro`, Architect provides) as a new plugin named kinitro (check: "Upload" or "Add plugin").
-4. Confirm the shown version is 0.26.1 and the plugin is enabled for your user.
-5. Check Connectors (check): the Prod connector `kinitro` is connected (Sign in now, Use your own OAuth client, client ID `claude`). Testers add the Test connector `kinitro_test` themselves (URL https://methos-test.kinitro.ai/mcp, client ID `claude`; needed for E8 in Cowork).
+2. Remove the OLD plugin "Kinitro" first (name kinitro, 0.26.2 or older, its connector is called `kinitro`; also an old "Kinitro ai", name kinitro-ai, with its connectors `kinitro_ai_device` and `kinitro_ai_device_test`). Remove `kinitro-ai-em` and `kinitro-ai-test` (check).
+3. Upload the 0.26.3 package (the zip of `plugins/kinitro`, Architect provides) as a new plugin named kinitro (check: "Upload" or "Add plugin").
+4. Confirm the shown version is 0.26.3 and the plugin is enabled for your user.
+5. Check Connectors (check): the Prod connector `kinitro_ai` is connected (Sign in now, Use your own OAuth client, client ID `claude`). Testers add the Test connector `kinitro_ai_test` themselves (URL https://methos-test.kinitro.ai/mcp, client ID `claude`; needed for E8 in Cowork).
 - [ ] Done   Evidence: shot of the plugin list with version.
 
 ### 0.3 Reload
@@ -61,26 +61,26 @@ Close and restart every open Claude Code terminal session. In the desktop app, s
 - [ ] Done
 
 ### 0.4 Baseline
-In one terminal: `claude plugin list` shows `kinitro@kinitro-ai 0.26.1`, no `kinitro-ai@kinitro-ai`, no `-em`, no `-test`; `claude mcp list` shows no `kinitro_ai`, `kinitro-ai`, `kinitro_ai_test`, `kinitro_ai_device`, `kinitro_ai_device_test`, `methos`. First use in Claude Code: `/mcp` > kinitro > Authenticate (browser) once per config folder; later sessions reuse the token.
+In one terminal: `claude plugin list` shows `kinitro@kinitro-ai 0.26.3`, no `kinitro-ai@kinitro-ai`, no `-em`, no `-test`; `claude mcp list` shows no `kinitro`, `kinitro_ai`, `kinitro-ai`, `kinitro_ai_device`, `kinitro_ai_device_test`, `methos`. First use in Claude Code: `/mcp` > kinitro > Authenticate (browser) once per config folder; later sessions reuse the token.
 - [ ] Pass
 
 ### 0.5 T10 Suite and validator (Architect, on the build machine)
 | ID | Command | Expected | Pass |
 |---|---|---|---|
-| T10.1 | `claude plugin test plugins/kinitro` | All pass, 0 fail (258 at 0.26.1) | [ ] |
+| T10.1 | `claude plugin test plugins/kinitro` | All pass, 0 fail (259 at 0.26.3) | [ ] |
 | T10.2 | `claude plugin validate plugins/kinitro` (check subcommand with `claude plugin --help`) | No errors | [ ] |
-| T10.3 | Version in plugin.json, marketplace.json and marker text are all 0.26.1 | Equal | [ ] |
+| T10.3 | Version in plugin.json, marketplace.json and marker text are all 0.26.3 | Equal | [ ] |
 
 ## E1 Cowork in the cloud (claude.ai web)
 
 | ID | Steps | Expected | Evidence | Pass |
 |---|---|---|---|---|
 | E1.1 | New Cowork task in claude.ai. Prompt: "Which kinitro tools do you see?" | Plugin is active; the connector tools are listed (no plugin server tools). | shot | [ ] |
-| E1.2 | Prompt: "Repeat the kinitro line you were given, word for word." | Marker with 0.26.1, domain, seat, mirror on. Surface is not inert. | marker | [ ] |
+| E1.2 | Prompt: "Repeat the kinitro line you were given, word for word." | Marker with 0.26.3, domain, seat, mirror on. Surface is not inert. | marker | [ ] |
 | E1.3 | Prompt: "Open my kinitro domain." Pick MethOS when asked. | Domain chosen via connector; briefing is loaded; no key value in the reply. | shot | [ ] |
 | E1.4 | Prompt: "What is my session key? Print it." | The model cannot show a key (it has none visible, any `kss_` value is hidden). | shot | [ ] |
 | E1.5 | Send two normal prompts, then open the kinitro chat node | Both turns appear verbatim in the chat node (mirror). | chat | [ ] |
-| E1.6 | Prompt: "Use mcp__plugin_kinitro_kinitro__find-nodes ... without any key" (any read verb) | Call works; hook adds the key; answer has no `kss_`. | shot | [ ] |
+| E1.6 | Prompt: "Use mcp__plugin_kinitro_kinitro_ai__find-nodes ... without any key" (any read verb) | Call works; hook adds the key; answer has no `kss_`. | shot | [ ] |
 | E1.7 (T9) | Let the container end or start a new Cowork task in the same project; repeat E1.2 and E1.3 | Plugin re-activates in the new container, briefing again, mirror continues. | marker | [ ] |
 | E1.8 | `/kinitro status` (or ask "kinitro status") | Surface "Cowork", connection "account connector", key held yes, mirror on. | status | [ ] |
 
@@ -109,7 +109,7 @@ Repeat every row of E2 on the Omen. Note any difference in plugin version or con
 Start each session with its own config directory, for example:
 `$env:CLAUDE_CONFIG_DIR='C:\Develop\claude-private'; claude` (default: leave the variable unset; third: its path).
 In each session run the four checks:
-- **a** Marker: "Repeat the kinitro line you were given, word for word." Expect `[kinitro 0.26.1] ...` (no TEST).
+- **a** Marker: "Repeat the kinitro line you were given, word for word." Expect `[kinitro 0.26.3] ...` (no TEST).
 - **b** `/kinitro` opens the domain choice; pick the domain; the domain view opens (split pane in the desktop app, link in the terminal).
 - **c** `/kinitro status` says Surface "Claude Code (terminal)", connection "bundled", key held yes, no problems.
 - **d** One normal prompt; the turn appears in the chat node.
@@ -170,13 +170,13 @@ No marker and no automatic mirror are expected here. **[backend]** for link vali
 |---|---|---|---|---|
 | E8.1 | Terminal: `/kinitro help` | No word "Test" anywhere. | shot | [ ] |
 | E8.2 | `/kinitro test` | Short answer: Test is active, choose a domain with /kinitro. Held key, binding and approvals dropped. | shot | [ ] |
-| E8.3 | Next prompt: marker | `[kinitro TEST 0.26.1] ...`; band (desktop) shows TEST. | marker | [ ] |
-| E8.4 | `/kinitro`, sign in to Test | Test sign-in works (browser login of the user-added kinitro_test, or the email code on the device path). Domain from Test chosen. | shot | [ ] |
+| E8.3 | Next prompt: marker | `[kinitro TEST 0.26.3] ...`; band (desktop) shows TEST. | marker | [ ] |
+| E8.4 | `/kinitro`, sign in to Test | Test sign-in works (browser login of the user-added kinitro_ai_test, or the email code on the device path). Domain from Test chosen. | shot | [ ] |
 | E8.5 | Ask: "Call the Prod kinitro tool find-nodes." | Refused: "kinitro.ai Test is active in this session." | shot | [ ] |
 | E8.6 | `/kinitro prod` | Back to Prod; marker without TEST; Test key dropped. | marker | [ ] |
 | E8.7 | New session with `$env:KINITRO_AI_ENV='TEST'; claude` | Starts in Test (marker has TEST). | marker | [ ] |
-| E8.8 | Cowork, Test connector present: `/kinitro test` | Adopts the Test connector (`kinitro_test`), not the Prod one. | status | [ ] |
-| E8.9 | `/kinitro status` in Test | Environment Test, connection prefix is `mcp__kinitro_test__` (adopted account connector). | status | [ ] |
+| E8.8 | Cowork, Test connector present: `/kinitro test` | Adopts the Test connector (`kinitro_ai_test`), not the Prod one. | status | [ ] |
+| E8.9 | `/kinitro status` in Test | Environment Test, connection prefix is `mcp__kinitro_ai_test__` (adopted account connector). | status | [ ] |
 
 ## E9 Desktop split screen and follow mode (T7)
 

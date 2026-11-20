@@ -67,7 +67,7 @@ describe('headless sessions (item 4.2.1-3696 criterion 6)', () => {
       if (e.key === 'sessionKey') return { value: { value: { sid: 'H1', key: 'kss_held_key' }, version: 1 } }
       return next(e)
     })
-    await $.tool.call({ tool: 'mcp__plugin_kinitro_kinitro__list-domains' })
+    await $.tool.call({ tool: 'mcp__plugin_kinitro_kinitro_ai__list-domains' })
     return w.sent
   }
   test('H3: a headless call of the own server is passed through untouched (no key added, nothing else sent)', async ($, on) => {

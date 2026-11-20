@@ -28,7 +28,7 @@ describe('update notice', () => {
     expect(publishedVersion(market('0.24.0'))).toBe('0.24.0')
     expect(publishedVersion(JSON.stringify({ plugins: [{ name: 'other', version: '9.0.0' }] }))).toBeUndefined()
     // 0.26.1 rename: the entry is `kinitro`; an older marketplace.json still names it `kinitro-ai`
-    expect(publishedVersion(JSON.stringify({ plugins: [{ name: 'kinitro', version: '0.26.2' }, { name: 'kinitro-ai', version: '0.25.9' }] }))).toBe('0.26.2')
+    expect(publishedVersion(JSON.stringify({ plugins: [{ name: 'kinitro', version: '0.26.3' }, { name: 'kinitro-ai', version: '0.25.9' }] }))).toBe('0.26.3')
     expect(publishedVersion(JSON.stringify({ plugins: [{ name: 'kinitro-ai', version: '0.25.9' }] }))).toBe('0.25.9')
     expect(updateNotice('0.23.2', '0.23.2', PAGE)).toBeUndefined()
   })
@@ -37,7 +37,7 @@ describe('update notice', () => {
     await probe($, 'reload')
     await $.prompt.submit({ text: 'a', origin: { kind: 'composer' } } as any)
     expect(fetched).toEqual([PAGE + 'marketplace.json'])
-    expect(seen[0]).toContain(`kinitro 0.27.0 is available (you run 0.26.2). Claude Code: run /kinitro update.`)   // 0.26.0 (P8): the notice names the step of the surface (here a terminal session)
+    expect(seen[0]).toContain(`kinitro 0.27.0 is available (you run 0.26.3). Claude Code: run /kinitro update.`)   // 0.26.0 (P8): the notice names the step of the surface (here a terminal session)
   })
   test('equal: no notice', async ($, on) => {
     const { seen, fetched } = mk(on, ok('0.23.2'))

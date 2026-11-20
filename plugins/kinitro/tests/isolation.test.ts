@@ -7,7 +7,7 @@ import { makeWorld, probe } from './world'
 // server: the session key of one never reaches a call of the other's server, and the other's answers are left alone.
 // The OTHER name is computed, so the same test proves both directions (the Test build's suite runs it with the names swapped).
 const OTHER = VARIANT.name === 'kinitro-ai' ? 'kinitro-ai-test' : 'kinitro-ai'   // 0.26.1: the old plugin kinitro-ai is foreign to the renamed plugin kinitro and never gets its session key
-const OWN = `mcp__plugin_${VARIANT.name}_kinitro__`
+const OWN = `mcp__plugin_${VARIANT.name}_kinitro_ai__`
 const FOREIGN = `mcp__plugin_${OTHER}_kinitro_ai__`
 const KEY = 'kss_isolation_key_1'
 

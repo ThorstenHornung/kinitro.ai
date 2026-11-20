@@ -29,8 +29,9 @@ const READ_TIMEOUT_MS = 3000       // the chat tail and the todo read in prompt.
 const SERVER = 'kinitro_ai'
 // Build variant (PO 21.10.2026, hooks/variant.ts): the plugin name, its environment and the prefix of its local files. The
 // Production values give the names of 0.24.1 (0.24.2 adds the PROD marker, ruling R4); the Test build (kinitro-ai-test) gets its own names everywhere.
-// 0.26.1 rename: plugin `kinitro` (was kinitro-ai), Prod server `kinitro` (was kinitro_ai_device), Test server `kinitro_test` (was kinitro_ai_device_test), so no old copy in an
-// account sync can clash. The legacy names stay recognised as connectors (fallback for users who still have them).
+// 0.26.1 rename: plugin `kinitro` (was kinitro-ai), so no old copy in an account sync can clash. 0.26.3: the bundled Prod server is `kinitro_ai` and the tester-added Test server
+// `kinitro_ai_test` (0.26.1/0.26.2 named them `kinitro` and `kinitro_test`): a server named like the plugin put the connector prefix mcp__kinitro__ on top of the plugin's own
+// tools mcp__kinitro__probe and mcp__kinitro__wake, and one namespace hid the other. The legacy names stay recognised as connectors (fallback for users who still have them).
 // The host state (atom) keys must be string literals: the packager rewrites `plugin: 'kinitro'` for the Test build.
 const F = VARIANT.files
 const PROBE_TOOL = `mcp__${VARIANT.name}__probe`
@@ -53,7 +54,7 @@ const FETCH_MS = 60000
 const MAX_TEXT = 50000     // chars per prompt / answer sent to the chat
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = `${F.replace(/^\./, '')}.log`
-const VERSION = '0.26.2'
+const VERSION = '0.26.3'
 // update notice (PO 2026-10-16): at the first prompt, compare with the published marketplace.json on the download page
 const UPDATE_BASE = VARIANT.downloadBase   // the download page; the environment variable KINITRO_AI_DOWNLOAD_BASE overrides it
 const UPDATE_TIMEOUT_MS = 2500
@@ -86,26 +87,27 @@ const MAY_HAVE_RUN = 'The call may have run; check before repeating a write.'   
 const REBIND_MS = 30000                    // a refused key is replaced at most this often (one re-bind, no loop)
 const AGENT_FILE = `${F}/agent`       // part 6: the agent node (id) this seat works as, in the PERSON's home folder only (fix round M3:
                                            // never the project folder, never an environment variable a project's settings can set)
-// 0.26.1 (architect decision 15:08): the bundled server `kinitro` points at https://methos.kinitro.ai/mcp with the OAuth client `claude` (the device endpoint /mcp/device
-// ignores the claude.ai OAuth login). In Claude Code it is the plugin's own OAuth server: mcp__plugin_kinitro_kinitro__<verb>. The email-code device server is NOT bundled:
-// a user adds it as `kinitro_device` (claude mcp add) and it is adopted like the Test server `kinitro_test`.
-const BUNDLED_SERVER = 'kinitro'
-const BUNDLED_RX = new RegExp(`^mcp__plugin_${VARIANT.name}_kinitro__`)  // the plugin's own OAuth server, exactly (fix round L1)
+// 0.26.1 (architect decision 15:08): the bundled server (since 0.26.3 `kinitro_ai`, before `kinitro`) points at https://methos.kinitro.ai/mcp with the OAuth client `claude` (the device endpoint /mcp/device
+// ignores the claude.ai OAuth login). In Claude Code it is the plugin's own OAuth server: mcp__plugin_kinitro_kinitro_ai__<verb>. The email-code device server is NOT bundled:
+// a user adds it as `kinitro_device` (claude mcp add) and it is adopted like the Test server `kinitro_ai_test`.
+const BUNDLED_SERVER = 'kinitro_ai'   // 0.26.3: was `kinitro`, which collided with the plugin's own tool namespace mcp__kinitro__
+const BUNDLED_RX = new RegExp(`^mcp__plugin_${VARIANT.name}_kinitro_ai__`)  // the plugin's own OAuth server, exactly (fix round L1)
 // 0.25.0 (item 4.2.1-3910): the plugin's second own server, the device sign-in address /mcp/device (.mcp.json, no oauth block).
 // One of the two is the session's (its sign-in path); the other one's tools are refused and described as not used.
 const DEVICE_SERVER = 'kinitro_device'   // 0.26.1: user-added (URL /mcp/device); its tools are mcp__kinitro_device__<verb>, a connector the plugin adopts on the device path
 // 0.26.0 (item 4.2.1-4672 P5): the second own server, the Test device address (.mcp.json). Test has no OAuth server.
-const DEVICE_TEST_SERVER = 'kinitro_test'   // 0.26.1: was kinitro_ai_device_test
-const DEVICE_TEST_RX = new RegExp(`^mcp__plugin_${VARIANT.name}_kinitro_test__`)
-const OWN_RX = new RegExp(`^mcp__plugin_${VARIANT.name}_kinitro(?:_test)?__`)   // any own (plugin-scoped) server (tool.call, tool.describe)
-// 0.26.0 (P4): an account connector (Cowork, claude.ai, a user server): mcp__[claude_ai_]kinitro[_ai][_device][_test]__ in any case, never mcp__plugin_...
-// 0.26.1: the plugin's OWN control tools are mcp__kinitro__probe and mcp__kinitro__wake (the host spells plugin tools mcp__<plugin>__<tool>, the same shape as the
-// connector mcp__kinitro__<verb>). They are never connector verbs: the lookahead keeps them out of every connector rule, and the server has no verb probe or wake.
-const CONNECTOR_RX = /^mcp__(?:claude_ai_)?kinitro(?:_ai)?(?:_device)?(?:_test)?__(?!(?:probe|wake)$)/i
-const HOOK_RX = new RegExp(`${OWN_RX.source}|${CONNECTOR_RX.source}`, 'i')   // the widened tool.call / tool.describe filter: own servers and connectors; the handler decides
+const DEVICE_TEST_SERVER = 'kinitro_ai_test'   // 0.26.3: was kinitro_test (0.26.1) and kinitro_ai_device_test (before)
+const DEVICE_TEST_RX = new RegExp(`^mcp__plugin_${VARIANT.name}_kinitro_ai_test__`)
+const OWN_RX = new RegExp(`^mcp__plugin_${VARIANT.name}_kinitro_ai(?:_test)?__`)   // any own (plugin-scoped) server (tool.call, tool.describe)
+// 0.26.0 (P4): an account connector (Cowork, claude.ai, a user server): mcp__[claude_ai_]kinitro_ai[_device][_test]__, never mcp__plugin_...
+// 0.26.3: mcp__kinitro__ (lower case, exactly) is the plugin's OWN namespace (the control tools mcp__kinitro__probe and mcp__kinitro__wake: the host spells plugin tools
+// mcp__<plugin>__<tool>) and is never a connector. The bundled server is therefore `kinitro_ai`, and the rule is case-explicit: the legacy claude.ai spelling mcp__Kinitro__ stays a
+// connector, mcp__kinitro__ does not. (The old 0.26.1 special case for probe and wake is gone: the namespaces no longer overlap.)
+const CONNECTOR_RX = /^mcp__(?!kinitro__)(?:claude_ai_)?[Kk]initro(?:_[Aa]i)?(?:_device)?(?:_[Tt]est)?__/
+const HOOK_RX = new RegExp(`${OWN_RX.source}|${CONNECTOR_RX.source}`)   // the widened tool.call / tool.describe filter: own servers and connectors; the handler decides
 const CONNECTOR_ORDER: Record<Env, string[]> = {   // which listed connector is adopted first (lower case)
-  PROD: ['mcp__kinitro__', 'mcp__claude_ai_kinitro__', 'mcp__kinitro_device__', 'mcp__kinitro_ai_device__', 'mcp__kinitro_ai__'],   // 0.26.1: the new name first, the legacy names after
-  TEST: ['mcp__kinitro_test__', 'mcp__claude_ai_kinitro_test__', 'mcp__kinitro_ai_device_test__', 'mcp__kinitro_ai_test__'],   // the first is the server a tester adds themselves (claude mcp add ... kinitro_test)   // 0.26.1: the last is the server a tester adds themselves (claude mcp add ... kinitro_ai_device_test)
+  PROD: ['mcp__kinitro_ai__', 'mcp__claude_ai_kinitro__', 'mcp__kinitro_device__', 'mcp__kinitro_ai_device__'],   // 0.26.3: the connector of the bundled server `kinitro_ai` first, the legacy names after (mcp__kinitro__ is the plugin's own namespace, never a connector)
+  TEST: ['mcp__kinitro_ai_test__', 'mcp__kinitro_test__', 'mcp__claude_ai_kinitro_test__', 'mcp__kinitro_ai_device_test__'],   // 0.26.3: the first is the server a tester adds themselves (claude mcp add ... kinitro_ai_test); the others are legacy names
 }
 // Each user message may start a fresh engine process while the kinitro.ai
 // connector is still connecting: the briefing and the hook state therefore
@@ -930,14 +932,14 @@ async function log($: any, line: string) {
 // kinitro.ai call through the engine's tool path (same route as the model's own
 // tool calls), falling back to the direct MCP route.
 // Where the kinitro.ai tools come from (0.21.0), best first:
-//   bundled    the plugin's own MCP server (.mcp.json): mcp__plugin_kinitro_kinitro__<verb> (legacy OAuth server: _kinitro_ai__)
+//   bundled    the plugin's own MCP server (.mcp.json): mcp__plugin_kinitro_kinitro_ai__<verb>
 //   user       a server of the user named kinitro_ai: mcp__kinitro_ai__<verb>
 //   connector  the claude.ai connector inside Claude Code: mcp__claude_ai_Kinitro__<verb>
 //   other      any other server that has a current-seat tool and "kinitro" or "methos" in its name
 export type KinitroSource = 'bundled' | 'user' | 'connector' | 'other' | 'connector-adopted'   // 0.26.0 (P4): connector-adopted = the account connector taken as the plugin's own connection (Cowork)
-const BUNDLED_PREFIX = `mcp__plugin_${VARIANT.name}_kinitro__`   // the OAuth server of the plugin
+const BUNDLED_PREFIX = `mcp__plugin_${VARIANT.name}_kinitro_ai__`   // the OAuth server of the plugin
 const DEVICE_PREFIX = devicePrefixFor(VARIANT.name)   // the user-added device server's tools (a connector, adopted on the device path)
-const DEVICE_TEST_PREFIX = `mcp__plugin_${VARIANT.name}_kinitro_test__`   // a packaged (bundled) Test server; retired. The tester-added Test server is the connector mcp__kinitro_test__
+const DEVICE_TEST_PREFIX = `mcp__plugin_${VARIANT.name}_kinitro_ai_test__`   // a packaged (bundled) Test server; retired. The tester-added Test server is the connector mcp__kinitro_ai_test__
 const TEST_PREFIX = `mcp__${DEVICE_TEST_SERVER}__`
 const USER_PREFIX = `mcp__${SERVER}__`
 const CONNECTOR_PREFIX = 'mcp__claude_ai_Kinitro__'
@@ -951,7 +953,7 @@ export const SIGNIN_NEEDED = SIGNIN_NEEDED_OAUTH
 const signinNeeded = () => (pathMirror?.path === 'device' ? SIGNIN_NEEDED_DEVICE : SIGNIN_NEEDED_OAUTH)
 // 0.26.1: what to do depends on the surface. Cowork has no plugin sign-in (the connector of the plugin on claude.ai does it) and the Test
 // server is never bundled (a tester adds it); the email-code sign-in is only advised where it exists (Claude Code).
-export const COWORK_CONNECT = 'Connect the kinitro.ai connector of the kinitro plugin on claude.ai: Plugins > kinitro > Connectors > kinitro > Connect (remove the old plugin Kinitro ai and its connectors kinitro_ai_device and kinitro_ai_device_test first). Choose Sign in now, then Use your own OAuth client with client ID claude, then sign in on the kinitro.ai page. Then start a new chat.'
+export const COWORK_CONNECT = 'Connect the kinitro.ai connector of the kinitro plugin on claude.ai: Plugins > kinitro > Connectors > kinitro_ai > Connect (remove the old plugin Kinitro first, also an old Kinitro ai, with its connectors kinitro, kinitro_ai_device and kinitro_ai_device_test). Choose Sign in now, then Use your own OAuth client with client ID claude, then sign in on the kinitro.ai page. Then start a new chat.'
 export const TEST_URL = 'https://methos-test.kinitro.ai/mcp'   // 0.26.1: the normal endpoint with the OAuth client claude (the device endpoint ignores the claude.ai login)
 export const TEST_ADD = `The kinitro.ai Test server is not connected. Add it yourself: in Claude Code run claude mcp add --transport http -s user --client-id claude ${DEVICE_TEST_SERVER} ${TEST_URL}, then sign in with /mcp; on claude.ai add a custom connector named ${DEVICE_TEST_SERVER} with the URL ${TEST_URL} and the OAuth client ID claude. Then start a new session.`
 const coworkSync = (): boolean => coworkKnown?.v === true
@@ -1124,7 +1126,7 @@ async function kinitroTools($: any): Promise<{ prefix: string | undefined; sourc
   if (toolPrefix) return { prefix: toolPrefix, source: toolSource }
   const path = (await pathState($)).path, env = await envNow($)
   const cowork = await coworkNow($)
-  const adopt = cowork || env === 'TEST' || path === 'device'   // 0.26.1: Test and the device path have no bundled server; the server the user added (kinitro_test, kinitro_device) is adopted on every surface
+  const adopt = cowork || env === 'TEST' || path === 'device'   // 0.26.1: Test and the device path have no bundled server; the server the user added (kinitro_ai_test, kinitro_device) is adopted on every surface
   try {
     const names: string[] = (await $.tool.list()).map((t: any) => String(t.name))
     const found = resolveKinitroTools(names, path, env, adopt)
@@ -1139,7 +1141,7 @@ async function kinitroTools($: any): Promise<{ prefix: string | undefined; sourc
 
 // the second connections in the session now (for the notice; read until it was told)
 async function secondConnectionsNow($: any): Promise<string[]> {
-  try { await kinitroTools($) } catch { /* nothing listed */ }   // 0.26.1: learn first whether a server is the adopted one (kinitro_device, kinitro_test)
+  try { await kinitroTools($) } catch { /* nothing listed */ }   // 0.26.1: learn first whether a server is the adopted one (kinitro_device, kinitro_ai_test)
   try { seconds = secondConnections((await $.tool.list()).map((t: any) => String(t.name)), await envNow($)) } catch { /* keep the last */ }
   if (toolSource === 'connector-adopted') seconds = []
   return seconds

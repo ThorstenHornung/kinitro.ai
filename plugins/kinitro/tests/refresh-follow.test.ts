@@ -5,7 +5,7 @@ import { writtenNode } from '../hooks/register'
 
 // 0.26.0 (item 4.2.1-4672 P9, P11): refresh re-reads the start briefing and injects it once, marked as superseding; follow mode opens the
 // node the agent wrote last (once per turn) in the browser pane, only when a browser tool is listed.
-const OWN = 'mcp__plugin_kinitro_kinitro__'
+const OWN = 'mcp__plugin_kinitro_kinitro_ai__'
 const BROWSER = 'mcp__Claude_Browser__preview_start'
 const NODE_URL = 'https://methos.example/page/node?link=NODEPAYLOAD'
 const json = (t: string) => JSON.parse(t)

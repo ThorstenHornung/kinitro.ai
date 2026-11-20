@@ -20,15 +20,15 @@ describe('lazy start (P3)', () => {
     expect(registered).toEqual([])
     await $.prompt.submit({ text: 'hello', origin: { kind: 'composer' } } as any)
     expect(registered).toEqual(['probe'])
-    expect(seen[0]).toContain('[kinitro 0.26.2]')
+    expect(seen[0]).toContain('[kinitro 0.26.3]')
     expect(seen[0]).toContain('instruction-coldstart of')   // the start section of the first turn
     expect(seen[0]).toContain('instruction-persona of')
   })
 
   test('a tool call of the own server without session.start also starts the session (the probe is registered once)', async ($, on) => {
     const { registered } = mk(on)
-    await ($ as any).tool.call({ tool: 'mcp__plugin_kinitro_kinitro__list-domains' })
-    await ($ as any).tool.call({ tool: 'mcp__plugin_kinitro_kinitro__list-domains' })
+    await ($ as any).tool.call({ tool: 'mcp__plugin_kinitro_kinitro_ai__list-domains' })
+    await ($ as any).tool.call({ tool: 'mcp__plugin_kinitro_kinitro_ai__list-domains' })
     await $.prompt.submit({ text: 'hello', origin: { kind: 'composer' } } as any)
     expect(registered).toEqual(['probe'])
   })

@@ -3,7 +3,7 @@ import { test } from './kit'
 import { SIGNIN_NEEDED, resolveKinitroTools } from '../hooks/register'
 import { makeWorld, probe } from './world'
 
-const B = 'mcp__plugin_kinitro_kinitro__'
+const B = 'mcp__plugin_kinitro_kinitro_ai__'
 const U = 'mcp__kinitro_ai__'
 const C = 'mcp__claude_ai_Kinitro__'
 const seat = (p: string) => `${p}current-seat`

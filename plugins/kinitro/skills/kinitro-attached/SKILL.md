@@ -21,7 +21,7 @@ Determine two things before you give any instruction.
 | `sdk-*` / "background session" | Headless | nobody; plugin is off unless woken |
 | none of these, no Bash | claude.ai web, mobile | Settings, Connectors |
 
-**Mode.** Plugin mode if the context carries the marker line `[kinitro x.y.z] ...` (Test shows `[kinitro TEST x.y.z]`) and the tool `mcp__kinitro__probe` is listed. MCP-only mode if you only have kinitro.ai tools (a connector such as `mcp__kinitro__<verb>`, which has no verb probe or wake) and no marker, no probe. `mcp__kinitro__probe` and `mcp__kinitro__wake` are the plugin's own control tools, never connector verbs. State the mode to the user only when it explains something.
+**Mode.** Plugin mode if the context carries the marker line `[kinitro x.y.z] ...` (Test shows `[kinitro TEST x.y.z]`) and the tool `mcp__kinitro__probe` is listed. MCP-only mode if you only have kinitro.ai tools (a connector such as `mcp__kinitro_ai__<verb>`) and no marker, no probe. `mcp__kinitro__probe` and `mcp__kinitro__wake` are the plugin's own control tools in the plugin's own namespace `mcp__kinitro__`, which is never a connector. State the mode to the user only when it explains something.
 
 If the surface is unknown, ask the user one plain question ("Are you in the terminal, the Claude desktop app, or in the browser?") and give steps for that one only.
 
@@ -52,7 +52,7 @@ Keep each script short; one step at a time; wait where the user must act.
 4. Next, the domain choice: numbered list of their approved domains; they answer with a number or name. A new domain needs one approval on the kinitro.ai page.
 
 **Connect and sign in on claude.ai or in the Claude desktop app (Cowork).** There is no plugin sign-in there: the connector of the plugin does it. claude.ai shows every server of the plugin as a connector on the plugin page; kinitro.ai supports neither dynamic client registration nor Claude's own client identity yet, so the user enters the client by hand. Steps, one at a time:
-1. Open Plugins > kinitro (German UI: Plugins > kinitro), Connectors, `kinitro`, and press Connect. Remove the old plugin "Kinitro ai" and its connectors `kinitro_ai_device` and `kinitro_ai_device_test` first.
+1. Open Plugins > kinitro (German UI: Plugins > kinitro), Connectors, `kinitro_ai`, and press Connect. Remove the old plugin "Kinitro" (also an old "Kinitro ai") and its connectors `kinitro`, `kinitro_ai_device` and `kinitro_ai_device_test` first.
 2. In the sign-in dialog choose "Sign in now" (German: "Jetzt anmelden"). Do not accept the preselected "No sign-in" ("Keine Anmeldung", marked "detected"): it fails.
 3. Choose "Use your own OAuth client" ("Eigenen OAuth-Client verwenden"), enter client ID `claude`, leave the secret empty.
 4. The kinitro.ai login page opens: email and password of the kinitro.ai account. Afterwards the connector shows Connected.
@@ -96,7 +96,7 @@ In the Claude desktop app a built-in browser pane can sit beside the chat. After
 Details and exact menu names: `references/surfaces.md`. Short version:
 
 - **Claude Code terminal / Code tab:** `/kinitro update`, or in a shell `claude plugin marketplace update kinitro-ai` then `claude plugin update kinitro@kinitro-ai` (if the old `kinitro-ai@kinitro-ai` is installed, also `claude plugin uninstall kinitro-ai@kinitro-ai`), then `/reload-plugins`. Check: `/plugin` (installed, enabled, errors), `/mcp` (servers and sign-in state), `claude plugin list`.
-- **Desktop chat / Cowork:** plugins are managed in the Claude account. Organisation plugins: the admin re-uploads the new package. Personal plugins: install the new package file. Offer to fetch it from https://methos.kinitro.ai/download/plugins/claude/. Check on the plugin page, Plugins > kinitro: tabs Overview, Permissions and Files, and a Connectors list where `kinitro` shows Connect or Connected.
+- **Desktop chat / Cowork:** plugins are managed in the Claude account. Organisation plugins: the admin re-uploads the new package. Personal plugins: install the new package file. Offer to fetch it from https://methos.kinitro.ai/download/plugins/claude/. Check on the plugin page, Plugins > kinitro: tabs Overview, Permissions and Files, and a Connectors list where `kinitro_ai` shows Connect or Connected.
 - **claude.ai web / mobile:** there is no plugin; the connector is the connection (Settings, Connectors). Organisation connectors are added by an owner or admin.
 
 ## 7. Fewer approval prompts
@@ -105,7 +105,7 @@ Every tool call asks for approval unless allowed. Help the user cut the noise wi
 
 - **Safe to always allow (reads):** `list-domains`, `current-seat`, `get-briefing`, `help`, `get-node`, `find-nodes`, `list-*`, `search-memory`, `read-*`, `describe-*`, `query-data-rows`, `wm-list`, `wm-get`, and the plugin's `probe` / `wake`.
 - **Keep on ask:** anything that writes, sends or deletes: `create-*`, `update-*`, `set-*`, `delete-*`, `archive-*`, `move-*`, `write-cloud-file`, `send-agent-message`, `invite-user`, `run-script`, `wm-add`, `wm-update`, `schedule-self-prompt`. Writes are what the user wants to see.
-- **Claude Code:** `/permissions` lets the user add allow rules; or `permissions.allow` in `settings.json` (user scope: `~/.claude/settings.json`). A rule names a tool, `mcp__<server>__<verb>`, and `mcp__<server>` covers the whole server (check). The plugin's server name is `plugin_kinitro_kinitro`, so a read rule looks like `mcp__plugin_kinitro_kinitro__list-domains`. For an account connector use its own name, for example `mcp__kinitro__list-domains`. Wildcards in the verb part (`__list-*`) may not be supported (check); list the verbs if unsure. Never recommend allowing the whole server.
+- **Claude Code:** `/permissions` lets the user add allow rules; or `permissions.allow` in `settings.json` (user scope: `~/.claude/settings.json`). A rule names a tool, `mcp__<server>__<verb>`, and `mcp__<server>` covers the whole server (check). The plugin's server name is `plugin_kinitro_kinitro_ai`, so a read rule looks like `mcp__plugin_kinitro_kinitro_ai__list-domains`. For an account connector use its own name, for example `mcp__kinitro_ai__list-domains`. Wildcards in the verb part (`__list-*`) may not be supported (check); list the verbs if unsure. Never recommend allowing the whole server.
 - **Claude apps (desktop chat, Cowork, web):** Settings, Connectors, open the kinitro.ai connector: its tools can be set per tool to allow, ask or block (check wording). Set the read tools to allow, keep writes on ask.
 - Always offer to do it with them; never change settings silently.
 
