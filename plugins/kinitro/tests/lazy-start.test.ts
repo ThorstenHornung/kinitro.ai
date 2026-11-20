@@ -20,7 +20,7 @@ describe('lazy start (P3)', () => {
     expect(registered).toEqual([])
     await $.prompt.submit({ text: 'hello', origin: { kind: 'composer' } } as any)
     expect(registered).toEqual(['probe'])
-    expect(seen[0]).toContain('[kinitro 0.26.3]')
+    expect(seen[0]).toContain('[kinitro 0.26.4]')
     expect(seen[0]).toContain('instruction-coldstart of')   // the start section of the first turn
     expect(seen[0]).toContain('instruction-persona of')
   })

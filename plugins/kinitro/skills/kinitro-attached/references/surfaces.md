@@ -29,7 +29,7 @@ Plugin server names in rules: the plugin's server is `plugin_kinitro_kinitro_ai`
   2. Choose "Sign in now" ("Jetzt anmelden"). claude.ai wrongly preselects "No sign-in" ("Keine Anmeldung", marked "detected"): it fails, do not accept it. kinitro.ai supports neither dynamic client registration nor Claude's client identity (CIMD) yet; a backend fix is planned.
   3. Choose "Use your own OAuth client" ("Eigenen OAuth-Client verwenden"), client ID `claude`, no secret.
   4. The kinitro.ai login page (email and password) follows; the connector then shows Connected.
-  5. Start a new chat.
+  5. Continue in the same chat; no new chat is needed.
   Connector tool prefix in the chat: `mcp__kinitro_ai__` (legacy: `mcp__kinitro_ai_device__`). If only another connector of the plugin page is in the chat (for example a Test connector a tester added), switch `kinitro_ai` on in the chat's + > Plugins menu, or start a new chat.
 - A custom connector (for a server the plugin does not bring, for example a Test server a tester adds) is created with "Add custom connector" (German: "Benutzerdefinierten Connector hinzufügen") with the server URL; its Authentication options include an OAuth client section where the client ID is entered as above.
 - Browser pane (split screen beside the chat): the user opens it from the app's view or pane controls (check).

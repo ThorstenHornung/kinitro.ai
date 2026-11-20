@@ -54,7 +54,7 @@ const FETCH_MS = 60000
 const MAX_TEXT = 50000     // chars per prompt / answer sent to the chat
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = `${F.replace(/^\./, '')}.log`
-const VERSION = '0.26.3'
+const VERSION = '0.26.4'
 // update notice (PO 2026-10-16): at the first prompt, compare with the published marketplace.json on the download page
 const UPDATE_BASE = VARIANT.downloadBase   // the download page; the environment variable KINITRO_AI_DOWNLOAD_BASE overrides it
 const UPDATE_TIMEOUT_MS = 2500
@@ -953,7 +953,7 @@ export const SIGNIN_NEEDED = SIGNIN_NEEDED_OAUTH
 const signinNeeded = () => (pathMirror?.path === 'device' ? SIGNIN_NEEDED_DEVICE : SIGNIN_NEEDED_OAUTH)
 // 0.26.1: what to do depends on the surface. Cowork has no plugin sign-in (the connector of the plugin on claude.ai does it) and the Test
 // server is never bundled (a tester adds it); the email-code sign-in is only advised where it exists (Claude Code).
-export const COWORK_CONNECT = 'Connect the kinitro.ai connector of the kinitro plugin on claude.ai: Plugins > kinitro > Connectors > kinitro_ai > Connect (remove the old plugin Kinitro first, also an old Kinitro ai, with its connectors kinitro, kinitro_ai_device and kinitro_ai_device_test). Choose Sign in now, then Use your own OAuth client with client ID claude, then sign in on the kinitro.ai page. Then start a new chat.'
+export const COWORK_CONNECT = 'Connect the kinitro.ai connector of the kinitro plugin on claude.ai: Plugins > kinitro > Connectors > kinitro_ai > Connect (remove the old plugin Kinitro first, also an old Kinitro ai, with its connectors kinitro, kinitro_ai_device and kinitro_ai_device_test). Choose Sign in now, then Use your own OAuth client with client ID claude, then sign in on the kinitro.ai page. The connector works in this chat as soon as it is connected; no new chat is needed.'
 export const TEST_URL = 'https://methos-test.kinitro.ai/mcp'   // 0.26.1: the normal endpoint with the OAuth client claude (the device endpoint ignores the claude.ai login)
 export const TEST_ADD = `The kinitro.ai Test server is not connected. Add it yourself: in Claude Code run claude mcp add --transport http -s user --client-id claude ${DEVICE_TEST_SERVER} ${TEST_URL}, then sign in with /mcp; on claude.ai add a custom connector named ${DEVICE_TEST_SERVER} with the URL ${TEST_URL} and the OAuth client ID claude. Then start a new session.`
 const coworkSync = (): boolean => coworkKnown?.v === true
@@ -2277,7 +2277,7 @@ async function otherEnvOnly($: any, env: Env, kind: SurfaceKind): Promise<Proble
     const hasProd = p.bundledProd.length + p.connectorProd.length > 0, hasTest = p.bundledTest.length + p.connectorTest.length > 0
     if (env === 'PROD' && hasTest && !hasProd) {
       return { problem: `The kinitro.ai Prod connector (${BUNDLED_SERVER}) is not in this chat; only the Test connector is.`,
-        fix: kind === 'cowork' ? `Switch ${BUNDLED_SERVER} on in this chat's + > Plugins menu, or start a new chat.` : `Switch ${BUNDLED_SERVER} on for this session (the kinitro plugin brings it; ${kind === 'terminal' || kind === 'desktop' ? 'try /reload-plugins' : 'start a new session'}).` }
+        fix: kind === 'cowork' ? `Switch ${BUNDLED_SERVER} on in this chat's + > Plugins menu; it arrives in this chat, no new chat is needed.` : `Switch ${BUNDLED_SERVER} on for this session (the kinitro plugin brings it; ${kind === 'terminal' || kind === 'desktop' ? 'try /reload-plugins' : 'switch it on in the + > Plugins menu of this chat'}).` }
     }
     if (env === 'TEST' && hasProd && !hasTest) return { problem: `The kinitro.ai Test connector (${DEVICE_TEST_SERVER}) is not in this chat; only the Prod connector is.`, fix: TEST_ADD }
   } catch { /* nothing to compare */ }

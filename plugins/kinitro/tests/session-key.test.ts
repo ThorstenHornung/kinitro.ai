@@ -117,7 +117,7 @@ describe('session key', () => {
     expect(srv.minted).toHaveLength(1)
     expect(noKeyInFiles(w)).toEqual([])
     expect(await probe($, 'status')).not.toContain('kss_')
-    expect(r).toContain('[kinitro 0.26.3]')   // 0.26.0 (P5): no environment in the Prod marker
+    expect(r).toContain('[kinitro 0.26.4]')   // 0.26.0 (P5): no environment in the Prod marker
     expect(r).not.toContain('kss_')
     expect(r).not.toContain("pass domainRef:'beta'")
   })

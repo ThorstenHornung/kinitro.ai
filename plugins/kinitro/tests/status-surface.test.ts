@@ -36,7 +36,7 @@ describe('surface and status line (P7)', () => {
     await probe($, 'reload')
     await submit($); await submit($)
     const line = (t: string) => t.split('\n')[0]!
-    expect(line(seen[0]!)).toBe('[kinitro 0.26.3] name-dom-beta · name-agent-beta · mirror on · context ? %')
+    expect(line(seen[0]!)).toBe('[kinitro 0.26.4] name-dom-beta · name-agent-beta · mirror on · context ? %')
     expect(line(seen[1]!)).toBe(line(seen[0]!))
     expect(line(seen[0]!).length).toBeLessThan(120)   // about 30 tokens
     await probe($, 'mirror', { value: 'off' })
@@ -48,11 +48,11 @@ describe('surface and status line (P7)', () => {
     const { seen } = mk(on, { surfaces: ['terminal'] })
     await probe($, 'reload')
     await submit($)
-    expect(seen[0]).toMatch(/^\[kinitro 0\.26\.3\] context \? % · briefing code-agent-beta/)
+    expect(seen[0]).toMatch(/^\[kinitro 0\.26\.4\] context \? % · briefing code-agent-beta/)
     const approved = [{ slug: 'beta', name: 'BETA' }]
-    const m = bandModel({ approved, current: 'beta', chooser: false, url: null, note: null, pend: null, seat: 'Coach', mirror: true, version: '0.26.3' })
-    expect(m.title).toBe('kinitro.ai · BETA · seat Coach · mirror on · 0.26.3')
-    expect(bandModel({ approved, current: 'beta', chooser: false, url: null, note: null, pend: null, seat: 'Coach', mirror: false, version: '0.26.3', env: 'TEST' }).title).toBe('kinitro.ai TEST · BETA · seat Coach · mirror off · 0.26.3')
+    const m = bandModel({ approved, current: 'beta', chooser: false, url: null, note: null, pend: null, seat: 'Coach', mirror: true, version: '0.26.4' })
+    expect(m.title).toBe('kinitro.ai · BETA · seat Coach · mirror on · 0.26.4')
+    expect(bandModel({ approved, current: 'beta', chooser: false, url: null, note: null, pend: null, seat: 'Coach', mirror: false, version: '0.26.4', env: 'TEST' }).title).toBe('kinitro.ai TEST · BETA · seat Coach · mirror off · 0.26.4')
     expect(m.title).not.toContain('(beta)')   // no slug in the user's text
   })
 })
@@ -62,7 +62,7 @@ describe('diagnosis (P8)', () => {
     mk(on, { surfaces: ['terminal'] })
     await probe($, 'reload')
     const st = json(await probe($, 'status'))
-    expect(st).toMatchObject({ version: '0.26.3', surface: 'Claude Code (terminal)', environment: 'Prod', domain: 'name-dom-beta', seat: 'name-agent-beta', mirror: { on: true, lastError: null }, duplicates: [], updateAvailable: null })
+    expect(st).toMatchObject({ version: '0.26.4', surface: 'Claude Code (terminal)', environment: 'Prod', domain: 'name-dom-beta', seat: 'name-agent-beta', mirror: { on: true, lastError: null }, duplicates: [], updateAvailable: null })
     expect(typeof st.keyHeld).toBe('boolean')
     expect(JSON.stringify(st)).not.toContain('kss_')
     expect(Array.isArray(st.problems)).toBe(true)
@@ -87,17 +87,17 @@ describe('diagnosis (P8)', () => {
   })
 
   test('the update notice names the step of the surface; without a surface both', async ($, on) => {
-    expect(updateNotice('0.27.0', '0.26.3', PAGE, 'terminal')).toBe(`kinitro 0.27.0 is available (you run 0.26.3). Claude Code: run /kinitro update.`)
-    expect(updateNotice('0.27.0', '0.26.3', PAGE, 'cowork')).toContain('managed in your Claude account (organisation plugins: your admin re-uploads it); ask me to fetch the new package')
-    expect(updateNotice('0.27.0', '0.26.3', PAGE)).toContain('Cowork/Desktop: re-upload the plugin')
-    expect(updateNotice('0.26.3', '0.26.3', PAGE, 'cowork')).toBeUndefined()
+    expect(updateNotice('0.27.0', '0.26.4', PAGE, 'terminal')).toBe(`kinitro 0.27.0 is available (you run 0.26.4). Claude Code: run /kinitro update.`)
+    expect(updateNotice('0.27.0', '0.26.4', PAGE, 'cowork')).toContain('managed in your Claude account (organisation plugins: your admin re-uploads it); ask me to fetch the new package')
+    expect(updateNotice('0.27.0', '0.26.4', PAGE)).toContain('Cowork/Desktop: re-upload the plugin')
+    expect(updateNotice('0.26.4', '0.26.4', PAGE, 'cowork')).toBeUndefined()
   })
 
   test('in Cowork the first prompt carries the account step of the update notice', async ($, on) => {
     const { seen } = mk(on, { env: COWORK_ENV, fetch: JSON.stringify({ plugins: [{ name: 'kinitro-ai', version: '0.27.0' }] }) })
     await probe($, 'reload')
     await submit($)
-    expect(seen[0]).toContain('kinitro 0.27.0 is available (you run 0.26.3).')
+    expect(seen[0]).toContain('kinitro 0.27.0 is available (you run 0.26.4).')
     expect(seen[0]).toContain('ask me to fetch the new package')
     expect(seen[0]).not.toContain('run /kinitro update')
   })
@@ -107,12 +107,12 @@ describe('other plugin copies (P8)', () => {
   const OTHERS = [{ name: 'mcp__kinitro-ai-em__probe', description: 'kinitro-ai-em harness control, version 0.25.0.' }, { name: 'mcp__plugin_kinitro-ai-test_kinitro_ai_device_test__current-seat' }, { name: 'mcp__kinitro__probe' }, { name: 'mcp__plugin_kinitro-ai_kinitro_ai_device__current-seat' }]
 
   test('findCopies: another copy by its probe or wake tool and by its plugin-scoped server; this copy is none; a higher version is known only from its description', () => {
-    const r = findCopies(OTHERS, 'kinitro', '0.26.3')
+    const r = findCopies(OTHERS, 'kinitro', '0.26.4')
     expect(r.names.sort()).toEqual(['kinitro-ai', 'kinitro-ai-em', 'kinitro-ai-test'])   // 0.26.1: the old plugin kinitro-ai is a duplicate of the renamed kinitro
     expect(r.higher).toBeUndefined()
-    const newer = findCopies([{ name: 'mcp__kinitro-ai-em__wake', description: 'x (version 0.27.1). y' }], 'kinitro', '0.26.3')
+    const newer = findCopies([{ name: 'mcp__kinitro-ai-em__wake', description: 'x (version 0.27.1). y' }], 'kinitro', '0.26.4')
     expect(newer).toEqual({ names: ['kinitro-ai-em'], higher: '0.27.1' })
-    expect(findCopies([{ name: 'mcp__kinitro-ai-em__probe', description: 'old copy, no version' }], 'kinitro', '0.26.3').higher).toBeUndefined()
+    expect(findCopies([{ name: 'mcp__kinitro-ai-em__probe', description: 'old copy, no version' }], 'kinitro', '0.26.4').higher).toBeUndefined()
   })
 
   test('the probe and wake descriptions of this copy say their version', async ($, on) => {
@@ -120,7 +120,7 @@ describe('other plugin copies (P8)', () => {
     on('tool.register', async (_$: any, e: any) => { registered[String(e.name)] = String(e.description); return { value: undefined } })
     mk(on)
     await probe($, 'status')
-    expect(registered.probe).toContain('version 0.26.3')
+    expect(registered.probe).toContain('version 0.26.4')
   })
 
   test('an older copy is named once in the injected context with the steps of the surface; status lists it', async ($, on) => {
@@ -140,7 +140,7 @@ describe('other plugin copies (P8)', () => {
     const { seen } = mk(on, { tools: [{ name: 'mcp__kinitro-ai-em__probe', description: 'kinitro-ai-em harness control, version 0.25.0.' }], verbs: { 'mirror-messaging': (a) => { sent.push(String(a.action)); return { result: JSON.stringify({ status: 'ok', rowIds: [] }) } } } })
     on('turn.complete', async () => ({ text: '' }))
     await submit($)
-    expect(seen[0]).toContain('[kinitro 0.26.3]')
+    expect(seen[0]).toContain('[kinitro 0.26.4]')
     await $.turn.complete({ turnId: 't1', reason: 'end_turn', answer: 'done' } as any)
     expect(sent).toContain('append')
   })

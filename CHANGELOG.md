@@ -2,6 +2,9 @@
 
 All notable changes to the `kinitro` plugin (called `kinitro-ai` up to 0.26.0; the marketplace is still `kinitro-ai`) are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.26.4 (20.11.2026)
+- No text sends the user to a new chat or session any more (PO 20.11.2026, proven live: a running Cowork session took the update 0.26.2 -> 0.26.3, a reinstall and a new connector without a restart). The skill kinitro-attached states the rule; the status fixes and README say the connector arrives in the running chat.
+
 ## 0.26.3 (20.11.2026)
 - RENAME of the bundled server: `kinitro` becomes `kinitro_ai` (URL unchanged, https://methos.kinitro.ai/mcp, still no OAuth block), and the tester-added Test server `kinitro_test` becomes `kinitro_ai_test` (https://methos-test.kinitro.ai/mcp). Why (measured live 20.11.): the plugin is called `kinitro`, so its own tools are `mcp__kinitro__probe` and `mcp__kinitro__wake`; the bundled server was also called `kinitro`, and on claude.ai it became the connector prefix `mcp__kinitro__<verb>`. One namespace hid the other: in one session the probe vanished when the connector tools arrived, in another the connector won and the probe never existed.
 - New names: Claude Code `mcp__plugin_kinitro_kinitro_ai__<verb>`; claude.ai connector `mcp__kinitro_ai__<verb>` (first in the Prod adoption order), Test connector `mcp__kinitro_ai_test__<verb>` (legacy `mcp__kinitro_ai_Test__`, `mcp__kinitro_test__`). `mcp__kinitro__` is the plugin's own namespace again and never a connector: the 0.26.1 special case that kept probe and wake out of the connector rule is gone, `CONNECTOR_RX` excludes `mcp__kinitro__` as a whole (the legacy claude.ai spelling `mcp__Kinitro__` with a capital K stays a connector, so the connector rule is now case-explicit).

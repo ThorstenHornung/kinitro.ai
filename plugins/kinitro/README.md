@@ -20,7 +20,7 @@ You do not need to type commands. Ask in your own words ("kinitro status", "conn
 2. Choose "Sign in now" (German: "Jetzt anmelden"). Do not accept the preselected "No sign-in" ("Keine Anmeldung"): it fails.
 3. Choose "Use your own OAuth client" ("Eigenen OAuth-Client verwenden"), enter the client ID `claude` and leave the secret empty.
 4. Sign in on the kinitro.ai page with your email and password. The connector now shows Connected.
-5. Start a new chat and say "connect me to kinitro", or pick "kinitro" from the "/" menu.
+5. In this chat (no new chat needed) say "connect me to kinitro", or pick "kinitro" from the "/" menu.
 
 **Claude Code (terminal)**
 1. Install: `/plugin marketplace add ThorstenHornung/kinitro.ai`, then `/plugin install kinitro@kinitro-ai`.

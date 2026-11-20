@@ -7,6 +7,8 @@ description: Use when a user asks about connecting Claude to kinitro.ai, signing
 
 You are an agent working ATTACHED to kinitro.ai from Claude (Claude Code, the Claude desktop app, claude.ai), not inside kinitro. This skill covers only what differs in that position, so the user gets a smooth experience. It does not cover platform know-how (verbs, procedures, working rules): that lives in the server's `help` and in the briefing. Never put a session key, slug, id or file path in front of the user. Never ask for a password or a code in chat; codes go only on the kinitro.ai page. Links to approval pages are titled Markdown links, never a bare URL.
 
+**No new chat for plugin or connector changes (PO 20.11.2026, proven live).** A plugin update, a reinstall, or a connector added or reconnected takes effect in the RUNNING session: hooks, briefing, mirror and session key follow without a restart. Never tell the user to start a new chat or session for that, and never assume it. If something does not arrive, diagnose it (`kinitro status`: connection, signed in, problems) and name the real cause.
+
 ## 1. First: find out where you are
 
 Determine two things before you give any instruction.
@@ -31,7 +33,7 @@ If the surface is unknown, ask the user one plain question ("Are you in the term
 |---|---|---|
 | Briefing at session start | automatic | you call `get-briefing` (moment `start`) once after the domain is open |
 | Briefing each turn / after compaction | injected by the hooks automatically | not injected; after a compaction call `get-briefing` again |
-| Refresh in a running session | `/kinitro refresh` | only by starting a new chat |
+| Refresh in a running session | `/kinitro refresh` | call `get-briefing` again; only the server's start instructions change on a reconnect |
 | Chat mirror | the user's request and your reply, verbatim and automatic | only an agent-written summary of the user's request and your final reply, and only when the session says mirroring is on |
 | Session key | held by the plugin; you never pass `domainRef` | you hold it for this session, pass it as `domainRef` on every call, never show it |
 | Switching domain | `/kinitro <domain>` | call `open-domain` again with the new domain and your key |
@@ -56,7 +58,7 @@ Keep each script short; one step at a time; wait where the user must act.
 2. In the sign-in dialog choose "Sign in now" (German: "Jetzt anmelden"). Do not accept the preselected "No sign-in" ("Keine Anmeldung", marked "detected"): it fails.
 3. Choose "Use your own OAuth client" ("Eigenen OAuth-Client verwenden"), enter client ID `claude`, leave the secret empty.
 4. The kinitro.ai login page opens: email and password of the kinitro.ai account. Afterwards the connector shows Connected.
-5. Start a new chat (the tools appear in new chats), then say "kinitro status" to check.
+5. Say "kinitro status" in the same chat to check; the connector arrives in the running chat, no new chat is needed.
 A backend fix is planned so that this manual client entry goes away; until then give exactly these steps. Never suggest the email-code sign-in in Cowork.
 
 **Change domain or seat.** Plugin mode: `/kinitro <domain>` or `/kinitro <domain> <seat>`, or `/kinitro` for the numbered list. If the seat is not accepted yet, the default seat is bound and seat choice comes with a later update. MCP-only: call `open-domain` with the other domain, keep the same key. Remind them that the earlier chat copy stays with the previous seat.
@@ -123,7 +125,7 @@ Start with `/kinitro status` (plugin mode); it returns plain words and `problems
 | Plugin off in a background session | headless sessions are inert on purpose | call the `wake` tool with action `on` only if the task needs the briefing, todos or mirror; `off` to switch back |
 | Mirror not arriving | mirror off, signed out, wrong domain bound, or a server issue | `/kinitro status` (mirror, last error). `/kinitro mirror off` then `on`; if still failing, reopen the domain with `/kinitro <domain>` |
 | Mirror lands on the wrong seat | known server issue until a backend fix; the mirror picks a different seat than the bound one | Switch the mirror off and on, or reopen the domain; report it if it repeats |
-| Old instructions after a change in kinitro | briefing is cached until refresh | `/kinitro refresh`; MCP-only: new chat |
+| Old instructions after a change in kinitro | briefing is cached until refresh | `/kinitro refresh`; MCP-only: call `get-briefing` again |
 | Tools refused with a pointer to "the plugin's own tools" | model used an account connector while the plugin's server is active | use the tool names the pointer names |
 | Update notice | newer plugin released | section 6 for the surface |
 
