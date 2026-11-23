@@ -54,7 +54,7 @@ const FETCH_MS = 60000
 const MAX_TEXT = 50000     // chars per prompt / answer sent to the chat
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = `${F.replace(/^\./, '')}.log`
-const VERSION = '0.26.4'
+const VERSION = '0.27.0'
 // update notice (PO 2026-10-16): at the first prompt, compare with the published marketplace.json on the download page
 const UPDATE_BASE = VARIANT.downloadBase   // the download page; the environment variable KINITRO_AI_DOWNLOAD_BASE overrides it
 const UPDATE_TIMEOUT_MS = 2500
@@ -868,7 +868,7 @@ function checkSignIn($: any): Promise<void> {
 }
 
 // ---- the session's home folder and record (0.20.0) ---------------------------
-type SessionRecord = { sessionId: string; home: string; domain?: string | null; startedAt: string; updatedAt?: string }
+type SessionRecord = { sessionId: string; home: string; domain?: string | null; startedAt: string; updatedAt?: string; turnAt?: string }
 let homeDir: string | undefined         // the session's home folder: every local file lives here
 let recordPath: string | null | undefined   // ~/.kinitro-ai/sessions/<sid>.json; null when there is no user home or session id
 let sessionRecord: SessionRecord | undefined
@@ -908,6 +908,17 @@ async function saveRecordDomain($: any, slug: string) {
   await sessionHome($)
   if (!recordPath || !sessionRecord) return
   sessionRecord = { ...sessionRecord, domain: slug, updatedAt: new Date().toISOString() }
+  try { await $.fs.write(recordPath, JSON.stringify(sessionRecord)) } catch { /* ignore */ }
+}
+
+// 0.27.0 (item 4.2.1-4696): a heartbeat on every user turn. kinitro-cloud, the command-hook plugin for sessions
+// without a hooks module, reads this record and stays silent while it is fresh, so one session is never briefed twice.
+async function touchRecordTurn($: any) {
+  await sessionHome($)
+  if (!recordPath || !sessionRecord) return
+  const now = new Date().toISOString()
+  if (sessionRecord.turnAt && now.slice(0, 16) === sessionRecord.turnAt.slice(0, 16)) return   // at most one write a minute
+  sessionRecord = { ...sessionRecord, turnAt: now }
   try { await $.fs.write(recordPath, JSON.stringify(sessionRecord)) } catch { /* ignore */ }
 }
 
@@ -1861,6 +1872,18 @@ async function folderDomain($: any): Promise<string | undefined> {
   return (cwd ? await readFileTrim($, joinPath(cwd, DOMAIN_FILE)) : undefined) ?? (await readFileTrim($, await at($, DOMAIN_FILE)))
 }
 
+// 0.27.0 (4696): which plugin is briefing, and a warning when kinitro-cloud has also been writing in this session
+async function cloudPluginLine($: any): Promise<string> {
+  let sid = '', userHome: string | undefined
+  try { sid = await $.session.id() } catch { /* ignore */ }
+  try { userHome = (await $.env.get('HOME')) || (await $.env.get('USERPROFILE')) } catch { /* ignore */ }
+  if (!sid || !userHome) return 'briefed by: this plugin (kinitro)'
+  const cloudState = joinPath(joinPath(userHome, '.kinitro-cloud'), `${sid}.json`)
+  let alsoCloud = false
+  try { alsoCloud = await $.fs.exists(cloudState) } catch { /* ignore */ }
+  return `briefed by: this plugin (kinitro)${alsoCloud ? ' · WARNING kinitro-cloud also wrote in this session: it should have stood down, so the agent may be briefed twice' : ''}`
+}
+
 async function statusText($: any): Promise<string> {
   const pct = await contextPercent($)
   const apS = await heldApproval($)   // review F5
@@ -1872,6 +1895,7 @@ async function statusText($: any): Promise<string> {
     await toolsLine($),
     await sessionLine($),
     await signInLine($),
+    await cloudPluginLine($),
     `band note: ${(await read($, bandNoteA)) ?? '-'}`,
     `refresh: ${(await read($, testModeA)) ? 'test mode, every 2 min' : 'daily'} · instructions loaded ${briefing?.loadedAt ?? '-'}`,
     `layers: ${briefing?.layers ?? '-'}`,
@@ -3023,6 +3047,7 @@ export const register: Register = (on, opts) => {
     lastInjected = injected
     await writeState($)
     await log($, `prompt.submit turns=${turns} pct=${pct} injected=${injected.join(',')} origin=${kind ?? 'absent'} class=${cls}${kind === undefined ? ' (engine gives no origin: served as the person, as 0.22.0)' : ''}`)
+    await touchRecordTurn($)   // 0.27.0 (4696): this copy briefed this turn, so kinitro-cloud stands down
     return next({ ...e, context: [...(e.context ?? []), blocks.join('\n\n')] })
   })
 

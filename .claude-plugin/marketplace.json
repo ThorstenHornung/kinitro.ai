@@ -6,14 +6,20 @@
   },
   "metadata": {
     "description": "kinitro.ai plugins for running kinitro.ai agents in Claude.",
-    "version": "0.26.4"
+    "version": "0.27.0"
   },
   "plugins": [
     {
       "name": "kinitro",
       "source": "./plugins/kinitro",
-      "version": "0.26.4",
+      "version": "0.27.0",
       "description": "Briefs a kinitro.ai agent from the platform at the right moments and mirrors each turn into kinitro.ai."
+    },
+    {
+      "name": "kinitro-cloud",
+      "source": "./plugins/kinitro-cloud",
+      "version": "0.27.0",
+      "description": "Briefs a kinitro.ai agent in sessions that run no hooks module, such as plain claude.ai chats. No MCP server of its own, no chat mirror; stays silent where the kinitro plugin is active."
     }
   ]
 }

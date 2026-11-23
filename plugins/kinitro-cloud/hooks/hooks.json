@@ -1,0 +1,14 @@
+{
+  "description": "kinitro.ai briefing for sessions without a hooks module: command hooks only, no MCP server, no chat mirror.",
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\"", "timeout": 20 } ] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\"", "timeout": 20 } ] }
+    ],
+    "PostToolUse": [
+      { "matcher": "mcp__(kinitro_ai|kinitro_device|kinitro_ai_device|claude_ai_[Kk]initro|plugin_kinitro_kinitro_ai|kinitro_ai_test|claude_ai_[Kk]initro_test)__.*", "hooks": [ { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\"" } ] }
+    ]
+  }
+}

@@ -28,16 +28,16 @@ describe('update notice', () => {
     expect(publishedVersion(market('0.24.0'))).toBe('0.24.0')
     expect(publishedVersion(JSON.stringify({ plugins: [{ name: 'other', version: '9.0.0' }] }))).toBeUndefined()
     // 0.26.1 rename: the entry is `kinitro`; an older marketplace.json still names it `kinitro-ai`
-    expect(publishedVersion(JSON.stringify({ plugins: [{ name: 'kinitro', version: '0.26.4' }, { name: 'kinitro-ai', version: '0.25.9' }] }))).toBe('0.26.4')
+    expect(publishedVersion(JSON.stringify({ plugins: [{ name: 'kinitro', version: '0.27.0' }, { name: 'kinitro-ai', version: '0.25.9' }] }))).toBe('0.27.0')
     expect(publishedVersion(JSON.stringify({ plugins: [{ name: 'kinitro-ai', version: '0.25.9' }] }))).toBe('0.25.9')
     expect(updateNotice('0.23.2', '0.23.2', PAGE)).toBeUndefined()
   })
   test('higher: one line at the first prompt, from the download page', async ($, on) => {
-    const { seen, fetched } = mk(on, ok('0.27.0'))
+    const { seen, fetched } = mk(on, ok('0.28.0'))
     await probe($, 'reload')
     await $.prompt.submit({ text: 'a', origin: { kind: 'composer' } } as any)
     expect(fetched).toEqual([PAGE + 'marketplace.json'])
-    expect(seen[0]).toContain(`kinitro 0.27.0 is available (you run 0.26.4). Claude Code: run /kinitro update.`)   // 0.26.0 (P8): the notice names the step of the surface (here a terminal session)
+    expect(seen[0]).toContain(`kinitro 0.28.0 is available (you run 0.27.0). Claude Code: run /kinitro update.`)   // 0.26.0 (P8): the notice names the step of the surface (here a terminal session)
   })
   test('equal: no notice', async ($, on) => {
     const { seen, fetched } = mk(on, ok('0.23.2'))
@@ -80,12 +80,12 @@ describe('update notice', () => {
     expect(w.files.get('/w/b/kinitro-ai.log')).toMatch(/update check failed: HTTP 404/)
   })
   test('at most once per 24 h: a recent check is not repeated, its version still gives the notice', async ($, on) => {
-    const { seen, fetched } = mk(on, ok('0.30.0'), [[STATE, JSON.stringify({ updateCheckedAt: Date.now() - 3600_000, updateLatest: '0.27.0' })]])
+    const { seen, fetched } = mk(on, ok('0.30.0'), [[STATE, JSON.stringify({ updateCheckedAt: Date.now() - 3600_000, updateLatest: '0.28.0' })]])
     await start($)
     await probe($, 'reload')
     await $.prompt.submit({ text: 'a' } as any)
     expect(fetched).toEqual([])
-    expect(seen[0]).toContain('kinitro 0.27.0 is available')
+    expect(seen[0]).toContain('kinitro 0.28.0 is available')
   })
   test('a check older than 24 h fetches again and stores the time and version', async ($, on) => {
     const { w, fetched } = mk(on, ok('0.23.2'), [[STATE, JSON.stringify({ updateCheckedAt: Date.now() - 25 * 3600_000, updateLatest: '0.24.0' })]])
@@ -98,7 +98,7 @@ describe('update notice', () => {
     expect(Math.abs(Date.now() - st.updateCheckedAt)).toBeLessThan(3600_000)
   })
   test('not at a later prompt', async ($, on) => {
-    const { seen, fetched } = mk(on, ok('0.27.0'), [], 3)
+    const { seen, fetched } = mk(on, ok('0.28.0'), [], 3)
     await probe($, 'reload')
     await $.prompt.submit({ text: 'a' } as any)
     expect(fetched).toEqual([])
