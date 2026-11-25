@@ -1,7 +1,10 @@
 {
   "name": "kinitro-cloud",
-  "version": "0.27.0",
+  "version": "0.27.1",
   "description": "Briefs a kinitro.ai agent with its seat's instructions in sessions that run no hooks module, such as plain claude.ai chats. Carries no MCP server of its own and uses the kinitro connector the session already has. It does not mirror the chat into kinitro.ai; where the kinitro plugin is active, this one stays silent. To start, connect the kinitro connector and ask, for example, \"kinitro status\".",
   "license": "MIT",
-  "author": { "name": "Kinitro Consulting", "url": "https://kinitro.ai" }
+  "author": {
+    "name": "Kinitro Consulting",
+    "url": "https://kinitro.ai"
+  }
 }

@@ -26,7 +26,7 @@ GRACE_SECONDS = 120              # a record with no heartbeat yet: treat as live
 CACHE_LIMIT = 8000               # characters of briefing text kept for re-injection
 
 BOOTSTRAP = (
-    "[kinitro] This session has no kinitro briefing yet. Before answering, call the kinitro verb "
+    "[kinitro-cloud] This session has no kinitro briefing yet. Before answering, call the kinitro verb "
     "open-domain (no arguments lets the person choose), then get-briefing with moment 'start', and "
     "keep its instructions for the session. Pass the session key from open-domain as domainRef on "
     "every later kinitro call. Chat mirroring is not available in this kind of session."
@@ -111,6 +111,49 @@ def answer_text(response):
         return ""
 
 
+TEXT_KEYS = ("text", "body", "markdown", "md", "content", "instructions", "briefing", "persona", "value")
+
+
+def readable(node, out):
+    """Collect the human-readable strings of a tool answer, in the order they appear."""
+    if isinstance(node, str):
+        if node.strip():
+            out.append(node.strip())
+    elif isinstance(node, list):
+        for item in node:
+            readable(item, out)
+    elif isinstance(node, dict):
+        if "result" in node and len(node) <= 3:            # {status, result} envelope
+            readable(node["result"], out)
+            return
+        for key in TEXT_KEYS:
+            if key in node:
+                readable(node[key], out)
+
+
+def briefing_body(text):
+    """The briefing as a person would read it. A tool answer is JSON, and storing it raw put
+    escaped \\u0060 and \\n in front of the agent (finding 25.11.2026)."""
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        return text.strip()
+    parts = []
+    readable(parsed, parts)
+    return "\n\n".join(parts) if parts else text.strip()
+
+
+def shorten(body, limit):
+    """Cut on a line boundary: a cut inside the text can drop half a rule."""
+    if len(body) <= limit:
+        return body
+    cut = body[:limit]
+    nl = cut.rfind("\n")
+    if nl > limit // 2:
+        cut = cut[:nl]
+    return cut.rstrip() + "\n\n[kinitro-cloud] (instructions shortened; ask for the rest with get-briefing)"
+
+
 def capture(data, state):
     """Keep what a kinitro tool answer carries: the domain and the seat's instructions.
 
@@ -133,10 +176,7 @@ def capture(data, state):
         except Exception:
             pass
     if verb in ("get-briefing", "get-procedure", "memory-resolve"):
-        body = text.strip()
-        if len(body) > CACHE_LIMIT:
-            body = body[:CACHE_LIMIT] + "\n[kinitro] (instructions shortened; ask for the rest with get-briefing)"
-        state["instructions"] = body
+        state["instructions"] = shorten(briefing_body(text), CACHE_LIMIT)
         state["briefedAt"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     return state
 
@@ -149,7 +189,7 @@ def block(state, event):
     lines = [head, "", state["instructions"]]
     if event == "SessionStart":
         lines.append("")
-        lines.append("[kinitro] These instructions come from this session's cache. Call get-briefing again if they look stale.")
+        lines.append("[kinitro-cloud] These instructions come from this session's cache. Call get-briefing again if they look stale.")
     return "\n".join(lines)
 
 

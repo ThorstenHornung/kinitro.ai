@@ -95,6 +95,47 @@ with tempfile.TemporaryDirectory() as home:
     else:
         print("  ok  the state file is readable by its owner only")
 
+# findings of 25.11.2026, reported from a live cloud chat
+with tempfile.TemporaryDirectory() as home:
+    sid = "C3"
+    envelope = json.dumps({"status": "ok", "result": {"instructions": [
+        {"text": "Rule 1: read Notes at session start."},
+        {"text": "Rule 2: open with the agenda items that are due."}]}})
+    run(home, {"hook_event_name": "PostToolUse", "session_id": sid,
+               "tool_name": "mcp__kinitro_ai__get-briefing",
+               "tool_response": {"content": [{"type": "text", "text": envelope}]}})
+    ctx = json.loads(run(home, {"hook_event_name": "UserPromptSubmit", "session_id": sid}))["hookSpecificOutput"]["additionalContext"]
+    if "Rule 1: read Notes at session start." not in ctx or "Rule 2" not in ctx:
+        fails.append("the briefing text is not unpacked from the tool answer")
+    elif '{"' in ctx or "\\u" in ctx or '"text":' in ctx:
+        fails.append("the cache still holds raw JSON: %r" % ctx[:120])
+    else:
+        print("  ok  the briefing is cached as readable text, not as the raw tool answer")
+
+    for line in ctx.splitlines():
+        if line.startswith("[") and not line.startswith("[kinitro-cloud]"):
+            fails.append("a line uses another prefix and reads as the other plugin: %r" % line[:60])
+            break
+    else:
+        print("  ok  every line this plugin adds carries one prefix")
+
+with tempfile.TemporaryDirectory() as home:
+    sid = "C4"
+    long_rules = "\n".join("Rule %d: a sentence that must survive whole, not be cut in half." % i for i in range(1, 400))
+    run(home, {"hook_event_name": "PostToolUse", "session_id": sid,
+               "tool_name": "mcp__kinitro_ai__get-briefing",
+               "tool_response": {"content": [{"type": "text", "text": json.dumps({"result": {"text": long_rules}})}]}})
+    ctx = json.loads(run(home, {"hook_event_name": "UserPromptSubmit", "session_id": sid}))["hookSpecificOutput"]["additionalContext"]
+    body = ctx.split("shortened")[0]
+    rules = [l for l in body.strip().splitlines() if l.startswith("Rule ")]
+    last = rules[-1] if rules else ""
+    if not last:
+        fails.append("no readable rule survived the shortening: %r" % body[:80])
+    elif not last.endswith("."):
+        fails.append("the cut fell inside a line: %r" % last[-60:])
+    else:
+        print("  ok  a shortened briefing is cut on a line boundary")
+
 if fails:
     print("\nFAILED:")
     for f in fails:
