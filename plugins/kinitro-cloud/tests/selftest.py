@@ -136,6 +136,34 @@ with tempfile.TemporaryDirectory() as home:
     else:
         print("  ok  a shortened briefing is cut on a line boundary")
 
+# findings of 25.11.2026 21:18, measured against the real answer shapes in a live cloud chat
+with tempfile.TemporaryDirectory() as home:
+    sid = "D5"
+    briefing = json.dumps({"text": "Rule 1: read Notes at session start.",
+                           "instructions": [{"text": "Rule 1: read Notes at session start."}]})
+    run(home, {"hook_event_name": "PostToolUse", "session_id": sid,
+               "tool_name": "mcp__kinitro_ai__get-briefing",
+               "tool_response": [{"type": "text", "text": briefing}]})      # a bare LIST, as the host sends it
+    run(home, {"hook_event_name": "PostToolUse", "session_id": sid,
+               "tool_name": "mcp__kinitro_ai__open-domain",
+               "tool_response": [{"type": "text", "text": json.dumps({"domain": {"id": "x", "name": "Supply Chain Demo"}})}]})
+    ctx = json.loads(run(home, {"hook_event_name": "UserPromptSubmit", "session_id": sid}))["hookSpecificOutput"]["additionalContext"]
+
+    if '{"' in ctx or '\\u' in ctx or '"text":' in ctx:
+        fails.append("a list-shaped tool answer still reaches the agent as raw JSON: %r" % ctx[:120])
+    else:
+        print("  ok  a tool answer sent as content blocks is decoded")
+
+    if ctx.count("Rule 1: read Notes at session start.") != 1:
+        fails.append("the briefing is stored %d times, not once" % ctx.count("Rule 1: read Notes at session start."))
+    else:
+        print("  ok  a briefing carried twice in one answer is cached once")
+
+    if "Supply Chain Demo" not in ctx:
+        fails.append("the domain name is not read from {id, name}: %r" % ctx.splitlines()[0][:80])
+    else:
+        print("  ok  the domain name is read from the open-domain answer")
+
 if fails:
     print("\nFAILED:")
     for f in fails:

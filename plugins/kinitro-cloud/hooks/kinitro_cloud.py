@@ -98,6 +98,8 @@ def answer_text(response):
     """The text of a tool answer, whatever shape the host wraps it in."""
     if isinstance(response, str):
         return response
+    if isinstance(response, list):                       # MCP content blocks: [{"type": "text", "text": ...}]
+        return "".join(b.get("text", "") for b in response if isinstance(b, dict))
     if isinstance(response, dict):
         content = response.get("content")
         if isinstance(content, list):
@@ -138,6 +140,8 @@ def briefing_body(text):
         parsed = json.loads(text)
     except Exception:
         return text.strip()
+    if isinstance(parsed, dict) and isinstance(parsed.get("text"), str) and parsed["text"].strip():
+        return parsed["text"].strip()                    # the assembled briefing; instructions[] repeats it
     parts = []
     readable(parsed, parts)
     return "\n\n".join(parts) if parts else text.strip()
@@ -170,8 +174,11 @@ def capture(data, state):
             parsed = json.loads(text)
             node = parsed.get("result", parsed) if isinstance(parsed, dict) else {}
             for key in ("domainName", "domain", "domainCode"):
-                if isinstance(node.get(key), str):
-                    state["domain"] = node[key]
+                val = node.get(key)
+                if isinstance(val, dict):
+                    val = val.get("name")
+                if isinstance(val, str) and val.strip():
+                    state["domain"] = val
                     break
         except Exception:
             pass
