@@ -59,7 +59,7 @@ const FETCH_MS = 60000
 const MAX_TEXT = 50000     // chars per prompt / answer sent to the chat
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = `${F.replace(/^\./, '')}.log`
-const VERSION = '0.27.3'
+const VERSION = '0.27.4'
 // update notice (PO 2026-10-16): at the first prompt, compare with the published marketplace.json on the download page
 const UPDATE_BASE = VARIANT.downloadBase   // the download page; the environment variable KINITRO_AI_DOWNLOAD_BASE overrides it
 const UPDATE_TIMEOUT_MS = 2500
@@ -201,6 +201,7 @@ const secondNoticeA = atom({ plugin: 'kinitro', key: 'secondNotice' } as const, 
 const wakeModeA = atom({ plugin: 'kinitro', key: 'wakeMode' } as const, null as 'on' | 'off' | null)   // 0.26.0 (P2): a background session woken (on) or silenced (off) by the model or the person; host-held, a reload keeps it
 const envSessionA = atom({ plugin: 'kinitro', key: 'envSession' } as const, null as 'prod' | 'test' | null)   // 0.26.0 (P5): the environment chosen for this session (probe action env); null = KINITRO_AI_ENV, else Prod
 const followA = atom({ plugin: 'kinitro', key: 'follow' } as const, false)   // 0.26.0 (item 4.2.1-4672 P11): follow mode: the browser pane opens what the agent last wrote; default off
+const domainChoiceA = atom({ plugin: 'kinitro', key: 'domainChoice' } as const, null as DomainChoiceId | null)   // Unreleased (item 4.2.1-4831): the domain id this session chose; a slug is never resolved by name again
 const seatWishA = atom({ plugin: 'kinitro', key: 'seatWish' } as const, null as SeatWish | null)   // 0.26.0 (item 4.2.1-4672, seat choice): the seat the person asked for with set-domain; kept until it is bound (an approval may come first)
 const headlessA = atom({ plugin: 'kinitro', key: 'headless' } as const, false)                        // 0.24.3 (item 4.2.1-3696): this session is headless (isInteractive === false): the plugin stays inert; host-held, so a reload keeps it
 // 0.24.1 (item 4.2.1-3764): the approval this Claude session waits for, host-held so a reload never asks the server again
@@ -433,6 +434,66 @@ function checkApproval($: any): Promise<void> {
   return checkP
 }
 
+// ---- domain choice by id (unreleased, item 4.2.1-4831) -----------------------------------------------------------------------
+// A slug is unique only per tenant: two tenants of one person can each hold a domain of the same name. The plugin keeps the id of the chosen
+// domain (host-held, per Claude session) and resolves the slug through it; a slug two domains share and no id chosen binds nothing and answers
+// the options (id, tenant, breadcrumb) for the agent to choose.
+export type DomainChoiceId = { sid: string; slug: string; id: string }
+export type DomainOption = { id: string; name: string; tenant: string; breadcrumb: string }
+export class DomainAmbiguous extends Error {
+  name = 'DomainAmbiguous'
+  constructor(public slug: string, public options: DomainOption[]) { super(`more than one domain is called ${slug}`) }
+}
+/** The option a list-domains entry stands for: its id, name, tenant name and breadcrumb (tenant > path). */
+export function domainOption(d: any, tenants: any[] = []): DomainOption {
+  const tenant = String(tenants.find((t: any) => String(t?.id) === String(d?.tenant))?.name ?? d?.tenant ?? '')
+  const parts = String(d?.path ?? '').split('\\').map((x) => x.trim()).filter(Boolean)
+  return { id: String(d?.id), name: String(d?.name ?? d?.slug ?? ''), tenant, breadcrumb: [tenant, ...(parts.length ? parts : [String(d?.name ?? d?.slug ?? '')])].filter(Boolean).join(' > ') }
+}
+/** The domain of a list-domains answer a pick names: by id; else by the chosen id of that slug (never by name again); else the one domain of the
+ *  slug. Two or more of the slug throw DomainAmbiguous; none throws. */
+export function pickDomain(doms: any, pick: { slug?: string; id?: string }, chosenId?: string): any {
+  const list: any[] = doms?.domains ?? []
+  if (pick.id) {
+    const d = list.find((x: any) => String(x.id) === pick.id)
+    if (!d) throw new Error(`domain ${pick.id} not found in list-domains`)
+    return d
+  }
+  if (chosenId) {
+    const d = list.find((x: any) => String(x.id) === chosenId && x.slug === pick.slug)
+    if (!d) throw new Error(`the chosen domain ${chosenId} (${pick.slug}) is not in list-domains any more`)
+    return d
+  }
+  const hits = list.filter((x: any) => x.slug === pick.slug)
+  if (hits.length > 1) throw new DomainAmbiguous(String(pick.slug), hits.map((d: any) => domainOption(d, doms?.tenants ?? [])))
+  if (!hits.length) throw new Error(`domain slug '${pick.slug}' not found in list-domains`)
+  return hits[0]
+}
+let domainChoice: DomainChoiceId | undefined
+async function chosenIdFor($: any, slug: string | undefined): Promise<string | undefined> {
+  if (!slug) return undefined
+  const sid = await syncSession($)
+  if (domainChoice?.sid !== sid) {
+    let v: DomainChoiceId | null = null
+    try { v = await read($, domainChoiceA) } catch { /* ignore */ }
+    domainChoice = v && v.sid === sid ? v : undefined
+  }
+  return domainChoice?.slug === slug ? domainChoice.id : undefined
+}
+async function keepDomainChoice($: any, slug: string, id: string) {
+  domainChoice = { sid: await syncSession($), slug, id }
+  try { await update($, domainChoiceA, () => domainChoice!) } catch { /* ignore */ }
+}
+/** What set-domain answers for an ambiguous slug: nothing is bound; the agent asks the person and calls set-domain with the chosen id. */
+export function ambiguousResult(a: DomainAmbiguous) {
+  return {
+    status: 'ambiguous', bound: false, domain: a.slug, options: a.options,
+    sayToUser: `More than one domain you can reach is called ${a.slug}: ${a.options.map((o) => o.breadcrumb).join('; ')}. Which one do you mean?`,
+    next: 'Call set-domain again with domain: "<id>" of the option the user chose.',
+  }
+}
+let lastAmbiguity: DomainAmbiguous | undefined
+
 // P1/P5: start this Claude session's kinitro.ai session in a domain (no key yet: open-domain mints one), or add the domain
 // to the session (with the key: no new key). A domain the sign-in has not approved goes through the approval link first.
 async function openSession($: any, pick: { slug?: string; id?: string; agent?: string }): Promise<any> {
@@ -440,9 +501,9 @@ async function openSession($: any, pick: { slug?: string; id?: string; agent?: s
     binding = true
     try {
       const doms = await mcp($, 'list-domains', {})
-      const d = (doms?.domains ?? []).find((x: any) => (pick.id ? String(x.id) === pick.id : x.slug === pick.slug))
-      if (!d) throw new Error(pick.id ? `domain ${pick.id} not found in list-domains` : `domain slug '${pick.slug}' not found in list-domains`)
+      const d = pickDomain(doms, pick, pick.id ? undefined : await chosenIdFor($, pick.slug))
       const slug = String(d.slug)
+      await keepDomainChoice($, slug, String(d.id))   // Unreleased (item 4.2.1-4831): from now on this slug means this id
       const held = await heldKey($)
       // 0.26.0 (seat choice): an explicit seat (the person's choice, or a seat switch) reopens the SAME key's session with the agent; the seat
       // setting file only decides the first open and never switches a session that already works in the domain
@@ -530,8 +591,7 @@ async function applySeat($: any, slug: string): Promise<boolean> {
   let id = w.id
   if (!id && w.name) {
     const doms = await mcp($, 'list-domains', {})
-    const d = (doms?.domains ?? []).find((x: any) => x.slug === slug)
-    if (!d) return false
+    const d = pickDomain(doms, { slug }, await chosenIdFor($, slug))
     const r = await mcp($, 'list-agents', { domain: String(d.id) })
     const agents: any[] = r?.agents ?? []
     const hit = matchSeat(agents, w.name)
@@ -1274,8 +1334,10 @@ async function readDomainFile($: any): Promise<string | undefined> {
 }
 
 // what the agent tells the user: names only, no codes, ids or paths
-function confirmation(slug: string, bound: { text: string; approval?: Approval }) {
+function confirmation(slug: string, bound: { text: string; approval?: Approval; ambiguous?: DomainAmbiguous; keptSeat?: string }) {
   if (bound.approval) return approvalResult(bound.approval)
+  if (bound.ambiguous) return ambiguousResult(bound.ambiguous)
+  if (bound.keptSeat && briefing && domainRef !== slug) return { bound: false, reason: bound.text, kept: { domain: briefing.domainName ?? domainRef, seat: bound.keptSeat }, sayToUser: `I could not switch to ${slug}; this session still works for ${briefing.domainName ?? domainRef} as ${bound.keptSeat}.` }
   const message = bound.text
   const ok = domainRef === slug && !!briefing
   return ok
@@ -1436,13 +1498,22 @@ async function openInPane($: any, url: string, shown: string = url): Promise<str
 }
 
 // bind this session to a domain: files, module state, briefing, band
-type BindResult = { text: string; approval?: Approval }
+type BindResult = { text: string; approval?: Approval; ambiguous?: DomainAmbiguous; keptSeat?: string }
 async function bindDomain($: any, slug: string): Promise<BindResult> {
+  // Unreleased (item 4.2.1-4831): what was bound before; a failed bind restores it instead of leaving the session without a briefing
+  const prev = { briefing, domainRef, keySlug, seatName, keySeatId }
   await writeDomainFiles($, slug)
   briefing = undefined; needsDomain = undefined; domainRef = undefined
   await writeState($)
+  lastAmbiguity = undefined
   await loadBriefing($)
   const ok = briefing && domainRef === slug
+  if (!ok && lastAmbiguity) {
+    const amb = lastAmbiguity; lastAmbiguity = undefined
+    await rollBack($, prev)
+    await log($, `set-domain ${slug}: ${amb.options.length} domains share the slug; nothing bound`)
+    return { text: `${slug} is ambiguous`, ambiguous: amb }
+  }
   const ap = ok ? undefined : await heldApproval($)
   if (ap && ap.slug === slug) {
     // R3: a normal outcome, no failure note; the band offers the approval link
@@ -1455,13 +1526,44 @@ async function bindDomain($: any, slug: string): Promise<BindResult> {
   await update($, chooserA, () => !ok)
   // 0.24.1: the band never shows the server's text (criterion 2); the detail is in /kinitro status and the log
   await update($, bandNoteA, () => (ok ? null : `kinitro.ai could not bind ${slug}. ${coworkSync() ? 'Ask "kinitro status" for details.' : `Run /${VARIANT.command} status for details.`}`))
-  if (!ok) return { text: `binding ${slug} failed: ${briefingError}` }
+  if (!ok) {
+    const failed = briefingError
+    const kept = prev.briefing ? await rollBack($, prev) : undefined
+    return { text: `binding ${slug} failed: ${failed}`, ...(kept ? { keptSeat: kept } : {}) }
+  }
   if (await heldApproval($)) { await keepApproval($, null); await log($, `bound to ${slug}: the pending approval is dropped`) }   // review F1
   await update($, startPackA, () => true)
   try { $.ui.toast(`kinitro.ai: this session works for ${slug}`) } catch { /* ignore */ }
   // 0.23.3: no automatic open; the readable link goes back for the offer
   const view = await domainViewLink($)
   return { text: `bound to ${slug}; domain view: ${view ?? 'no link'}` }
+}
+
+// Unreleased (item 4.2.1-4831): a failed bind keeps the briefing and seat of before. The domain files go back; a session key whose session moved
+// meanwhile is moved back to the old seat (an approved domain moves at once); the seat shown is the one current-seat answers, never a guess.
+// Returns the seat name shown, or undefined when nothing was bound before.
+async function rollBack($: any, prev: { briefing?: Briefing; domainRef?: string; keySlug?: string; seatName?: string; keySeatId?: string }): Promise<string | undefined> {
+  if (!prev.briefing || !prev.domainRef) return undefined
+  briefing = prev.briefing; domainRef = prev.domainRef; keySlug = prev.keySlug; seatName = prev.seatName; keySeatId = prev.keySeatId
+  try { await writeDomainFiles($, prev.domainRef) } catch { /* ignore */ }
+  await writeState($)
+  if (await heldKey($)) {
+    try {
+      let seat = await mcp($, 'current-seat', {})
+      const oldDomain = prev.briefing.domainId, oldAgent = prev.briefing.agentNodeId
+      if (oldDomain && (String(seat?.domain?.id) !== oldDomain || (oldAgent && String(seat?.agentNode?.id) !== oldAgent))) {
+        const was = binding; binding = true   // the plugin's own open-domain, never the agent's (no follow)
+        try { await mcp($, 'open-domain', { domain: oldDomain, ...(oldAgent ? { agent: oldAgent } : {}) }) } finally { binding = was }
+        seat = await mcp($, 'current-seat', {})
+      }
+      if (seat?.agentNode?.name) seatName = String(seat.agentNode.name)
+      if (seat?.agentNode?.id) keySeatId = String(seat.agentNode.id)
+      if (String(seat?.domain?.id) !== oldDomain) { keySlug = undefined; await log($, `roll back: the session works in ${seat?.domain?.name ?? 'another domain'}, not in ${prev.domainRef}`) }
+    } catch (err: any) { await log($, `roll back: the seat could not be read back: ${String(err?.message ?? err).slice(0, 200)}`) }
+  }
+  try { await update($, currentA, () => prev.domainRef ?? null); await update($, chooserA, () => false) } catch { /* ignore */ }
+  await log($, `bind failed: kept ${prev.domainRef} with the seat ${seatName ?? 'unknown'}`)
+  return seatName ?? prev.briefing.agentName
 }
 
 async function loadBriefing($: any) {
@@ -1492,7 +1594,8 @@ async function loadBriefing($: any) {
       const want = followSeat ? undefined : await readDomainFile($)
       followSeat = false
       let cur = await domainById(seat?.domain?.id)
-      if (want && cur?.slug !== want) { await openSession($, { slug: want }); seat = await mcp($, 'current-seat', {}); cur = await domainById(seat?.domain?.id) }
+      const wantId = await chosenIdFor($, want)
+      if (want && (cur?.slug !== want || (wantId && String(cur?.id) !== wantId))) { await openSession($, { slug: want }); seat = await mcp($, 'current-seat', {}); cur = await domainById(seat?.domain?.id) }
       const slug = cur?.slug ? String(cur.slug) : want
       if (!slug || !seat?.domain?.id) throw new Error('current-seat with the session key names no domain')
       await owned(slug); keySlug = slug; legacy = false
@@ -1558,6 +1661,7 @@ async function loadBriefing($: any) {
   } catch (err: any) {
     briefingError = scrubKey(String(err?.message ?? err))
     // R1: an approval is a state, not a failure; logged once per request
+    lastAmbiguity = err instanceof DomainAmbiguous ? err : undefined
     if (err instanceof ApprovalNeeded) {
       briefingError = undefined
       const a = err.approval
@@ -2889,8 +2993,15 @@ export const register: Register = (on, opts) => {
       return { result: JSON.stringify({ bound: null, newlyApproved: fresh, approved, message: fresh.length ? 'several domains were approved: ask which one' : 'no newly approved domain: the user chose one that was already approved; ask which one' }) }
     }
     if (action === 'set-domain') {
-      const slug = String(e.domain ?? '').trim()
-      if (!slug) return { result: 'set-domain needs domain: "<slug>" (see list-domains)' }
+      let slug = String(e.domain ?? '').trim()
+      if (!slug) return { result: 'set-domain needs domain: "<slug>" or "<id>" (see list-domains)' }
+      // Unreleased (item 4.2.1-4831): a domain id (the choice after an ambiguous slug) is kept, and the slug means that id from now on
+      if (UUID_RX.test(slug)) {
+        let d: any
+        try { d = pickDomain(await mcp($, 'list-domains', {}), { id: slug }) } catch (err: any) { return { result: JSON.stringify({ status: 'error', bound: false, message: String(err?.message ?? err) }) } }
+        await keepDomainChoice($, String(d.slug), String(d.id))
+        slug = String(d.slug)
+      }
       // 0.26.0 (seat choice): the optional seat is a wish, bound with the domain (after an approval too); none given: the server's default seat
       const seatArg = String(e.seat ?? '').trim()
       seatProblem = undefined; seatChoices = []
