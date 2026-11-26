@@ -59,7 +59,7 @@ const FETCH_MS = 60000
 const MAX_TEXT = 50000     // chars per prompt / answer sent to the chat
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = `${F.replace(/^\./, '')}.log`
-const VERSION = '0.27.4'
+const VERSION = '0.27.5'
 // update notice (PO 2026-10-16): at the first prompt, compare with the published marketplace.json on the download page
 const UPDATE_BASE = VARIANT.downloadBase   // the download page; the environment variable KINITRO_AI_DOWNLOAD_BASE overrides it
 const UPDATE_TIMEOUT_MS = 2500
@@ -1657,6 +1657,7 @@ async function loadBriefing($: any) {
     await clearStaleNote($)   // 0.26.1: a later successful binding removes the note of an earlier failure
     try { await update($, currentA, () => domainRef ?? '') } catch { /* ignore */ }
     try { await $.fs.write(await at($, CACHE_FILE), JSON.stringify(briefing)) } catch { /* ignore */ }
+    await noteInboxSeat($)
     await log($, `briefing loaded for domain ${domainCode} / agent ${agentCode} via ${route}: ${raw.length} chars, layers ${briefing.layers}`)
   } catch (err: any) {
     briefingError = scrubKey(String(err?.message ?? err))
@@ -1874,6 +1875,34 @@ async function queueTurn($: any, planned: { turnId: string; prompt: string; prom
   await flushOutbox($)
 }
 
+// 0.27.5 (item 4.2.1-4945): the inbox file belongs to ONE seat. It carries the seat key it was filled for, the bind time of that seat and the
+// cursor. A change of seat (a bind, a rebind, an open-domain move) drops the cursor, marks everything already in the file told and sets
+// the bind time to now: a cursor of another seat is never reused, and an old message never comes back (A to B to A included).
+// Every read-modify-write of the file runs under one lock: a slow fetch used to write its stale copy over the told marks of a wake.
+type InboxFile = { cursor?: string; seat?: string; boundAt?: string; messages: (InMsg & { told?: boolean; used?: boolean })[] }
+let inboxLock: Promise<unknown> = Promise.resolve()
+function withInbox<T>(fn: () => Promise<T>): Promise<T> { const r = inboxLock.then(fn, fn); inboxLock = r.catch(() => undefined); return r }
+const readInbox = ($: any) => readJson<InboxFile>($, INBOX_FILE, { messages: [] })
+async function writeInbox($: any, inbox: InboxFile) { await $.fs.write(await at($, INBOX_FILE), JSON.stringify(inbox)) }
+const inboxSeatKey = () => `${briefing?.domainId ?? domainRef ?? ''}|${briefing?.agentNodeId ?? keySeatId ?? ''}`
+const msgKey = (m: { at?: unknown; from?: unknown; text: string }) => `${m.at ?? ''}|${m.from ?? ''}|${m.text}`
+const WAKE_MAX = 20            // one wake or context block lists at most this many messages
+const BIND_GRACE_MS = 30000    // clock skew between this machine and the server
+/** True when the file was filled for another seat: cursor dropped, old messages told, bind time now. */
+function syncInboxSeat(inbox: InboxFile): boolean {
+  const key = inboxSeatKey()
+  if (inbox.seat === key) return false
+  const first = inbox.seat === undefined
+  if (!first) { delete inbox.cursor; for (const m of inbox.messages) m.told = true }
+  inbox.seat = key
+  inbox.boundAt = first && sessionRecord?.startedAt ? sessionRecord.startedAt : new Date().toISOString()
+  return true
+}
+/** Called when a briefing of a seat is loaded: the seat's bind time starts here. */
+async function noteInboxSeat($: any) {
+  try { await withInbox(async () => { const inbox = await readInbox($); if (syncInboxSeat(inbox)) await writeInbox($, inbox) }) } catch { /* ignore */ }
+}
+
 // new chat messages since the stored cursor (a first fetch without cursor starts from now)
 async function fetchInbox($: any) {
   if (fetching || !domainRef || !(await mirrorEnabled($))) return
@@ -1881,45 +1910,67 @@ async function fetchInbox($: any) {
   try {
     let sid = ''
     try { sid = await $.session.id() } catch { /* ignore */ }
-    const inbox = await readJson<{ cursor?: string; messages: (InMsg & { told?: boolean })[] }>($, INBOX_FILE, { messages: [] })
+    const key0 = inboxSeatKey()
+    let cursor = await withInbox(async () => { const inbox = await readInbox($); if (syncInboxSeat(inbox)) await writeInbox($, inbox); return inbox.cursor })
+    const got: InMsg[] = []
     let more = true, rounds = 0
     while (more && rounds++ < 5) {
-      const r = await mcp($, 'mirror-messaging', { action: 'fetch', platform: MIRROR_PLATFORM, sessionId: sid, ...(inbox.cursor ? { cursor: inbox.cursor } : {}), limit: 50 })
+      const r = await mcp($, 'mirror-messaging', { action: 'fetch', platform: MIRROR_PLATFORM, sessionId: sid, ...(cursor ? { cursor } : {}), limit: 50 })
       if (r?.status && r.status !== 'ok') throw new Error(JSON.stringify(r).slice(0, 200))
       for (const m of (r?.messages ?? []) as any[]) {
         if (m?.sessionId === sid || m?.platform === MIRROR_PLATFORM && m?.sessionId === sid) continue   // our own mirrored turns
         const text = String(m?.text ?? m?.body ?? m?.content ?? '').trim()
         if (!text) continue
-        inbox.messages.push({ at: m?.at ?? m?.createdAt ?? m?.timestamp, from: m?.from ?? m?.sender ?? m?.senderType ?? m?.role, text, raw: undefined })
+        got.push({ at: m?.at ?? m?.createdAt ?? m?.timestamp, from: m?.from ?? m?.sender ?? m?.senderType ?? m?.role, text, raw: undefined })
         inboxNew++
       }
-      if (r?.nextCursor) inbox.cursor = r.nextCursor
+      if (r?.nextCursor) cursor = r.nextCursor
       more = !!r?.more
     }
-    inbox.messages = inbox.messages.slice(-BOX_MAX)
-    await $.fs.write(await at($, INBOX_FILE), JSON.stringify(inbox))
+    await withInbox(async () => {
+      const inbox = await readInbox($)   // fresh: a wake may have marked messages told meanwhile
+      if (inboxSeatKey() !== key0 || syncInboxSeat(inbox)) return   // the seat moved during the fetch: this answer belongs to the old seat
+      const seen = new Set(inbox.messages.map(msgKey))
+      for (const m of got) { const k = msgKey(m); if (!seen.has(k)) { seen.add(k); inbox.messages.push(m) } }
+      if (cursor) inbox.cursor = cursor
+      inbox.messages = inbox.messages.slice(-BOX_MAX)
+      await writeInbox($, inbox)
+    })
     lastFetch = new Date().toISOString()
   } catch (err: any) { await log($, `mirror fetch failed: ${String(err?.message ?? err).slice(0, 300)}`) }
   finally { fetching = false }
 }
 
-// messages not yet told to the agent; marks them as told
-async function takeInbox($: any): Promise<InMsg[]> {
-  const inbox = await readJson<{ cursor?: string; messages: (InMsg & { told?: boolean })[] }>($, INBOX_FILE, { messages: [] })
-  const fresh = inbox.messages.filter((m) => !m.told)
-  if (!fresh.length) return []
-  for (const m of fresh) m.told = true
-  await $.fs.write(await at($, INBOX_FILE), JSON.stringify(inbox))
-  return fresh
+// messages not yet told to the agent; marks them as told. Only messages from the bind time of the current seat on are handed over (old ones are
+// told without a wake and logged once); at most WAKE_MAX are listed (the latest), `total` is the count of all new ones.
+async function takeInbox($: any): Promise<{ shown: InMsg[]; total: number }> {
+  const r = await withInbox(async () => {
+    const inbox = await readInbox($)
+    const changed = syncInboxSeat(inbox)
+    const fresh = inbox.messages.filter((m) => !m.told)
+    if (!fresh.length) { if (changed) await writeInbox($, inbox); return { cur: [] as InMsg[], old: 0 } }
+    const since = Date.parse(String(inbox.boundAt ?? sessionRecord?.startedAt ?? '')) - BIND_GRACE_MS
+    const isOld = (m: InMsg) => { const t = Date.parse(String(m.at)); return Number.isFinite(since) && Number.isFinite(t) && t < since }
+    for (const m of fresh) m.told = true
+    await writeInbox($, inbox)
+    const cur = fresh.filter((m) => !isOld(m))
+    return { cur, old: fresh.length - cur.length }
+  })
+  if (r.old) await log($, `inbox wake: ${r.old} old message(s) skipped`)
+  return { shown: r.cur.slice(-WAKE_MAX), total: r.cur.length }
 }
 
 // the inbox messages as the agent reads them (the context block of a typed prompt and the text of a wake prompt)
 export function inboxLines(msgs: InMsg[]): string {
   return msgs.map((m) => `- ${m.at ? String(m.at).slice(0, 16).replace('T', ' ') + ' ' : ''}${m.from ? '(' + m.from + ') ' : ''}${m.text.slice(0, 2000)}`).join('\n')
 }
-export function wakeText(msgs: InMsg[]): string {
-  return `New messages in your kinitro.ai chat (${msgs.length}) arrived while this session was idle; the kinitro plugin started this turn for them. ` +
+const capNote = (shown: number, total: number) => (total > shown ? ` Only the latest ${shown} are listed; read-chat-tail has the rest.` : '')
+export function wakeText(msgs: InMsg[], total = msgs.length): string {
+  return `New messages in your kinitro.ai chat (${total}) arrived while this session was idle; the kinitro plugin started this turn for them.${capNote(msgs.length, total)} ` +
     `Read them and act on them; answer in your reply where they concern the work (read-chat-tail gives the full text of a long one):\n${inboxLines(msgs)}`
+}
+export function inboxBlock(msgs: InMsg[], total = msgs.length): string {
+  return `New messages in your kinitro.ai chat (${total}), sent there since your last turn.${capNote(msgs.length, total)} Read them and answer in your reply where they concern the work:\n${inboxLines(msgs)}`
 }
 
 // 0.27.1 (item 4.2.1-4945, PO 26.11.2026): new chat messages wake the session. After each inbox fetch, messages not yet told to the
@@ -1930,17 +1981,19 @@ export function wakeText(msgs: InMsg[]): string {
 let wakeQueued = false, wakesSent = 0
 async function wakeOnInbox($: any) {
   if (wakeQueued || (await inertNow($))) return
-  const msgs = await takeInbox($)
-  if (!msgs.length) return
+  const { shown, total } = await takeInbox($)
+  if (!shown.length) return
   wakeQueued = true
   try {
-    await $.prompt.submit({ text: wakeText(msgs) })
+    await $.prompt.submit({ text: wakeText(shown, total) })
     wakesSent++
-    await log($, `inbox wake: ${msgs.length} new message(s) started a turn`)
+    await log($, `inbox wake: ${total} new message(s) started a turn`)
   } catch (err: any) {
-    const inbox = await readJson<{ cursor?: string; messages: (InMsg & { told?: boolean })[] }>($, INBOX_FILE, { messages: [] })
-    for (const m of inbox.messages) if (msgs.some((x) => x.text === m.text && x.at === m.at)) m.told = false
-    await $.fs.write(await at($, INBOX_FILE), JSON.stringify(inbox))
+    await withInbox(async () => {
+      const inbox = await readInbox($)
+      for (const m of inbox.messages) if (shown.some((x) => x.text === m.text && x.at === m.at)) m.told = false
+      await writeInbox($, inbox)
+    })
     await log($, `inbox wake failed: ${String(err?.message ?? err).slice(0, 200)}`)
   } finally { wakeQueued = false }
 }
@@ -1969,15 +2022,15 @@ async function savePending($: any) {
 // A prompt that is the text of a message written in the kinitro.ai chat (the plugin's inbox) is already in that chat:
 // it is not mirrored a second time. Each chat message covers one prompt; an old one (INBOX_MATCH_MS) covers none.
 async function fromInbox($: any, text: string, fetchFirst: boolean): Promise<boolean> {
-  const look = async (): Promise<boolean> => {
-    const inbox = await readJson<{ cursor?: string; messages: (InMsg & { told?: boolean; used?: boolean })[] }>($, INBOX_FILE, { messages: [] })
+  const look = (): Promise<boolean> => withInbox(async () => {
+    const inbox = await readInbox($)
     const now = Date.now()
     const hit = inbox.messages.find((m) => !m.used && sameText(m.text, text) && (m.at === undefined || !Number.isFinite(Date.parse(String(m.at))) || now - Date.parse(String(m.at)) <= INBOX_MATCH_MS))
     if (!hit) return false
     hit.used = true
-    await $.fs.write(await at($, INBOX_FILE), JSON.stringify(inbox))
+    await writeInbox($, inbox)
     return true
-  }
+  })
   if (await look()) return true
   if (!fetchFirst) return false
   await withBudget($, fetchInbox($), READ_TIMEOUT_MS)
@@ -3206,8 +3259,8 @@ export const register: Register = (on, opts) => {
     if (!needsDomain && domainRef && await mirrorEnabled($)) {
       await flushOutbox($)
       await fetchInbox($)
-      const msgs = await takeInbox($)
-      if (msgs.length) { blocks.push(`New messages in your kinitro.ai chat (${msgs.length}), sent there since your last turn - read them and answer in your reply where they concern the work:\n${inboxLines(msgs)}`); injected.push('Chat inbox') }
+      const { shown, total } = await takeInbox($)
+      if (shown.length) { blocks.push(inboxBlock(shown, total)); injected.push('Chat inbox') }
     }
     let domainLine = ''
     if (needsDomain) { /* domain block above */ }

@@ -2,7 +2,7 @@
 
 <p align="center"><strong>The agentic collaboration and solution platform.</strong></p>
 
-<p align="center">Beta 0.8 · plugin <code>kinitro</code> 0.27.4 · <code>kinitro-cloud</code> 0.27.2</p>
+<p align="center">Beta 0.8 · plugin <code>kinitro</code> 0.27.5 · <code>kinitro-cloud</code> 0.27.2</p>
 
 ---
 
@@ -24,7 +24,7 @@ kinitro.ai is an AI-native workspace for teams that work with AI agents. Each te
 
 | Path | What it is |
 |---|---|
-| `plugins/kinitro/` | The plugin `kinitro` (version 0.27.4) for Claude Code on your own machine (terminal, desktop Code tab, IDE). It briefs your agent from kinitro.ai, mirrors each conversation turn into your domain and wakes the session when a message arrives in the agent's chat. |
+| `plugins/kinitro/` | The plugin `kinitro` (version 0.27.5) for Claude Code on your own machine (terminal, desktop Code tab, IDE). It briefs your agent from kinitro.ai, mirrors each conversation turn into your domain and wakes the session when a message arrives in the agent's chat. |
 | `plugins/kinitro-cloud/` | The lighter plugin `kinitro-cloud` (version 0.27.2) for cloud sessions, where `kinitro` cannot run because its hooks module is not supported: Claude Code cloud sessions, claude.ai and Cowork chats. It briefs your agent with the seat's instructions; it does not mirror the chat and cannot wake a session. |
 
 ### Which plugin to install

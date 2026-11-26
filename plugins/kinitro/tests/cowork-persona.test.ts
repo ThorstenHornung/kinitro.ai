@@ -39,7 +39,7 @@ describe('persona and working rules in Cowork (P3b)', () => {
     expect(seen[3]).toContain('Working rules:')
     expect(seen[4]).not.toContain('instruction-persona of')
     // the status line is the marker (no band surface in Cowork)
-    expect(seen[1]).toMatch(/^\[kinitro 0.27.4\] .*mirror on · context /)
+    expect(seen[1]).toMatch(/^\[kinitro 0.27.5\] .*mirror on · context /)
   })
 
   test('no host gets them twice: where prompt.context fired and recorded the key, the first prompt does not repeat them; after a compaction the key is renewed once', async ($, on) => {
