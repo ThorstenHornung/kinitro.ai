@@ -1794,6 +1794,37 @@ async function takeInbox($: any): Promise<InMsg[]> {
   return fresh
 }
 
+// the inbox messages as the agent reads them (the context block of a typed prompt and the text of a wake prompt)
+export function inboxLines(msgs: InMsg[]): string {
+  return msgs.map((m) => `- ${m.at ? String(m.at).slice(0, 16).replace('T', ' ') + ' ' : ''}${m.from ? '(' + m.from + ') ' : ''}${m.text.slice(0, 2000)}`).join('\n')
+}
+export function wakeText(msgs: InMsg[]): string {
+  return `New messages in your kinitro.ai chat (${msgs.length}) arrived while this session was idle; the kinitro plugin started this turn for them. ` +
+    `Read them and act on them; answer in your reply where they concern the work (read-chat-tail gives the full text of a long one):\n${inboxLines(msgs)}`
+}
+
+// 0.27.1 (item 4.2.1-4945, PO 26.11.2026): new chat messages wake an idle session. After each inbox fetch, messages not yet told to the
+// agent start ONE turn of their own through $.prompt.submit (the host runs it once the session is idle, never inside a running turn).
+// Not while a turn runs (the next prompt takes them, as before), not while a wake is queued, never in an inert session; the mirror
+// switch already gates the fetch. A failed submit gives the messages back to the next prompt.
+let turnBusy = false, wakeQueued = false, wakesSent = 0
+async function wakeOnInbox($: any) {
+  if (turnBusy || wakeQueued || (await inertNow($))) return
+  const msgs = await takeInbox($)
+  if (!msgs.length) return
+  wakeQueued = true
+  try {
+    await $.prompt.submit({ text: wakeText(msgs) })
+    wakesSent++
+    await log($, `inbox wake: ${msgs.length} new message(s) started a turn`)
+  } catch (err: any) {
+    const inbox = await readJson<{ cursor?: string; messages: (InMsg & { told?: boolean })[] }>($, INBOX_FILE, { messages: [] })
+    for (const m of inbox.messages) if (msgs.some((x) => x.text === m.text && x.at === m.at)) m.told = false
+    await $.fs.write(await at($, INBOX_FILE), JSON.stringify(inbox))
+    await log($, `inbox wake failed: ${String(err?.message ?? err).slice(0, 200)}`)
+  } finally { wakeQueued = false }
+}
+
 // ---- prompts of the running turn (item 4075) -----------------------------------
 type PromptState = { sid: string; prompts: PendingPrompt[]; auto: boolean }
 async function sessionIdOf($: any): Promise<string> { try { return String(await $.session.id()) } catch { return '' } }
@@ -2421,7 +2452,7 @@ async function activateSession($: any, full: boolean) {
   await loadCache($)
   if (!full) return
   timersSid = sid
-  $.clock.every(FETCH_MS, () => { flushOutbox($).then(() => fetchInbox($)) })
+  $.clock.every(FETCH_MS, () => { flushOutbox($).then(() => fetchInbox($)).then(() => wakeOnInbox($)) })
   try { await log($, `surfaces: ${JSON.stringify(await $.session.surfaces())}`) } catch (err: any) { await log($, `surfaces failed: ${err?.message ?? err}`) }
   refreshChoices($)
   let tries = 0
@@ -2821,6 +2852,7 @@ export const register: Register = (on, opts) => {
 
   // EVERY USER PROMPT: marker, start (first prompt), per-turn, 70 %, post-compaction
   on('prompt.submit', async ($, e, next) => {
+    if (!(e as any).agentId) turnBusy = true   // 0.27.1 (4945): a main-agent turn is running; the inbox wake waits for its end
     await ensureStarted($)   // 0.26.0 (P3): a session without a completed start is started now (probe, state, activity decision)
     await scanCopies($, true)   // 0.26.0 (P8): other kinitro.ai plugin copies; a newer one silences this copy (inertNow)
     if (await inertNow($)) return next(e)   // inert: a headless session not woken, or switched off
@@ -2945,7 +2977,7 @@ export const register: Register = (on, opts) => {
       await flushOutbox($)
       await fetchInbox($)
       const msgs = await takeInbox($)
-      if (msgs.length) { blocks.push(`New messages in your kinitro.ai chat (${msgs.length}), sent there since your last turn - read them and answer in your reply where they concern the work:\n${msgs.map((m) => `- ${m.at ? String(m.at).slice(0, 16).replace('T', ' ') + ' ' : ''}${m.from ? '(' + m.from + ') ' : ''}${m.text.slice(0, 2000)}`).join('\n')}`); injected.push('Chat inbox') }
+      if (msgs.length) { blocks.push(`New messages in your kinitro.ai chat (${msgs.length}), sent there since your last turn - read them and answer in your reply where they concern the work:\n${inboxLines(msgs)}`); injected.push('Chat inbox') }
     }
     if (needsDomain) { /* domain block above */ }
     else if (domainRef) {
@@ -3071,6 +3103,7 @@ export const register: Register = (on, opts) => {
 
   // END OF TURN: prompt and final answer into the agent's kinitro.ai chat (item 3413); outbox first, then send
   on('turn.complete', async ($, e, next) => {
+    if (!e.agentId) turnBusy = false   // 0.27.1 (4945): the session is idle again; the next inbox fetch may wake it
     if (await inertNow($)) return next(e)   // inert: build switched off, or a headless session
     if (e.agentId) return next(e)
     // item 4075: the prompts of this turn are taken before the downstream hooks run, so a prompt that arrives meanwhile belongs to the next turn

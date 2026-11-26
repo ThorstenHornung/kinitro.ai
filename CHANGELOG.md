@@ -2,6 +2,12 @@
 
 All notable changes to the `kinitro` plugin (called `kinitro-ai` up to 0.26.0; the marketplace is still `kinitro-ai`) are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.27.1 (26.11.2026)
+- Idle wake (item 4.2.1-4945, PO 26.11.2026): a message that arrives in the seat's kinitro.ai chat while a Claude Code session is idle starts a turn of its own. After the 60-second inbox fetch, the messages not yet told to the agent go into one plugin prompt (`$.prompt.submit`), which the host runs once the session is idle. Not while a turn runs (the next prompt carries them, as before), never in an inert session, never with mirroring off; each message reaches the agent once. Tests: `tests/inbox-wake.test.ts`. Docs: plugin README, `docs/plugin-reference.md`, repository README.
+
+## 0.27.0 and kinitro-cloud 0.27.0 to 0.27.2 (25.11.2026)
+- New plugin `kinitro-cloud` (item 4.2.1-4696) for sessions that run no hooks module (Claude Code cloud sessions, claude.ai and Cowork chats): it briefs the agent with the seat's instructions through standard command hooks, carries no MCP server and does not mirror the chat. Details: `plugins/kinitro-cloud/README.md` and the commits of 25.11.2026.
+
 ## 0.26.4 (20.11.2026)
 - No text sends the user to a new chat or session any more (PO 20.11.2026, proven live: a running Cowork session took the update 0.26.2 -> 0.26.3, a reinstall and a new connector without a restart). The skill kinitro-attached states the rule; the status fixes and README say the connector arrives in the running chat.
 

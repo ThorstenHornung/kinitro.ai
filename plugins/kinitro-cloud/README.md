@@ -15,8 +15,25 @@ stays silent.
 
 ## Install
 
-Save the plugin file, then open a new chat and ask "kinitro status". The kinitro connector must be
-connected for the agent to reach the kinitro verbs.
+- **Claude Code cloud sessions** (claude.ai/code, web and mobile): add the marketplace and install
+  the plugin, `/plugin marketplace add ThorstenHornung/kinitro.ai`, then
+  `/plugin install kinitro-cloud@kinitro-ai`. To have it in every cloud session of a repository,
+  list the marketplace under `extraKnownMarketplaces` and `kinitro-cloud@kinitro-ai` under
+  `enabledPlugins` in that repository's `.claude/settings.json`.
+- **claude.ai and Cowork chats:** save the plugin file from the download page and upload it under
+  Customize, Plugins.
+
+Then ask "kinitro status". The kinitro connector (`kinitro_ai`) must be connected for the agent to
+reach the kinitro verbs.
+
+## Differences from `kinitro`
+
+| | `kinitro` | `kinitro-cloud` |
+|---|---|---|
+| Seat instructions (briefing) | yes | yes |
+| Chat mirror into kinitro.ai | yes | no (a command hook cannot call an MCP server) |
+| Wakes an idle session on a new chat message | yes (from 0.27.1) | no |
+| Own MCP server | yes | no, uses the connector |
 
 ## Scope
 
