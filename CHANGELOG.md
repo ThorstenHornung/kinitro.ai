@@ -2,6 +2,10 @@
 
 All notable changes to the `kinitro` plugin (called `kinitro-ai` up to 0.26.0; the marketplace is still `kinitro-ai`) are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.27.6 (26.11.2026)
+- AN INBOX FILE FROM AN OLDER VERSION IS NOT HANDED OVER AS NEW (item 4.2.1-4945). Live defect: after the upgrade from 0.27.4 to 0.27.5 the session woke once more with 36 old messages. The inbox file written by 0.27.4 has no seat, so it counted as a first bind: the cursor was kept, its messages stayed untold and the bind time became the start of the session, days ago.
+- Only a new, empty file (no messages, no cursor) takes the start of the session as its bind time. A file without a seat that already holds messages or a cursor is treated like a seat change: the cursor is dropped, every message is marked told and the bind time is now. The log line "inbox wake: N old message(s) skipped" stays.
+
 ## 0.27.5 (26.11.2026)
 - THE INBOX WAKE SKIPS MESSAGES FROM BEFORE THE SEAT WAS BOUND (item 4.2.1-4945). Live defect: after a session was re-bound from one domain to another, the wake (and later the context block of a typed prompt) handed over 200 old chat messages, twice. Cause: the inbox file (messages, told marks, cursor) belonged to the session, not to a seat, so the cursor of the old seat went to the new chat and the server answered its backlog; and a slow background fetch wrote its stale copy of the file over the told marks of a wake, so told messages came back.
 - The inbox file now carries the seat it was filled for and the bind time of that seat. A change of seat drops the cursor, marks what is in the file told and starts the bind time at now. A message already in the file is never added again. Every change of the file runs under one lock. The wake and the context block hand over only messages dated at or after the bind time (30 s clock tolerance); older ones are told without a wake and logged as `inbox wake: N old message(s) skipped`.

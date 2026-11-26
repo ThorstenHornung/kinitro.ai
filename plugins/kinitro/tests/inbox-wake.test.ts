@@ -144,4 +144,24 @@ describe('inbox wake (item 4.2.1-4945)', () => {
     expect(String(ctx).match(/batch m\d\d/g)).toHaveLength(20)
     void clock
   })
+
+  test('W9: an inbox file from an older version (no seat, old untold messages, a cursor) in a session started days ago is not handed over', async ($, on) => {
+    const clock = mock.clock(on, { now: Date.now() })
+    const msgs: Array<Record<string, unknown>> = [...OLD]
+    const { w, prompts } = mk(on, msgs, true)
+    w.files.set('/u/.kinitro-ai/sessions/S9.json', JSON.stringify({ sessionId: 'S9', home: '/w/b', domain: 'beta', startedAt: '2026-11-22T09:00:00Z' }))
+    w.files.set('/w/b/.kinitro-ai-inbox.json', JSON.stringify({ cursor: 'c0', messages: OLD.map((m) => ({ ...m })) }))   // written by 0.27.4: no seat, nothing told
+    await start($)
+    await clock.advance(61_000)
+    await clock.advance(61_000)
+    expect(wakes(prompts)).toHaveLength(0)
+    await $.prompt.submit({ text: 'hello', origin: { kind: 'composer' } } as any)
+    const typed = prompts.filter((p) => p.origin?.kind !== 'plugin').pop()
+    expect((typed?.context ?? []).join(' ')).not.toContain('old chat')
+    msgs.push({ ...MSG, text: 'fresh after the upgrade' })
+    await clock.advance(61_000)
+    expect(wakes(prompts)).toHaveLength(1)
+    expect(wakes(prompts)[0].text).toContain('fresh after the upgrade')
+    expect(wakes(prompts)[0].text).not.toContain('old chat')
+  })
 })

@@ -59,7 +59,7 @@ const FETCH_MS = 60000
 const MAX_TEXT = 50000     // chars per prompt / answer sent to the chat
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = `${F.replace(/^\./, '')}.log`
-const VERSION = '0.27.5'
+const VERSION = '0.27.6'
 // update notice (PO 2026-10-16): at the first prompt, compare with the published marketplace.json on the download page
 const UPDATE_BASE = VARIANT.downloadBase   // the download page; the environment variable KINITRO_AI_DOWNLOAD_BASE overrides it
 const UPDATE_TIMEOUT_MS = 2500
@@ -1892,10 +1892,11 @@ const BIND_GRACE_MS = 30000    // clock skew between this machine and the server
 function syncInboxSeat(inbox: InboxFile): boolean {
   const key = inboxSeatKey()
   if (inbox.seat === key) return false
-  const first = inbox.seat === undefined
-  if (!first) { delete inbox.cursor; for (const m of inbox.messages) m.told = true }
+  // 0.27.6: a file without a seat that already holds messages or a cursor was written by an older version: treat it like a seat change
+  const fresh = inbox.seat === undefined && !inbox.messages.length && !inbox.cursor
+  if (!fresh) { delete inbox.cursor; for (const m of inbox.messages) m.told = true }
   inbox.seat = key
-  inbox.boundAt = first && sessionRecord?.startedAt ? sessionRecord.startedAt : new Date().toISOString()
+  inbox.boundAt = fresh && sessionRecord?.startedAt ? sessionRecord.startedAt : new Date().toISOString()
   return true
 }
 /** Called when a briefing of a seat is loaded: the seat's bind time starts here. */

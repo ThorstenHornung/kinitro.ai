@@ -36,7 +36,7 @@ describe('surface and status line (P7)', () => {
     await probe($, 'reload')
     await submit($); await submit($)
     const line = (t: string) => t.split('\n')[0]!
-    expect(line(seen[0]!)).toBe('[kinitro 0.27.5] name-dom-beta · name-agent-beta · mirror on · context ? %')
+    expect(line(seen[0]!)).toBe('[kinitro 0.27.6] name-dom-beta · name-agent-beta · mirror on · context ? %')
     expect(line(seen[1]!)).toBe(line(seen[0]!))
     expect(line(seen[0]!).length).toBeLessThan(120)   // about 30 tokens
     await probe($, 'mirror', { value: 'off' })
@@ -48,7 +48,7 @@ describe('surface and status line (P7)', () => {
     const { seen } = mk(on, { surfaces: ['terminal'] })
     await probe($, 'reload')
     await submit($)
-    expect(seen[0]).toMatch(/^\[kinitro 0.27.5\] context \? % · briefing name-agent-beta/)
+    expect(seen[0]).toMatch(/^\[kinitro 0.27.6\] context \? % · briefing name-agent-beta/)
     const approved = [{ slug: 'beta', name: 'BETA' }]
     const m = bandModel({ approved, current: 'beta', chooser: false, url: null, note: null, pend: null, seat: 'Coach', mirror: true, version: '0.27.0' })
     expect(m.title).toBe('kinitro.ai · BETA · seat Coach · mirror on · 0.27.0')
@@ -62,7 +62,7 @@ describe('diagnosis (P8)', () => {
     mk(on, { surfaces: ['terminal'] })
     await probe($, 'reload')
     const st = json(await probe($, 'status'))
-    expect(st).toMatchObject({ version: '0.27.5', surface: 'Claude Code (terminal)', environment: 'Prod', domain: 'name-dom-beta', seat: 'name-agent-beta', mirror: { on: true, lastError: null }, duplicates: [], updateAvailable: null })
+    expect(st).toMatchObject({ version: '0.27.6', surface: 'Claude Code (terminal)', environment: 'Prod', domain: 'name-dom-beta', seat: 'name-agent-beta', mirror: { on: true, lastError: null }, duplicates: [], updateAvailable: null })
     expect(typeof st.keyHeld).toBe('boolean')
     expect(JSON.stringify(st)).not.toContain('kss_')
     expect(Array.isArray(st.problems)).toBe(true)
@@ -97,7 +97,7 @@ describe('diagnosis (P8)', () => {
     const { seen } = mk(on, { env: COWORK_ENV, fetch: JSON.stringify({ plugins: [{ name: 'kinitro-ai', version: '0.28.0' }] }) })
     await probe($, 'reload')
     await submit($)
-    expect(seen[0]).toContain('kinitro 0.28.0 is available (you run 0.27.5).')
+    expect(seen[0]).toContain('kinitro 0.28.0 is available (you run 0.27.6).')
     expect(seen[0]).toContain('ask me to fetch the new package')
     expect(seen[0]).not.toContain('run /kinitro update')
   })
@@ -120,7 +120,7 @@ describe('other plugin copies (P8)', () => {
     on('tool.register', async (_$: any, e: any) => { registered[String(e.name)] = String(e.description); return { value: undefined } })
     mk(on)
     await probe($, 'status')
-    expect(registered.probe).toContain('version 0.27.5')
+    expect(registered.probe).toContain('version 0.27.6')
   })
 
   test('an older copy is named once in the injected context with the steps of the surface; status lists it', async ($, on) => {
@@ -140,7 +140,7 @@ describe('other plugin copies (P8)', () => {
     const { seen } = mk(on, { tools: [{ name: 'mcp__kinitro-ai-em__probe', description: 'kinitro-ai-em harness control, version 0.25.0.' }], verbs: { 'mirror-messaging': (a) => { sent.push(String(a.action)); return { result: JSON.stringify({ status: 'ok', rowIds: [] }) } } } })
     on('turn.complete', async () => ({ text: '' }))
     await submit($)
-    expect(seen[0]).toContain('[kinitro 0.27.5]')
+    expect(seen[0]).toContain('[kinitro 0.27.6]')
     await $.turn.complete({ turnId: 't1', reason: 'end_turn', answer: 'done' } as any)
     expect(sent).toContain('append')
   })
