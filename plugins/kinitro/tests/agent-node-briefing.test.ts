@@ -76,9 +76,10 @@ test('no message names general-procedures, also when nothing is found', async ($
   expect(w.sent.some((s) => s.verb === 'list-edges')).toBe(false)
 })
 
-test('an API without the instruction set: the agent node contents are loaded', async ($, on) => {
-  const w = mk(on, {})
+test('an API without the instruction set: the fallback that read the agent node by its code is withdrawn (0.27.0, R11); the load ends in "has no instructions yet", no call names a node code', async ($, on) => {
+  const w = mk(on, { 'get-briefing': () => ({ result: JSON.stringify({ status: 'ok' }) }) })
   await probe($, 'reload')
-  expect(cacheOf(w)).toContain('instruction-persona of code-agent-beta')
-  expect(w.files.get('/w/b/kinitro-ai.log') ?? '').toContain('agent node contents only')
+  expect(w.sent.some((s) => s.verb === 'load-node-content')).toBe(false)
+  expect(w.sent.some((s) => 'nodeCode' in s.args)).toBe(false)
+  expect(w.files.get('/w/b/kinitro-ai.log') ?? '').toContain('has no instructions yet')
 })

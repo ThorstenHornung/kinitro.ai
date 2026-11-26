@@ -18,6 +18,6 @@ describe('KINITRO_AI_ENV=TEST selects Test; the Prod own server is refused', () 
     expect(String(l.deny)).toContain('is active in this session')
     expect(w.sent).toEqual([])                                       // nothing reached the server
     await $.prompt.submit({ text: 'a', origin: { kind: 'composer' } } as any)
-    expect(seen[0] ?? '').toContain('[kinitro TEST 0.27.2]')
+    expect(seen[0] ?? '').toContain('[kinitro TEST 0.27.3]')
   })
 })

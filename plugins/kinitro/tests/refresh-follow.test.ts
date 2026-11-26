@@ -23,7 +23,7 @@ const mk = (on: any, o: { browser?: boolean } = {}) => {
   const w = makeWorld(on, { files: new Map([['/w/b/.kinitro-ai-domain', 'beta\n']]), cwd: '/w/b', root: '/w/b', sid: 'RF1', tools,
     verbs: {
       'open-page': () => ({ result: JSON.stringify({ url: NODE_URL }) }),
-      'create-node': (a) => ({ result: JSON.stringify({ status: 'ok', nodeCode: `4.2.1.${String(a.name ?? 7)}` }) }),
+      'create-node': (a) => ({ result: JSON.stringify(a.codeOnly ? { status: 'ok', nodeCode: '4.2.1.9' } : { status: 'ok', nodeId: `0b0f8a52-3d52-4c5e-9d0f-3a7e2f6f50${String(a.name ?? 7).padStart(2, '0')}` }) }),
       'wm-add': () => ({ result: JSON.stringify({ status: 'ok', item: { id: '0b0f8a52-3d52-4c5e-9d0f-3a7e2f6f5b11', number: 12 } }) }),
     } })
   return { seen, opened, w, setTurns: (n: number) => { turns = n } }
@@ -56,8 +56,11 @@ describe('refresh (P9)', () => {
 
 describe('follow mode (P11)', () => {
   test('writtenNode: a node code or a node id from the answer, also inside node / item; nothing for an answer that names none', () => {
-    expect(writtenNode('create-node', JSON.stringify({ status: 'ok', nodeCode: '4.2.1.9' }))).toEqual({ nodeCode: '4.2.1.9', what: 'create-node' })
-    expect(writtenNode('update-content', JSON.stringify({ node: { code: '4.2.2.5' } }))?.nodeCode).toBe('4.2.2.5')
+    expect(writtenNode('create-node', JSON.stringify({ status: 'ok', nodeId: '0b0f8a52-3d52-4c5e-9d0f-3a7e2f6f5b09' }))).toEqual({ nodeId: '0b0f8a52-3d52-4c5e-9d0f-3a7e2f6f5b09', what: 'create-node' })
+    expect(writtenNode('update-content', JSON.stringify({ node: { id: '0b0f8a52-3d52-4c5e-9d0f-3a7e2f6f5b05' } }))?.nodeId).toBe('0b0f8a52-3d52-4c5e-9d0f-3a7e2f6f5b05')
+    // R11: node codes are retired; an answer that names only a code names no node
+    expect(writtenNode('create-node', JSON.stringify({ status: 'ok', nodeCode: '4.2.1.9' }))).toBeUndefined()
+    expect(writtenNode('update-content', JSON.stringify({ node: { code: '4.2.2.5' } }))).toBeUndefined()
     expect(writtenNode('wm-add', JSON.stringify({ item: { id: '0b0f8a52-3d52-4c5e-9d0f-3a7e2f6f5b11' } }))?.nodeId).toBe('0b0f8a52-3d52-4c5e-9d0f-3a7e2f6f5b11')
     expect(writtenNode('wm-update', JSON.stringify({ status: 'ok', id: 12 }))).toBeUndefined()
     expect(writtenNode('create-node', 'not json')).toBeUndefined()
@@ -75,8 +78,8 @@ describe('follow mode (P11)', () => {
     await write($, 'create-node', { name: 7 })
     await complete($, 2)
     expect(opened).toHaveLength(1)   // at most once per turn, the last write
-    const page = w.sent.filter((s) => s.verb === 'open-page' && s.args.nodeCode)
-    expect(page[page.length - 1]!.args).toMatchObject({ target: 'shell', nodeCode: '4.2.1.7' })
+    const page = w.sent.filter((s) => s.verb === 'open-page')
+    expect(page[page.length - 1]!.args).toMatchObject({ target: 'shell', nodeId: '0b0f8a52-3d52-4c5e-9d0f-3a7e2f6f5007' })   // by node id, never by code (R11)
     await complete($, 3)
     expect(opened).toHaveLength(1)   // nothing written in this turn
     await probe($, 'follow', { value: 'off' })
@@ -94,12 +97,25 @@ describe('follow mode (P11)', () => {
     expect(a.w.sent.filter((s) => s.verb === 'open-page').pop()!.args).toMatchObject({ target: 'shell', nodeId: '0b0f8a52-3d52-4c5e-9d0f-3a7e2f6f5b11' })
   })
 
+  test('R11: no open-page call carries a node code; an answer that names only a code opens nothing', async ($, on) => {
+    const { opened, w } = mk(on)
+    await probe($, 'reload'); await probe($, 'follow', { value: 'on' })
+    await write($, 'create-node', { name: 5 })
+    await complete($, 1)
+    await write($, 'create-node', { codeOnly: true })
+    await complete($, 2)
+    expect(opened).toHaveLength(1)   // the first turn opened its node by id; the code-only answer opened nothing
+    const pages = w.sent.filter((s) => s.verb === 'open-page')
+    expect(pages).toHaveLength(1)
+    expect(pages.every((p) => !('nodeCode' in p.args) && !('code' in p.args))).toBe(true)
+  })
+
   test('without a browser tool nothing is opened', async ($, on) => {
     const { opened, w } = mk(on, { browser: false })
     await probe($, 'reload'); await probe($, 'follow', { value: 'on' })
     await write($, 'create-node', { name: 5 })
     await complete($, 1)
     expect(opened).toEqual([])
-    expect(w.sent.some((s) => s.verb === 'open-page' && s.args.nodeCode === '4.2.1.5')).toBe(false)
+    expect(w.sent.some((s) => s.verb === 'open-page')).toBe(false)
   })
 })

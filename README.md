@@ -2,7 +2,7 @@
 
 <p align="center"><strong>The agentic collaboration and solution platform.</strong></p>
 
-<p align="center">Beta 0.8 · plugin <code>kinitro</code> 0.27.2 · <code>kinitro-cloud</code> 0.27.2</p>
+<p align="center">Beta 0.8 · plugin <code>kinitro</code> 0.27.3 · <code>kinitro-cloud</code> 0.27.2</p>
 
 ---
 
@@ -24,7 +24,7 @@ kinitro.ai is an AI-native workspace for teams that work with AI agents. Each te
 
 | Path | What it is |
 |---|---|
-| `plugins/kinitro/` | The plugin `kinitro` (version 0.27.2) for Claude Code on your own machine (terminal, desktop Code tab, IDE). It briefs your agent from kinitro.ai, mirrors each conversation turn into your domain and wakes the session when a message arrives in the agent's chat. |
+| `plugins/kinitro/` | The plugin `kinitro` (version 0.27.3) for Claude Code on your own machine (terminal, desktop Code tab, IDE). It briefs your agent from kinitro.ai, mirrors each conversation turn into your domain and wakes the session when a message arrives in the agent's chat. |
 | `plugins/kinitro-cloud/` | The lighter plugin `kinitro-cloud` (version 0.27.2) for cloud sessions, where `kinitro` cannot run because its hooks module is not supported: Claude Code cloud sessions, claude.ai and Cowork chats. It briefs your agent with the seat's instructions; it does not mirror the chat and cannot wake a session. |
 
 ### Which plugin to install
@@ -91,8 +91,8 @@ All instruction texts live in kinitro.ai and are edited by the domain owner. The
 |---|---|
 | First message of a conversation, and again after each compaction | Persona and Working rules |
 | First prompt of a session | Session start |
-| Every prompt | A one-line marker, the Every turn section, the agent's todo list (short form: one line of at most 160 characters per todo; the full text at the first turn, after a compaction and when the list changed) and a reminder to update it; at the first turn and after a compaction also the last 5 turns of the agent's chat |
-| First prompt and after a compaction | The agent's notes and a map of its memory topics |
+| Every prompt | A one-line marker, the Every turn section as one rule line of at most 300 characters, and the todos that changed since the last prompt; at the first turn, after a compaction and after a domain choice also one memory block (the todos in full, the notes by rank, within 3,500 characters) and the last 5 turns of the agent's chat |
+| First prompt, after a compaction and after a domain choice | One memory block headed "Your kinitro memory": the agent's todos in full and its notes by rank, within 3,500 characters (see the Every prompt row) |
 | Context window reaches 70 % (and again every 5 points more) | Context nearly full |
 | First prompt after a compaction | After compaction |
 | While Claude compacts the conversation | Compaction instruction (goes to the summarizer) |

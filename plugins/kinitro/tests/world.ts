@@ -46,8 +46,22 @@ export function makeWorld(on: any, w: Omit<World, 'calls' | 'prefixes' | 'sent'>
     const out = (v: unknown) => ({ result: JSON.stringify(v) })
     if (verb === 'current-seat') return out({ approved: DOMAINS.map((d) => ({ slug: d, name: d.toUpperCase() })) })
     if (verb === 'list-domains') return out({ domains: DOMAINS.map((d) => ({ id: `dom-${d}`, slug: d, approved: true, defaultAgentNodeId: `agent-${d}` })) })
-    if (verb === 'get-node') return out({ code: `code-${e.nodeId}`, name: `name-${e.nodeId}` })
-    if (verb === 'load-node-content') return out({ contentTypeCode: e.contentTypeCode, body: `${e.contentTypeCode} of ${e.nodeCode}` })
+    // 0.27.0 (item 4.2.1-4316, premises 19 and 21): node codes are retired on the platform. The fake server refuses an argument `nodeCode` as the real one does
+    // (graph_code_retired, naming the argument), its get-node answers `id` and `name` and no `code`, and a read with no node is the seat's own set.
+    if ('nodeCode' in args || 'parentNodeCode' in args) {
+      const field = 'nodeCode' in args ? 'nodeCode' : 'parentNodeCode'
+      return { result: JSON.stringify({ status: 'error', error: 'graph_code_retired', field, message: `'${field}' is retired: node codes are retired. Name the node with 'node' (an id or a breadcrumb, ref/graph/paths). Nothing was done.` }), isError: true } as any
+    }
+    if (verb === 'get-node') return out({ id: e.nodeId, name: `name-${e.nodeId}` })
+    if (verb === 'get-briefing') {
+      // get-briefing answers `instructions` on every answer (the fallback that read the agent node by code is withdrawn); the texts name the seat of the bound domain
+      const seat = `name-agent-${String(e.domainRef ?? 'beta')}`
+      return out({ status: 'ok', instructions: ['instruction-persona', 'instruction-standing', 'instruction-coldstart', 'instruction-preturn-continue', 'instruction-postcompaction'].map((type) => ({ type, source: 'node', text: `${type} of ${seat}` })) })
+    }
+    if (verb === 'load-node-content') {
+      if (e.node === undefined && /^memory-/.test(String(e.contentTypeCode))) return out({ status: 'not_found', contentTypeCode: e.contentTypeCode, reason: `Your ${e.contentTypeCode} set is empty or not written yet.` })
+      return out({ contentTypeCode: e.contentTypeCode, body: `${e.contentTypeCode} of ${e.node}` })
+    }
     return out({ status: 'ok' })
   })
   return world

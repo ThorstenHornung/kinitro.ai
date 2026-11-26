@@ -10,14 +10,19 @@ import { VARIANT } from './variant'
 // {{mx:include}} in the coldstart and postcompaction templates; the plugin neither expects nor cuts an Agent 101 block.
 // No domain edge is read. A domain without an agent node is refused with a plain message.
 
-// Todo housekeeping (0.23.1, PO 2026-10-16): the full todo list costs about 3,000 tokens on every prompt of a long list.
-// Every prompt gets a short list (one line per todo) and a push line; the full text only at the first turn, after a
-// compaction, after a domain choice and when the list changed since its last full injection. Nothing is ever deleted:
-// the push line only names what exceeds these limits.
-const TODO_MAX_AGE_DAYS = 7        // a todo older than this is named in the push line
-const TODO_MAX_ITEMS = 10          // more open todos than this are named in the push line
-const TODO_MAX_ITEM_CHARS = 400    // a todo text longer than this is named in the push line
-const TODO_TURN_LINE_CHARS = 160   // the short per-turn list shows this many chars of each todo
+// Todo housekeeping (0.23.1, PO 2026-10-16): nothing is ever deleted; the housekeeping line only names what exceeds these limits.
+const TODO_MAX_AGE_DAYS = 7        // a todo older than this is named in the housekeeping line
+const TODO_MAX_ITEMS = 10          // more open todos than this are named in the housekeeping line
+const TODO_MAX_ITEM_CHARS = 400    // a todo text longer than this is named in the housekeeping line
+
+// One memory for every attached session (0.27.0, item 4.2.1-4316, PO D-MEMPUSH 11.11.2026): the kinitro memory comes once per context
+// (start, compaction, domain choice) as ONE block, ranked by the open work; every other prompt carries one rule line and the changes only.
+const MEMORY_START_BUDGET = 3500   // the start block stays within this many characters (the todos are always in it in full)
+const MEMORY_NOTE_LINE_CHARS = 240 // each note line of the start block is cut to this, with the visible mark " [...]"
+const MEMORY_RETRY_PROMPTS = 5     // a failed memory read is tried again at the following prompts, at most this many times
+const RULE_LINE_MAX = 300          // the "Every turn" section is cut to this at every other prompt
+const TODO_DELTA_MAX_CHARS = 1200  // the todo delta of one prompt; more gives the read hint
+const REVIEW_PROMPT_DAYS = 7       // the review line comes at most this often per working folder
 
 // Chat tail (0.23.1, PO 2026-10-16): at session start and after compaction the last turns of the agent's chat (read-chat-tail)
 const CHAT_TAIL_TURNS = 5          // turns (a turn = the prompt and the answer: two messages)
@@ -54,7 +59,7 @@ const FETCH_MS = 60000
 const MAX_TEXT = 50000     // chars per prompt / answer sent to the chat
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = `${F.replace(/^\./, '')}.log`
-const VERSION = '0.27.2'
+const VERSION = '0.27.3'
 // update notice (PO 2026-10-16): at the first prompt, compare with the published marketplace.json on the download page
 const UPDATE_BASE = VARIANT.downloadBase   // the download page; the environment variable KINITRO_AI_DOWNLOAD_BASE overrides it
 const UPDATE_TIMEOUT_MS = 2500
@@ -128,7 +133,7 @@ const S = {
 } as const
 
 // ---- module state (resets on reload; session.start re-fills it) -----------
-type Briefing = { raw: string; sections: Record<string, string>; code: string; loadedAt: string; source: string; domainCode?: string; agentCode?: string; domainRef?: string; domainName?: string; agentName?: string; layers?: string }
+type Briefing = { raw: string; sections: Record<string, string>; code: string; loadedAt: string; source: string; domainCode?: string; agentCode?: string; domainRef?: string; domainName?: string; agentName?: string; layers?: string; agentNodeId?: string; domainId?: string }
 let briefing: Briefing | undefined
 let briefingError: string | undefined
 let lastLoadTry = 0
@@ -163,9 +168,17 @@ let lastCommentError: string | undefined
 let commentKey = ''          // sorted ids of the open comments last told to the agent
 let commentInjectedAt = 0    // when they were told (ms)
 let commentSid = ''          // in which session
-// todo list: hash of the list at its last FULL injection and in which session (persisted in STATE_FILE)
-let todoHash = ''
-let todoSid = ''
+// 0.27.0 (item 4.2.1-4316 P3.4): the memory keys of the state file. The file is one per working folder, shared by its sessions, so
+// todoSeen, ruleCut, memoryPending and memoryTries belong to the session memorySid; another session's keys on a refill are dropped
+// and the next prompt carries the start block once. reviewPromptAt is per working folder (R5). An old file with todoHash/todoSid reads without error.
+let memorySid = ''                           // the session the four keys below belong to
+let todoSeen: Record<string, string> | undefined   // todo number -> hash of its raw line, as of the last prompt (the base of the delta); undefined = never seen in this session
+let ruleCut = 0                              // the original length of a cut "Every turn" section (0 = not cut), so the cut is logged once per session
+let memoryPending = false                    // a start-block read failed (or a foreign refill): the next prompts carry the block again
+let memoryTries = 0                          // how many of the MEMORY_RETRY_PROMPTS retries were made
+let reviewPromptAt = 0                       // when the review line was last given (ms), per working folder
+let memoryLast: { at: number; chars: number; todos: number; shown: number; held: number } | undefined   // the last delivered start block (status)
+let memoryFailed: string | undefined         // the reason of the last failed read that ended the retries (status)
 // chat mirroring switch (PO 2026-10-16): off = no mirror-messaging call at all; persisted in STATE_FILE as mirror 'on'|'off', absent = on
 let mirrorOff = false
 // update notice: when the published marketplace.json was last fetched (ms) and the version it gave (persisted in STATE_FILE)
@@ -224,7 +237,7 @@ let seatProblem: string | undefined       // the last set-domain asked for a sea
 let seatChoices: string[] = []
 let lastMirrorAt: string | undefined      // 0.26.0 (P8): when a turn last reached the chat
 let refreshedPending = false              // 0.26.0 (P9): the next prompt carries the refreshed briefing, marked as superseding the earlier one
-let lastWritten: { nodeCode?: string; nodeId?: string; what: string } | undefined   // 0.26.0 (P11): the node the agent wrote last in this turn (follow mode)
+let lastWritten: { nodeId: string; what: string } | undefined   // 0.26.0 (P11): the node the agent wrote last in this turn (follow mode)
 
 // $.state holds the key for the Claude session (it survives a reload and a compaction); the module keeps a mirror, because
 // every $.state read of one dispatch sees one moment and would miss a key written earlier in the same dispatch.
@@ -1327,8 +1340,8 @@ async function switchedOnPage($: any, approved: DomainChoice[]): Promise<DomainC
 // 0.26.0 (item 4.2.1-4672 P11): the page to show is the seat's own page (target shell on the agent node) when the binding knows the agent node;
 // otherwise, or when the server refuses that page, the domain shell as before.
 async function viewPageUrl($: any): Promise<string | undefined> {
-  if (briefing?.agentCode) {
-    try { const u = (await mcp($, 'open-page', { target: 'shell', nodeCode: briefing.agentCode }))?.url; if (u) return u } catch (err: any) { await log($, `seat page not opened, the domain shell is used: ${String(err?.message ?? err).slice(0, 160)}`) }
+  if (briefing?.agentNodeId) {
+    try { const u = (await mcp($, 'open-page', { target: 'shell', nodeId: briefing.agentNodeId }))?.url; if (u) return u } catch (err: any) { await log($, `seat page not opened, the domain shell is used: ${String(err?.message ?? err).slice(0, 160)}`) }
   }
   try { return (await mcp($, 'open-page', { target: 'shell' }))?.url } catch (err: any) {
     if (!String(err?.message ?? err).includes('page_link_bad_target')) throw err
@@ -1513,8 +1526,10 @@ async function loadBriefing($: any) {
     }
     if (!agentId) throw new Error(noAgentNodeText(seat?.domain?.name ?? 'bound domain'))
     const [dom, agent] = await Promise.all([mcp($, 'get-node', { nodeId: domainId }), mcp($, 'get-node', { nodeId: agentId })])
-    const domainCode: string = dom?.code, agentCode: string = agent?.code
-    if (!domainCode || !agentCode) throw new Error('domain or agent node code not resolvable')
+    // 0.27.0 (R11, D-12): node codes are retired on the platform (graph_code_retired), so the plugin names the seat by the ids it already resolved;
+    // domainCode and agentCode now hold the node NAMES of the get-node answer, as display labels only
+    if (!domainId || !agentId) throw new Error('domain or agent node id not resolvable')
+    const domainCode: string = String(dom?.name ?? domainId), agentCode: string = String(agent?.name ?? agentId)
     // the agent node's instruction set (server: AIAgent first, agent node appended, persona replaced)
     const layers: string[] = []
     let set: InstructionSet | undefined
@@ -1525,21 +1540,15 @@ async function loadBriefing($: any) {
     } catch (err: any) { await log($, `get-briefing failed: ${err?.message ?? err}`) }
     if (set) layers.push(...Object.entries(set).map(([t, v]) => `${t} (${v.source})`))
     else {
-      // an API without `instructions`: the agent node's own contents only (no AIAgent tier until the API release)
-      await log($, 'get-briefing carries no instruction set: agent node contents only')
+      // 0.27.0 (R11): the fallback for an API without `instructions` named the agent node by its code and is withdrawn; get-briefing answers `instructions` on every answer
+      await log($, 'get-briefing carries no instruction set')
       set = {}
-      await Promise.all(Object.values(A_TYPES).map(async (type) => {
-        // the verb answers with ANOTHER row when the asked type is missing (platform G7): take the body only when the type matches
-        try { const r = await mcp($, 'load-node-content', { nodeCode: agentCode, contentTypeCode: type }); if (r?.contentTypeCode === type && r?.body) set![type] = { text: String(r.body), source: 'node' } }
-        catch { /* missing = left out */ }
-      }))
-      layers.push(...Object.keys(set).map((t) => `${t} (node)`))
     }
     const sections = composeSections(set, parseSections)
     personaSource = set['instruction-persona'] ? `${agentCode} instruction-persona (${set['instruction-persona'].source})` : 'none'
     if (!Object.keys(sections).length) throw new Error(`agent ${agent?.name ?? agentCode} has no instructions yet: no instruction-* on its agent node or its AIAgent`)
     const raw = Object.entries(sections).map(([k, v]) => `## ${k}\n${v}`).join('\n\n')
-    briefing = { raw, sections, code: agentCode, loadedAt: new Date().toISOString(), source: 'kinitro.ai', domainCode, agentCode, domainRef, domainName: dom?.name, agentName: agent?.name, layers: layers.join(', ') }
+    briefing = { raw, sections, code: agentCode, loadedAt: new Date().toISOString(), source: 'kinitro.ai', domainCode, agentCode, domainRef, domainName: dom?.name, agentName: agent?.name, layers: layers.join(', '), agentNodeId: String(agentId), domainId: String(domainId) }
     briefingError = undefined
     seatName = agent?.name ?? seatName
     await clearStaleNote($)   // 0.26.1: a later successful binding removes the note of an earlier failure
@@ -1598,7 +1607,13 @@ async function readState($: any) {
     testArmed = !!st.testArmed; warnedAt = st.warnedAt ?? 0; compactedPending = !!st.compactedPending && !!compactSid && compactSid === curSid
     compactions = st.compactions ?? 0; contextRenders = st.contextRenders ?? 0
     commentKey = st.commentKey ?? ''; commentInjectedAt = st.commentInjectedAt ?? 0; commentSid = st.commentSid ?? ''
-    todoHash = st.todoHash ?? ''; todoSid = st.todoSid ?? ''
+    // 0.27.0: the memory keys belong to one session; another session's keys are dropped and the start block comes once (P3.4)
+    reviewPromptAt = typeof st.reviewPromptAt === 'number' ? st.reviewPromptAt : 0
+    if (typeof st.memorySid === 'string' && st.memorySid && st.memorySid === curSid && st.todoSeen && typeof st.todoSeen === 'object') {
+      memorySid = st.memorySid; todoSeen = st.todoSeen; ruleCut = Number(st.ruleCut) || 0; memoryPending = !!st.memoryPending; memoryTries = Number(st.memoryTries) || 0
+    } else if (typeof st.memorySid === 'string' && st.memorySid && st.memorySid !== curSid) {
+      memorySid = ''; todoSeen = undefined; ruleCut = 0; memoryPending = true; memoryTries = 0
+    }
     mirrorOff = st.mirror === 'off'
     updateCheckedAt = st.updateCheckedAt ?? 0; updateLatest = st.updateLatest ?? ''
   } catch (err: any) { await log($, `state read failed: ${err?.message ?? err}`) }
@@ -1606,7 +1621,7 @@ async function readState($: any) {
 
 async function writeState($: any) {
   try {
-    await $.fs.write(await at($, STATE_FILE), JSON.stringify({ testArmed, warnedAt, compactedPending, compactSid, compactions, contextRenders, commentKey, commentInjectedAt, commentSid, todoHash, todoSid, mirror: mirrorOff ? 'off' : 'on', updateCheckedAt, updateLatest }))
+    await $.fs.write(await at($, STATE_FILE), JSON.stringify({ testArmed, warnedAt, compactedPending, compactSid, compactions, contextRenders, commentKey, commentInjectedAt, commentSid, memorySid, todoSeen, ruleCut, memoryPending, memoryTries, reviewPromptAt, mirror: mirrorOff ? 'off' : 'on', updateCheckedAt, updateLatest }))
   } catch { /* ignore */ }
 }
 
@@ -1916,6 +1931,19 @@ async function cloudPluginLine($: any): Promise<string> {
   return `briefed by: this plugin (kinitro)${alsoCloud ? ' · WARNING kinitro-cloud also wrote in this session: it should have stood down, so the agent may be briefed twice' : ''}`
 }
 
+// 0.27.0 (R6): the memory and rule-line lines of /kinitro status
+function memoryStatusLine(): string {
+  if (memoryPending) return `memory: pending (try ${Math.min(memoryTries + 1, MEMORY_RETRY_PROMPTS)} of ${MEMORY_RETRY_PROMPTS})`
+  if (memoryFailed) return `memory: failed (${memoryFailed})`
+  if (!memoryLast) return 'memory: not delivered yet'
+  const d = new Date(memoryLast.at), p2 = (n: number) => String(n).padStart(2, '0')
+  return `memory: delivered ${p2(d.getHours())}:${p2(d.getMinutes())} (${fmtN(memoryLast.chars)} chars, todos ${memoryLast.todos}, notes ${memoryLast.shown} of ${memoryLast.held})`
+}
+function ruleStatusLine(): string {
+  const r = ruleLine(sec(S.turn))
+  return `rule line: ${fmtN(r.text.length)} chars${r.cutFrom ? ` (cut from ${fmtN(r.cutFrom)})` : ''}`
+}
+
 async function statusText($: any): Promise<string> {
   const pct = await contextPercent($)
   const apS = await heldApproval($)   // review F5
@@ -1935,7 +1963,8 @@ async function statusText($: any): Promise<string> {
     `system prompt section injected in ${composeCount} renders (prompt.compose) · first-message context block rendered ${contextRenders}x (prompt.context)`,
     `context: ${pct ?? '?'} % (warn at ${WARN_PCT} %, last warned ${warnedAt || '-'})`,
     `last prompt injected: ${lastInjected.join(', ') || '-'}`,
-    `todos: full text when the list changes (last full ${todoHash || '-'}); limits ${TODO_MAX_ITEMS} items, ${TODO_MAX_AGE_DAYS} days, ${TODO_MAX_ITEM_CHARS} chars; ${TODO_TURN_LINE_CHARS} chars per line otherwise`,
+    memoryStatusLine(),
+    ruleStatusLine(),
     `test armed: ${testArmed} · compactions seen: ${compactions} · post-compact pending: ${compactedPending}`,
     `ui comments: ${openComments.length}${commentsTruncated ? '+' : ''} open (last check ${lastCommentCheck}, last told ${commentInjectedAt ? new Date(commentInjectedAt).toISOString() : '-'}${lastCommentError ? ', last error: ' + lastCommentError : ''})`,
     `Chat mirroring: ${(await mirrorEnabled($)) ? 'on' : 'off'}`,
@@ -1976,7 +2005,7 @@ function cleanTodo(body: string): string | undefined {
 const TODO_LINE_RX = /^(\d+)\.\s+"(.*)"\s+\(([^)]+)\)(?:\s+\[item\s+(\d+)\])?\s*$/
 const TODO_LOOSE_RX = /^(\d+)\.\s+(.*)$/
 const DAY_MS = 24 * 3600 * 1000
-export type TodoItem = { nr: string; text: string; stamp?: string }
+export type TodoItem = { nr: string; text: string; stamp?: string; raw?: string }
 export type TodoList = { items: TodoItem[]; sections: { heading: string; lines: string[]; todo: boolean }[] }
 
 // pure: the todos of a cleaned list (cleanTodo) and its other sections (Exceptions, Questions), line by line
@@ -1990,11 +2019,11 @@ export function parseTodos(clean: string): TodoList {
     s.lines.push(l)
     if (!s.todo) continue
     const m = TODO_LINE_RX.exec(l.trim())
-    if (m) { items.push({ nr: m[1]!, text: m[2]!, stamp: m[3] }); continue }
+    if (m) { items.push({ nr: m[1]!, text: m[2]!, stamp: m[3], raw: l.trim() }); continue }
     const loose = TODO_LOOSE_RX.exec(l.trim())
-    if (loose) items.push({ nr: loose[1]!, text: loose[2]! })
-    else if (items.length) items[items.length - 1]!.text += ' ' + l.trim()   // a continuation line of the todo above
-    else items.push({ nr: '-', text: l.trim() })
+    if (loose) items.push({ nr: loose[1]!, text: loose[2]!, raw: l.trim() })
+    else if (items.length) { const last = items[items.length - 1]!; last.text += ' ' + l.trim(); last.raw = (last.raw ?? '') + '\n' + l.trim() }   // a continuation line of the todo above
+    else items.push({ nr: '-', text: l.trim(), raw: l.trim() })
   }
   return { items, sections }
 }
@@ -2015,25 +2044,12 @@ function cutLine(t: string, max: number): string {
   return s.length > max ? s.slice(0, max) + ' [...]' : s
 }
 
-// pure: the short per-turn list: one line per todo (number + the first TODO_TURN_LINE_CHARS chars); the other sections cut the same way
-export function todoShortList(clean: string): string {
-  const { sections } = parseTodos(clean)
-  const out: string[] = []
-  for (const s of sections) {
-    if (s.heading) out.push(s.heading)
-    if (s.todo) {
-      for (const it of parseTodos([s.heading, ...s.lines].join('\n')).items) out.push(`${it.nr}. ${cutLine(it.text, TODO_TURN_LINE_CHARS)}`)
-    } else for (const l of s.lines) if (l.trim()) out.push(cutLine(l, TODO_TURN_LINE_CHARS))
-  }
-  return out.join('\n')
-}
-
-// pure: the push line of every prompt, with what exceeds the housekeeping limits (nothing is deleted)
+// pure: the housekeeping line of the start block (R1 (g)): what exceeds the limits, nothing is deleted; '' for an empty list and for a failed read.
+// 0.27.0: the verb sentence of the old push line is gone, the rule line carries it.
 export function todoPushLine(clean: string | undefined, now: number, readOk = true): string {
-  const verbs = 'Update your todos now if this turn changed anything: memory-append / memory-instruction-status.'
-  if (!readOk) return verbs
+  if (!readOk) return ''
   const items = clean ? parseTodos(clean).items : []
-  if (!items.length) return `No open todos. ${verbs}`
+  if (!items.length) return ''
   const ages = items.map((i) => todoAgeMs(i.stamp, now)).filter((a): a is number => a !== undefined)
   const oldest = ages.length ? `${Math.floor(Math.max(...ages) / DAY_MS)} days` : 'unknown'
   const old = ages.filter((a) => a > TODO_MAX_AGE_DAYS * DAY_MS).length
@@ -2042,7 +2058,7 @@ export function todoPushLine(clean: string | undefined, now: number, readOk = tr
   if (old) over.push(`${old} todo${old === 1 ? '' : 's'} older than ${TODO_MAX_AGE_DAYS} days`)
   if (items.length > TODO_MAX_ITEMS) over.push(`${items.length} todos open, more than ${TODO_MAX_ITEMS}`)
   if (long) over.push(`${long} over ${TODO_MAX_ITEM_CHARS} chars`)
-  const line = `${verbs} Oldest open todo: ${oldest}.`
+  const line = `Oldest open todo: ${oldest}.`
   return over.length ? `${line} ${over.join(', ')}: shorten or archive them (memory-instruction-status done or withdrawn keeps the full text in your notes).` : line
 }
 
@@ -2075,18 +2091,118 @@ export function todoListHash(text: string): string {
   return `${text.length}:${h.toString(36)}`
 }
 
-// pure: the todo block of one prompt. full: the whole list; else the short list. Always the push line.
-export function todoBlock(clean: string | undefined, agentCode: string, full: boolean, now: number, readOk = true, tag = ''): string {
-  const push = todoPushLine(clean, now, readOk)
-  if (!clean) return `${tag}${push}`
-  return full
-    ? `${tag}Your todos (from ${agentCode}, full text; keep them current with memory-append / memory-instruction-status):\n${clean}\n${push}`
-    : `${tag}Your todos (from ${agentCode}, short form: the first ${TODO_TURN_LINE_CHARS} chars of each; the full text comes after a change, a compaction and at the first turn):\n${todoShortList(clean)}\n${push}`
+// ---- the memory start block, the rank of the notes, the todo delta and the rule line (0.27.0, item 4.2.1-4316) -------------------------------
+const fmtN = (n: number) => n.toLocaleString('en-US')
+
+// pure: a todo line that carries a [parked ...] mark (item 3447) is listed after the unparked ones
+const isParked = (raw: string) => /\[parked\b/i.test(raw)
+
+export type RankedNote = { line: string; group: number; age?: number; reviewDue: boolean; index: number }
+const NOTE_STAMP_RX = /^-\s*\((\d{1,2}\.\d{1,2}\.(?:\d{4})?\s*\d{1,2}:\d{2})\)/
+const NOTE_TYPE_RX = /\[type:\s*(rule|lesson)\s*\]/i
+const NOTE_ITEM_RX = /\[item\s+(\d+)\]/i
+const NOTE_REVIEW_RX = /\[review:\s*([^\]]*?)\s*\]/i
+const ISO_DAY_RX = /^(\d{4})-(\d{2})-(\d{2})$/
+
+// pure: is the review mark of a note line a date that has passed? A value that is not a date is never due (the writer keeps yyyy-MM-dd and any other text as given)
+function reviewPassed(line: string, now: number): boolean {
+  const m = NOTE_REVIEW_RX.exec(line)
+  const d = m ? ISO_DAY_RX.exec(m[1]!) : null
+  if (!d) return false
+  const t = Date.UTC(Number(d[1]), Number(d[2]) - 1, Number(d[3]))
+  if (Number.isNaN(t)) return false
+  const today = new Date(now)
+  return t < Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate())
 }
 
-// pure: is the full list due? first turn, after compaction, domain choice or test (startOrAfter), another session, or a changed list
-export function todoFullDue(hash: string, sid: string, startOrAfter: boolean, last: { hash: string; sid: string }): boolean {
-  return startOrAfter || hash !== last.hash || sid !== last.sid
+// pure: the note lines of a memory-notes body in the order of the start block (R4): [type: rule] lines, DEVIATION: lines, lines of an open item, the rest newest first.
+// Lines without the marks of item 4455 rank as lessons. A line whose review date has passed carries reviewDue.
+export function rankNotes(body: string, openItems: Set<string>, now: number): RankedNote[] {
+  const notes = String(body ?? '').split('\n').map((l) => l.trimEnd()).filter((l) => l.startsWith('- '))
+  const ranked = notes.map((line, index): RankedNote => {
+    const type = NOTE_TYPE_RX.exec(line)?.[1]?.toLowerCase()
+    const item = NOTE_ITEM_RX.exec(line)?.[1]
+    const group = type === 'rule' ? 0 : /\bDEVIATION:/.test(line) ? 1 : item && openItems.has(item) ? 2 : 3
+    return { line, group, age: todoAgeMs(NOTE_STAMP_RX.exec(line)?.[1], now), reviewDue: reviewPassed(line, now), index }
+  })
+  // within a group the newest first; an unreadable stamp sorts last, and the later line of the body wins a tie (the body is appended in time order)
+  return ranked.sort((a, b) => a.group - b.group || (a.age ?? Number.MAX_SAFE_INTEGER) - (b.age ?? Number.MAX_SAFE_INTEGER) || b.index - a.index)
+}
+
+export type StartBlock = { text: string; chars: number; notesShown: number; notesHeld: number; todosOver: boolean; review: number }
+
+// pure: the ONE memory block of a start, compaction or domain-choice prompt (R1). The todos are always in full; the notes fill the rest of MEMORY_START_BUDGET by rank.
+export function memoryStartBlock(o: { todoClean?: string; notesBody?: string; topicCount: number; agentCode: string; domainLine: string; now: number; tag: string; reviewDue: boolean; readError?: string }): StartBlock {
+  const list = o.todoClean ? parseTodos(o.todoClean) : { items: [] as TodoItem[], sections: [] as TodoList['sections'] }
+  const items = list.items.filter((i) => i.nr !== '-' || i.text)
+  const unparked = items.filter((i) => !isParked(i.raw ?? i.text)).sort((a, b) => Number(a.nr) - Number(b.nr))
+  const parked = items.filter((i) => isParked(i.raw ?? i.text)).sort((a, b) => Number(a.nr) - Number(b.nr))
+  const todoLines = [...unparked, ...parked].map((i) => i.raw ?? `${i.nr}. ${i.text}`)
+  const todoChars = todoLines.join('\n').length
+  const todosOver = todoChars > MEMORY_START_BUDGET
+  const open = new Set(items.map((i) => NOTE_ITEM_RX.exec(i.raw ?? '')?.[1]).filter((x): x is string => !!x))
+  const ranked = o.notesBody ? rankNotes(o.notesBody, open, o.now) : []
+  const held = ranked.length
+  const review = ranked.filter((n) => n.reviewDue).length
+  const noteLine = (n: RankedNote) => cutLine(n.line, MEMORY_NOTE_LINE_CHARS) + (n.reviewDue ? ' (review due)' : '')
+
+  const head = `${o.tag}Your kinitro memory (${o.agentCode}), ranked by your open work. Working rules: the section above.${o.domainLine ? ' ' + o.domainLine : ''}`
+  const before: string[] = [head]
+  if (o.readError) before.push(`kinitro memory not read (${o.readError}): read it with load-node-content (type memory-instruction and memory-notes).`)
+  for (const s of list.sections.filter((x) => !x.todo)) {
+    const body = s.lines.filter((l) => l.trim())
+    if (body.length) before.push(s.heading, ...body)
+  }
+  if (todoLines.length) before.push('## Todo (user-approved)', ...todoLines)
+  else if (o.todoClean !== undefined || !o.readError) before.push('No open todos.')
+  if (todosOver) before.push(`Your todos alone are ${fmtN(todoChars)} characters, more than the ${fmtN(MEMORY_START_BUDGET)} of this block: consolidate them now (help ref/content/memory/todo-list).`)
+
+  const housekeeping = todoPushLine(o.todoClean, o.now, o.todoClean !== undefined || !o.readError)
+  const assemble = (shown: number): string => {
+    const out = [...before, ...ranked.slice(0, shown).map(noteLine)]
+    if (held) out.push(shown >= held ? `All ${held} notes shown.` : `Showing ${shown} of ${held} notes. Read all of them with load-node-content (type memory-notes).`)
+    if (housekeeping) out.push(housekeeping)
+    if (o.reviewDue && review) out.push(`${review} memory entries are past their review date. Review them this week: keep, change or retire each (help ref/content/memory/todo-list).`)
+    if (o.topicCount > 0) out.push(`${o.topicCount} memory topics: search-memory lists them.`)
+    return out.join('\n')
+  }
+  let shown = 0
+  if (!todosOver) while (shown < held && assemble(shown + 1).length <= MEMORY_START_BUDGET) shown++
+  const text = assemble(shown)
+  return { text, chars: text.length, notesShown: shown, notesHeld: held, todosOver, review }
+}
+
+// pure: the todos of a cleaned list by number, each with the hash of its raw line: what the delta compares with
+export function todoSnapshot(clean: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const i of parseTodos(clean ?? '').items) if (/^\d+$/.test(i.nr)) out[i.nr] = todoListHash(i.raw ?? i.text)
+  return out
+}
+
+// pure: what changed against the snapshot of the last prompt: todos new by number, todos whose line changed, numbers that are gone (the server never reuses a number)
+export function todoDelta(prev: Record<string, string>, clean: string): { added: TodoItem[]; changed: TodoItem[]; closed: number[] } {
+  const now = new Map<string, TodoItem>()
+  for (const i of parseTodos(clean ?? '').items) if (/^\d+$/.test(i.nr)) now.set(i.nr, i)
+  const snap = todoSnapshot(clean ?? '')
+  const added = [...now.values()].filter((i) => !(i.nr in prev))
+  const changed = [...now.values()].filter((i) => i.nr in prev && prev[i.nr] !== snap[i.nr])
+  const closed = Object.keys(prev).filter((n) => !now.has(n)).map(Number).sort((a, b) => a - b)
+  return { added, changed, closed }
+}
+
+// pure: the delta lines of one prompt; the read hint when they pass TODO_DELTA_MAX_CHARS; '' when nothing changed
+export function todoDeltaBlock(d: { added: TodoItem[]; changed: TodoItem[]; closed: number[] }, tag: string): string {
+  const n = d.added.length + d.changed.length + d.closed.length
+  if (!n) return ''
+  const lines = ['Todos changed since your last turn:', ...d.added.map((i) => `new ${i.nr}. ${i.text}`), ...d.changed.map((i) => `changed ${i.nr}. ${i.text}`), ...d.closed.map((c) => `closed ${c}.`)]
+  const text = lines.join('\n')
+  return `${tag}${text.length > TODO_DELTA_MAX_CHARS ? `Your todo list changed in ${n} entries: read it with load-node-content (type memory-instruction).` : text}`
+}
+
+// pure: the "Every turn" section as the one rule line of every other prompt: at most RULE_LINE_MAX characters; cutFrom is the original length of a cut one
+export function ruleLine(text: string): { text: string; cutFrom?: number } {
+  const t = String(text ?? '').trim()
+  return t.length > RULE_LINE_MAX ? { text: t.slice(0, RULE_LINE_MAX), cutFrom: t.length } : { text: t }
 }
 
 // one call with a deadline (the pattern of checkUiComments): rejects with "timeout" when the call does not answer in time
@@ -2104,18 +2220,23 @@ async function withDeadline<T>($: any, p: Promise<T>, ms: number): Promise<T> {
 const NOT_FOUND = /not[_ ]found/i
 
 // the body of one set; '' when the set does not exist (an empty list, review F4); undefined only when the read failed or timed out
+// 0.27.0 (R11): the read names no node: with no node and a memory set type the verb reads the own set of the session's seat, and answers status "not_found"
+// for a set that is empty or not written yet (an empty set, not a failure). A failure reason is kept in readErrors for the retry line and the status.
+const readErrors: Record<string, string | undefined> = {}
 async function readSet($: any, type: string): Promise<string | undefined> {
-  if (!briefing?.agentCode) return undefined
+  readErrors[type] = undefined
+  if (!briefing) return undefined
   try {
-    const r: any = await withDeadline($, mcp($, 'load-node-content', { nodeCode: briefing.agentCode, contentTypeCode: type }), READ_TIMEOUT_MS)
+    const r: any = await withDeadline($, mcp($, 'load-node-content', { contentTypeCode: type }), READ_TIMEOUT_MS)
     if (r?.status && r.status !== 'ok') {
-      if (NOT_FOUND.test(String(r.error ?? r.code ?? ''))) return ''
+      if (NOT_FOUND.test(String(r.status)) || NOT_FOUND.test(String(r.error ?? r.code ?? ''))) return ''
       throw new Error(JSON.stringify(r).slice(0, 200))
     }
     return r?.contentTypeCode === type ? String(r.body ?? '') : ''   // the verb may answer with another row when the set does not exist
   } catch (err: any) {
     const msg = String(err?.message ?? err)
     if (msg !== 'timeout' && NOT_FOUND.test(msg)) return ''
+    readErrors[type] = msg === 'timeout' ? 'timeout' : msg.replace(/\s+/g, ' ').slice(0, 120)
     await log($, `read ${type} failed: ${msg.slice(0, 300)}`); return undefined
   }
 }
@@ -2131,12 +2252,12 @@ async function chatTail($: any): Promise<string | undefined> {
   } catch (err: any) { await log($, `chat tail skipped: ${String(err?.message ?? err).slice(0, 300)}`); return undefined }
 }
 
-async function topicMap($: any): Promise<string | undefined> {
+// 0.27.0 (D-6): the number of memory topics only; search-memory lists them on demand
+async function topicCount($: any): Promise<number> {
   try {
     const r = await mcp($, 'search-memory', { listTopics: true })
-    const t = (r?.topics ?? []).slice(0, 40).map((x: any) => `- ${x.topic} (${x.nodeCode}, ${x.entryCount} entries, newest ${String(x.newestUtc ?? '').slice(0, 10)})`)
-    return t.length ? t.join('\n') : undefined
-  } catch (err: any) { await log($, `topic map failed: ${err?.message ?? err}`); return undefined }
+    return Array.isArray(r?.topics) ? r.topics.length : 0
+  } catch (err: any) { await log($, `topic count failed: ${err?.message ?? err}`); return 0 }
 }
 
 // ---- open UI comments (0.20.0) -----------------------------------------------
@@ -2529,15 +2650,13 @@ async function wakeOff($: any): Promise<Record<string, unknown>> {
 // ---- follow mode (0.26.0, item 4.2.1-4672 P11) -------------------------------------------------------------------
 // After a turn in which the agent wrote a node or an item on the active connection, the browser pane opens the last one written (once per turn).
 const FOLLOW_VERBS = new Set(['create-node', 'update-content', 'create-content', 'wm-add', 'wm-update'])
-/** The node a write answer names: nodeCode or code, else a node id (a UUID), also inside node / item / content; undefined when it names none. */
-export function writtenNode(verb: string, text: string): { nodeCode?: string; nodeId?: string; what: string } | undefined {
+/** The node a write answer names by its id (a UUID), also inside node / item / content; undefined when it names none. A node code is never used (R11: node codes are retired). */
+export function writtenNode(verb: string, text: string): { nodeId: string; what: string } | undefined {
   let j: any
   try { j = JSON.parse(text) } catch { return undefined }
   for (const o of [j, j?.node, j?.item, j?.content]) {
     if (!o || typeof o !== 'object') continue
-    const code = [o.nodeCode, o.code].find((x) => typeof x === 'string' && /^\d+(\.\d+)*$/.test(x))
     const id = [o.nodeId, o.id].find((x) => typeof x === 'string' && UUID_RX.test(x))
-    if (code) return { nodeCode: code, what: verb }
     if (id) return { nodeId: id, what: verb }
   }
   return undefined
@@ -2549,7 +2668,7 @@ async function followOpen($: any) {
   try {
     const names = (await $.tool.list()).map((t: any) => String(t.name))
     if (!BROWSER_TOOLS.some((b) => names.includes(b))) return
-    const url = (await mcp($, 'open-page', { target: 'shell', ...(w.nodeCode ? { nodeCode: w.nodeCode } : { nodeId: w.nodeId }) }))?.url
+    const url = (await mcp($, 'open-page', { target: 'shell', nodeId: w.nodeId }))?.url
     if (url) await openInPane($, String(url), readableLink(String(url)))
   } catch (err: any) { await log($, `follow: not opened: ${String(err?.message ?? err).slice(0, 160)}`) }
 }
@@ -2979,10 +3098,13 @@ export const register: Register = (on, opts) => {
       const msgs = await takeInbox($)
       if (msgs.length) { blocks.push(`New messages in your kinitro.ai chat (${msgs.length}), sent there since your last turn - read them and answer in your reply where they concern the work:\n${inboxLines(msgs)}`); injected.push('Chat inbox') }
     }
+    let domainLine = ''
     if (needsDomain) { /* domain block above */ }
     else if (domainRef) {
       const passNote = `the plugin passes this session on every ${await kinitroPrefix($)}* call; never pass domainRef yourself and never ask for a session key`
-      if (surf.band) blocks[0] += ` · domain ${domainRef} (${passNote})`
+      // 0.27.0 (R1 (a), D-4): with a briefing the sentence is the end of the head line of the start block; other prompts do not repeat it
+      if (briefing) domainLine = `kinitro.ai: ${passNote}.`
+      else if (surf.band) blocks[0] += ` · domain ${domainRef} (${passNote})`
       else if (turns === 0 || (await read($, startPackA))) blocks.push(`kinitro.ai: ${passNote}.`)
     }
     // 0.26.0 (P12): no binding, but this folder last worked in a domain: said once, never bound by itself
@@ -3024,7 +3146,13 @@ export const register: Register = (on, opts) => {
         const link = await domainViewLink($)
         if (link) { blocks.push(viewOfferText(briefing.domainName ?? domainRef, link)); injected.push('Domain view offer') }
       }
-      add('turn', S.turn, '')
+      // 0.27.0 (R3): the "Every turn" section is the one rule line of every prompt, cut to RULE_LINE_MAX; the cut is logged once per session (ruleCut)
+      if (sec(S.turn)) {
+        const rl = ruleLine(sec(S.turn))
+        blocks.push(`${tag}${S.turn}:\n${rl.text}`); injected.push(S.turn)
+        if (rl.cutFrom && rl.cutFrom !== ruleCut) await log($, `rule line cut from ${rl.cutFrom} to ${RULE_LINE_MAX} characters`)
+        ruleCut = rl.cutFrom ?? 0
+      }
       if (compactedPending || testArmed) { add('after', S.after, testArmed ? 'Test' : 'after compaction'); compactedPending = false }
       const full = pct !== undefined && pct >= WARN_PCT && pct >= warnedAt + REWARN_STEP
       // 0.23.1: the section once per compaction cycle (the first threshold); a later threshold gets one reminder line
@@ -3040,19 +3168,39 @@ export const register: Register = (on, opts) => {
       }
       // open UI comments: started now so it runs alongside the todo read (cold connector calls can take seconds)
       const commentsP = needsDomain ? Promise.resolve(undefined) : checkUiComments($)
-      // working memory: Todo every turn (fresh read, no model tokens for the read itself)
-      // 0.23.1: the full text only when due (first turn, after compaction, domain choice, changed list); else one line per todo. Always the push line.
-      const todo = await readSet($, 'memory-instruction')
+      // working memory (0.27.0, R1 to R5): at a start, after a compaction, after a domain choice (and while a failed read is retried) ONE block with the todos in full,
+      // the notes by rank and the topic count; at every other prompt only the todo delta. The todo read stays at every prompt (no model tokens; it feeds the delta).
+      let sid = '', tNow = Date.now()
+      try { sid = await $.session.id() } catch { /* ignore */ }
+      try { tNow = await $.clock.now() } catch { /* the wall clock */ }
+      const memoryDue = startOrAfter || memoryPending || todoSeen === undefined || memorySid !== sid
+      const wasRetry = memoryPending && !startOrAfter
+      const [todo, notes, topics] = memoryDue
+        ? await Promise.all([readSet($, 'memory-instruction'), readSet($, 'memory-notes'), topicCount($)])
+        : [await readSet($, 'memory-instruction'), undefined, 0]
       const todoText = todo ? cleanTodo(todo) : undefined
-      if (briefing.agentCode) {
-        let sid = '', now = Date.now()
-        try { sid = await $.session.id() } catch { /* ignore */ }
-        try { now = await $.clock.now() } catch { /* the wall clock */ }
-        const hash = todoText ? todoListHash(todoText) : ''
-        const full = !!todoText && todoFullDue(hash, sid, startOrAfter, { hash: todoHash, sid: todoSid })
-        const block = todoBlock(todoText, briefing.agentCode, full, now, todo !== undefined, tag)
-        blocks.push(block); injected.push(`${todoText ? (full ? 'Todo full' : 'Todo short') : 'Todo push'} ${block.length}`)
-        if (full || !todoText) { todoHash = hash; todoSid = sid }
+      if (memoryDue) {
+        const reasons = [...new Set([todo === undefined ? (readErrors['memory-instruction'] ?? 'not read') : '', notes === undefined ? (readErrors['memory-notes'] ?? 'not read') : ''].filter(Boolean))]
+        const readError = reasons.length ? reasons.join('; ') : undefined
+        const reviewDue = !reviewPromptAt || tNow - reviewPromptAt >= REVIEW_PROMPT_DAYS * DAY_MS
+        const sb = memoryStartBlock({ todoClean: todoText, notesBody: notes, topicCount: topics, agentCode: briefing.agentCode ?? '', domainLine, now: tNow, tag, reviewDue, readError })
+        blocks.push(sb.text); injected.push(`Memory ${sb.chars}`)
+        memorySid = sid
+        if (todo !== undefined) todoSeen = todoText ? todoSnapshot(todoText) : {}
+        if (readError) {
+          // R2: nothing is cut silently; the failed read is tried again at the next prompts, at most MEMORY_RETRY_PROMPTS times
+          memoryTries = wasRetry ? memoryTries + 1 : 0
+          if (memoryTries >= MEMORY_RETRY_PROMPTS) { memoryPending = false; memoryFailed = readError; todoSeen = todoSeen ?? {}; await log($, `memory not read after ${MEMORY_RETRY_PROMPTS} retries: ${readError}`) }   // the later prompts carry the delta against what was seen
+          else memoryPending = true
+        } else {
+          memoryPending = false; memoryTries = 0; memoryFailed = undefined
+          memoryLast = { at: tNow, chars: sb.chars, todos: todoText ? parseTodos(todoText).items.length : 0, shown: sb.notesShown, held: sb.notesHeld }
+          if (sb.review && reviewDue) reviewPromptAt = tNow   // R5: the review line is given at most once a week per working folder; the plugin retires nothing
+        }
+      } else if (todo !== undefined) {
+        const delta = todoDeltaBlock(todoDelta(todoSeen ?? {}, todoText ?? ''), tag)
+        if (delta) { blocks.push(delta); injected.push(`Todo delta ${delta.length}`) }
+        todoSeen = todoText ? todoSnapshot(todoText) : {}
       }
       // open UI comments: one call; told when the open set changed in this session, else every 30 minutes
       if (!needsDomain) {
@@ -3069,11 +3217,7 @@ export const register: Register = (on, opts) => {
         }
       }
       if (startOrAfter) {
-        const notes = await readSet($, 'memory-notes')
-        if (notes && notes.split('\n').some((l) => l.startsWith('- '))) { blocks.push(`${tag}Your notes (scratchboard; migrate durable facts to topics at the checkpoint):\n${notes.trim()}`); injected.push('Notes') }
         if (!needsDomain) { const tail = await chatTail($); if (tail) { blocks.push(`${tag}${tail}`); injected.push(`Chat tail ${tail.length}`) } }
-        const map = await topicMap($)
-        if (map) { blocks.push(`${tag}Your memory topics (map; read a topic with search-memory or load-node-content when you need it):\n${map}`); injected.push('Topic map') }
       }
     }
     lastInjected = injected

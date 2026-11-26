@@ -37,7 +37,7 @@ describe('update notice', () => {
     await probe($, 'reload')
     await $.prompt.submit({ text: 'a', origin: { kind: 'composer' } } as any)
     expect(fetched).toEqual([PAGE + 'marketplace.json'])
-    expect(seen[0]).toContain(`kinitro 0.28.0 is available (you run 0.27.2). Claude Code: run /kinitro update.`)   // 0.26.0 (P8): the notice names the step of the surface (here a terminal session)
+    expect(seen[0]).toContain(`kinitro 0.28.0 is available (you run 0.27.3). Claude Code: run /kinitro update.`)   // 0.26.0 (P8): the notice names the step of the surface (here a terminal session)
   })
   test('equal: no notice', async ($, on) => {
     const { seen, fetched } = mk(on, ok('0.23.2'))

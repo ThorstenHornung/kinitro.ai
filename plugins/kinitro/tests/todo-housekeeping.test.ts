@@ -1,9 +1,9 @@
 import { describe, expect } from 'claude-code/testing'
 import { test } from './kit'
-import { CHAT_TAIL_BEGIN, CHAT_TAIL_END, chatTailBlock, contextReminder, parseTodos, todoAgeMs, todoBlock, todoListHash, todoPushLine, todoShortList } from '../hooks/register'
+import { CHAT_TAIL_BEGIN, CHAT_TAIL_END, chatTailBlock, contextReminder, memoryStartBlock, parseTodos, todoAgeMs, todoDelta, todoDeltaBlock, todoPushLine, todoSnapshot } from '../hooks/register'
 import { makeWorld, probe } from './world'
 
-// 0.23.1 (PO 2026-10-16): a short todo list every prompt, the full text only when due, and a push line with the housekeeping counts
+// 0.23.1 (PO 2026-10-16): todo housekeeping, chat tail. 0.27.0 (item 4.2.1-4316): the todos come in full once per context in the start block (R1), every other prompt carries the delta only (R3)
 const NOW = Date.UTC(2026, 9, 16, 2, 30)   // 16.10.2026 02:30 UTC
 const DAY = 24 * 3600 * 1000
 const stamp = (daysAgo: number) => {
@@ -18,7 +18,7 @@ const body = (todos: { text: string; daysAgo: number; item?: number }[], excepti
 const clean = (b: string) => b.split('\n').filter((l) => !l.includes('{{mx:cache-cut}}') && l.trim()).map((l) => l.replace('## Instructions', '## Todo (user-approved)')).filter((l, i, a) => !(/^## /.test(l) && (!a[i + 1] || /^## /.test(a[i + 1]!)))).join('\n')
 const text = (n: number, len: number) => `todo ${n} ` + 'x'.repeat(Math.max(0, len - 7 - String(n).length))
 
-describe('todo list: parsing, short form, push line', () => {
+describe('todo list: parsing, housekeeping line, start block', () => {
   test('parse reads number, text and stamp; exceptions and questions are not todos', async () => {
     const c = clean(body([{ text: 'first', daysAgo: 1, item: 3471 }, { text: 'second', daysAgo: 9 }], ['2 | RUNNING | second'], ['Which one?']))
     const { items, sections } = parseTodos(c)
@@ -28,34 +28,20 @@ describe('todo list: parsing, short form, push line', () => {
     expect(sections.map((s) => s.heading)).toEqual(['## Todo (user-approved)', '## Exceptions', '## Questions'])
   })
 
-  test('short list: one line per todo, number plus the first 160 chars; every todo is there', async () => {
-    const todos = Array.from({ length: 12 }, (_, i) => ({ text: text(i + 1, 300 + i * 50), daysAgo: i }))
-    const c = clean(body(todos, ['3 | RUNNING | todo 3 xxx']))
-    const s = todoShortList(c)
-    const lines = s.split('\n')
-    expect(lines[0]).toBe('## Todo (user-approved)')
-    for (let i = 1; i <= 12; i++) expect(lines[i]!.startsWith(`${i}. todo ${i} `)).toBe(true)
-    expect(lines.slice(1, 13).every((l) => l.length <= 4 + 160 + 6)).toBe(true)
-    expect(lines[1]).toBe(`1. ${text(1, 300).slice(0, 160)} [...]`)
-    expect(lines).toContain('## Exceptions')
-    expect(lines).toContain('3 | RUNNING | todo 3 xxx')
-  })
-
-  test('push line names the oldest todo and every limit that is exceeded', async () => {
+  test('the housekeeping line names the oldest todo and every limit that is exceeded; the verb sentence of the old push line is gone (0.27.0)', async () => {
     const todos = [
       ...Array.from({ length: 9 }, (_, i) => ({ text: text(i + 1, 100), daysAgo: 1 })),
       { text: text(10, 450), daysAgo: 8 }, { text: text(11, 500), daysAgo: 12 }, { text: text(12, 50), daysAgo: 20 },
     ]
     const p = todoPushLine(clean(body(todos)), NOW)
-    expect(p).toBe('Update your todos now if this turn changed anything: memory-append / memory-instruction-status. Oldest open todo: 20 days. '
-      + '3 todos older than 7 days, 12 todos open, more than 10, 2 over 400 chars: shorten or archive them (memory-instruction-status done or withdrawn keeps the full text in your notes).')
+    expect(p).toBe('Oldest open todo: 20 days. 3 todos older than 7 days, 12 todos open, more than 10, 2 over 400 chars: shorten or archive them (memory-instruction-status done or withdrawn keeps the full text in your notes).')
+    expect(p).not.toContain('Update your todos now')
   })
 
-  test('push line within the limits, for an empty list and for a failed read', async () => {
-    expect(todoPushLine(clean(body([{ text: 'a', daysAgo: 2 }, { text: 'b', daysAgo: 0 }])), NOW))
-      .toBe('Update your todos now if this turn changed anything: memory-append / memory-instruction-status. Oldest open todo: 2 days.')
-    expect(todoPushLine(undefined, NOW)).toBe('No open todos. Update your todos now if this turn changed anything: memory-append / memory-instruction-status.')
-    expect(todoPushLine(undefined, NOW, false)).toBe('Update your todos now if this turn changed anything: memory-append / memory-instruction-status.')
+  test('the housekeeping line within the limits; nothing for an empty list and for a failed read', async () => {
+    expect(todoPushLine(clean(body([{ text: 'a', daysAgo: 2 }, { text: 'b', daysAgo: 0 }])), NOW)).toBe('Oldest open todo: 2 days.')
+    expect(todoPushLine(undefined, NOW)).toBe('')
+    expect(todoPushLine(undefined, NOW, false)).toBe('')
   })
 
   test('a stamp without a year is the latest such date not after now', async () => {
@@ -64,15 +50,18 @@ describe('todo list: parsing, short form, push line', () => {
     expect(todoAgeMs('soon', NOW)).toBe(undefined)
   })
 
-  test('full block keeps every todo text verbatim; the short block on a 12,000-char list is a fraction of it', async () => {
+  test('the start block keeps every todo text verbatim, in full, even when they pass the budget (R1 (d)); the delta of a changed line is by number and line hash', async () => {
     const todos = Array.from({ length: 24 }, (_, i) => ({ text: text(i + 1, 480), daysAgo: i }))
     const c = clean(body(todos))
     expect(c.length).toBeGreaterThan(11500)
-    const full = todoBlock(c, 'A1', true, NOW)
-    for (const t of todos) expect(full).toContain(`"${t.text}"`)
-    const short = todoBlock(c, 'A1', false, NOW)
-    expect(short.length).toBeLessThan(full.length / 2)
-    console.log(`measured: full block ${full.length} chars, short block ${short.length} chars, list ${c.length} chars`)
+    const b = memoryStartBlock({ todoClean: c, notesBody: '- (01.10. 09:00) a note', topicCount: 0, agentCode: 'A1', domainLine: '', now: NOW, tag: '', reviewDue: true })
+    for (const t of todos) expect(b.text).toContain(`"${t.text}"`)
+    expect(b.todosOver).toBe(true)
+    expect(b.notesShown).toBe(0)
+    const snap = todoSnapshot(c)
+    expect(Object.keys(snap)).toHaveLength(24)
+    expect(todoDelta(snap, c)).toEqual({ added: [], changed: [], closed: [] })
+    expect(todoDeltaBlock(todoDelta(snap, c), '')).toBe('')
   })
 })
 
@@ -83,133 +72,105 @@ describe('todo list through prompt.submit', () => {
     on('session.compact', async (_$: any, e: any) => ({ messages: e.messages.slice(-1), tokensBefore: 10, tokensAfter: 1 }))
     return makeWorld(on, {
       files: new Map([['/w/b/.kinitro-ai-domain', 'beta\n']]), cwd: '/w/b', root: '/w/b', sid: 'S7',
-      verbs: { 'load-node-content': (a: any) => ({ result: JSON.stringify({ contentTypeCode: a.contentTypeCode, body: a.contentTypeCode === 'memory-instruction' ? todo.get() : `${a.contentTypeCode} of ${a.nodeCode}` }) }) },
+      // 0.27.0 (R11): the plugin's reads name no node; an unwritten notes set answers status not_found
+      verbs: { 'load-node-content': (a: any) => a.contentTypeCode === 'memory-instruction' ? { result: JSON.stringify({ contentTypeCode: 'memory-instruction', body: todo.get() }) } : { result: JSON.stringify({ status: 'not_found', contentTypeCode: a.contentTypeCode }) } },
     })
   }
   const LONG = (n: number) => `long todo ${n} ` + 'y'.repeat(300)
   const list1 = body([{ text: LONG(1), daysAgo: 1 }, { text: LONG(2), daysAgo: 2 }])
   const list2 = body([{ text: LONG(1), daysAgo: 1 }, { text: LONG(2), daysAgo: 2 }, { text: 'third, new', daysAgo: 0 }])
 
-  test('first turn full, then short while the list stays, full again when it changes, then short', async ($, on) => {
+  test('first prompt: the start block with the todos in full; then no todo text while the list stays; a change gives the delta only', async ($, on) => {
     let cur = list1
     const seen: string[] = [], turns = { n: 0 }
     const w = mk(on, { get: () => cur }, turns, seen)
     await probe($, 'reload')
     await $.prompt.submit({ text: 'one' } as any)
+    expect(seen[0]).toContain('Your kinitro memory (name-agent-beta)')
     expect(seen[0]).toContain(`"${LONG(1)}"`)
-    expect(seen[0]).toContain('full text')
     turns.n = 1
     await $.prompt.submit({ text: 'two' } as any)
-    expect(seen[1]).toContain('short form')
-    expect(seen[1]).toContain(`1. ${LONG(1).slice(0, 160)} [...]`)
+    expect(seen[1]).not.toContain('Your kinitro memory')
     expect(seen[1]).not.toContain(LONG(1))
-    expect(seen[1]).toContain('Update your todos now if this turn changed anything: memory-append / memory-instruction-status. Oldest open todo: ')
+    expect(seen[1]).not.toContain('Todos changed since your last turn')
+    expect(seen[1]).toContain('Every turn:')
     cur = list2; turns.n = 2
     await $.prompt.submit({ text: 'three' } as any)
-    expect(seen[2]).toContain('full text')
-    expect(seen[2]).toContain('"third, new"')
+    expect(seen[2]).toContain('Todos changed since your last turn:\nnew 3. third, new')
+    expect(seen[2]).not.toContain(LONG(1))
     turns.n = 3
     await $.prompt.submit({ text: 'four' } as any)
-    expect(seen[3]).toContain('short form')
-    expect(seen[3]).toContain('3. third, new')
-    // the hash of the last full injection is persisted with the session id
+    expect(seen[3]).not.toContain('Todos changed since your last turn')
+    // the snapshot of the last prompt is persisted with the session id
     const st = JSON.parse(w.files.get('/w/b/.kinitro-ai-state.json')!)
-    expect(st.todoHash).toBe(todoListHash(clean(list2)))
-    expect(st.todoSid).toBe('S7')
+    expect(Object.keys(st.todoSeen)).toEqual(['1', '2', '3'])
+    expect(st.memorySid).toBe('S7')
     // nothing was written to the todo list: no todo text lost
     expect(w.sent.filter((s) => /^memory-|update-content|delete-content/.test(s.verb) && s.verb !== 'memory-instruction').length).toBe(0)
   })
 
-  test('after a compaction the full list comes again', async ($, on) => {
+  test('after a compaction the block comes again, and the next prompt carries no todo text', async ($, on) => {
     const seen: string[] = [], turns = { n: 0 }
     mk(on, { get: () => list1 }, turns, seen)
     await probe($, 'reload')
     await $.prompt.submit({ text: 'one' } as any)
     turns.n = 4
     await $.prompt.submit({ text: 'two' } as any)
-    expect(seen[1]).toContain('short form')
+    expect(seen[1]).not.toContain('Your kinitro memory')
     await ($ as any).session.compact({ trigger: 'auto', messages: [{ role: 'user', text: 'hi', toolUses: [] }, { role: 'assistant', text: 'ho', toolUses: [] }] })
     turns.n = 5
     await $.prompt.submit({ text: 'three' } as any)
-    expect(seen[2]).toContain('full text')
+    expect(seen[2]).toContain('Your kinitro memory')
     expect(seen[2]).toContain(`"${LONG(2)}"`)
+    turns.n = 6
+    await $.prompt.submit({ text: 'four' } as any)
+    expect(seen[3]).not.toContain(LONG(2))
   })
 
-  test('a restarted hook process reads the hash from the state file and stays short', async ($, on) => {
+  test('a restarted hook process reads the snapshot from the state file and stays quiet', async ($, on) => {
     const seen: string[] = [], turns = { n: 6 }
     const w = mk(on, { get: () => list1 }, turns, seen)
-    w.files.set('/w/b/.kinitro-ai-state.json', JSON.stringify({ todoHash: todoListHash(clean(list1)), todoSid: 'S7' }))
+    w.files.set('/w/b/.kinitro-ai-state.json', JSON.stringify({ memorySid: 'S7', todoSeen: todoSnapshot(clean(list1)) }))
     await ($ as any).session.start({ isInteractive: true, surface: 'terminal', cwd: '/w/b' }).catch(() => undefined)
     await probe($, 'reload')
     await $.prompt.submit({ text: 'after restart' } as any)
-    expect(seen[0]).toContain('short form')
+    expect(seen[0]).not.toContain('Your kinitro memory')
+    expect(seen[0]).not.toContain(LONG(1))
   })
 
-  test('a session switch gives the full list once, then short again', async ($, on) => {
-    const seen: string[] = [], turns = { n: 0 }
+  test('an old state file with todoHash and todoSid reads without error and gives the block once', async ($, on) => {
+    const seen: string[] = [], turns = { n: 6 }
     const w = mk(on, { get: () => list1 }, turns, seen)
+    w.files.set('/w/b/.kinitro-ai-state.json', JSON.stringify({ todoHash: '1:x', todoSid: 'S7', mirror: 'on' }))
+    await ($ as any).session.start({ isInteractive: true, surface: 'terminal', cwd: '/w/b' }).catch(() => undefined)
     await probe($, 'reload')
-    await $.prompt.submit({ text: 'one' } as any)
-    turns.n = 1; await $.prompt.submit({ text: 'two' } as any)
-    expect(seen[1]).toContain('short form')
-    w.sid = 'S9'; turns.n = 2
-    await $.prompt.submit({ text: 'three' } as any)
-    expect(seen[2]).toContain('full text')
-    expect(seen[2]).toContain(`"${LONG(1)}"`)
-    turns.n = 3; await $.prompt.submit({ text: 'four' } as any)
-    expect(seen[3]).toContain('short form')
+    await $.prompt.submit({ text: 'a' } as any)
+    expect(seen[0]).toContain('Your kinitro memory')
+    turns.n = 7; await $.prompt.submit({ text: 'b' } as any)
+    expect(seen[1]).not.toContain('Your kinitro memory')
   })
 
-  test('after a failed todo read and after a todo read that does not answer, the next good read gives the full list', async ($, on) => {
-    const seen: string[] = [], turns = { n: 0 }, mode = { v: 'ok' as 'ok' | 'fail' | 'hang' }
-    const waiters: Array<() => void> = []
-    on('clock.sleep', async () => new Promise<{ value: undefined }>((res) => waiters.push(() => res({ value: undefined }))))
-    const w = mk(on, { get: () => list1 }, turns, seen)
-    const good = w.verbs!['load-node-content']!
-    w.verbs!['load-node-content'] = (a: any) => {
-      if (a.contentTypeCode !== 'memory-instruction' || mode.v === 'ok') return good(a)
-      if (mode.v === 'fail') throw new Error('server error 500')
-      setTimeout(() => waiters.splice(0).forEach((f) => f()), 0)   // the deadline passes while the read hangs
-      return new Promise(() => {})
-    }
-    await probe($, 'reload')
-    await $.prompt.submit({ text: 'one' } as any)
-    turns.n = 1; await $.prompt.submit({ text: 'two' } as any)
-    expect(seen[1]).toContain('short form')
-    mode.v = 'fail'; turns.n = 2; await $.prompt.submit({ text: 'three' } as any)
-    expect(seen[2]).not.toContain('No open todos.')
-    expect(seen[2]).toContain('Update your todos now if this turn changed anything')
-    mode.v = 'ok'; turns.n = 3; await $.prompt.submit({ text: 'four' } as any)
-    expect(seen[3]).toContain('full text')
-    turns.n = 4; await $.prompt.submit({ text: 'five' } as any)
-    expect(seen[4]).toContain('short form')
-    mode.v = 'hang'; turns.n = 5; await $.prompt.submit({ text: 'six' } as any)
-    expect(seen[5]).not.toContain('short form')
-    expect(w.files.get('/w/b/kinitro-ai.log')).toMatch(/read memory-instruction failed: timeout/)
-    mode.v = 'ok'; turns.n = 6; await $.prompt.submit({ text: 'seven' } as any)
-    expect(seen[6]).toContain('full text')
-  })
-
-  test('a todo set that does not exist counts as an empty list: "No open todos."', async ($, on) => {
+  test('a todo set that does not exist counts as an empty list: "No open todos." and no failure line', async ($, on) => {
     const seen: string[] = [], turns = { n: 2 }
     const w = mk(on, { get: () => '' }, turns, seen)
     const good = w.verbs!['load-node-content']!
     w.verbs!['load-node-content'] = (a: any) => a.contentTypeCode === 'memory-instruction' ? { result: JSON.stringify({ status: 'error', error: 'not_found' }) } : good(a)
     await probe($, 'reload')
     await $.prompt.submit({ text: 'x' } as any)
-    expect(seen[0]).toContain('No open todos. Update your todos now if this turn changed anything')
+    expect(seen[0]).toContain('No open todos.')
+    expect(seen[0]).not.toContain('kinitro memory not read')
     // another row in the answer (the verb's other way to say the set does not exist) counts the same
     w.verbs!['load-node-content'] = (a: any) => a.contentTypeCode === 'memory-instruction' ? { result: JSON.stringify({ contentTypeCode: 'other', body: 'x' }) } : good(a)
     turns.n = 3; await $.prompt.submit({ text: 'y' } as any)
-    expect(seen[1]).toContain('No open todos. Update your todos now if this turn changed anything')
+    expect(seen[1]).not.toContain('kinitro memory not read')
   })
 
-  test('an empty list still gets the push line', async ($, on) => {
+  test('an empty list: "No open todos." at the start', async ($, on) => {
     const seen: string[] = [], turns = { n: 2 }
     mk(on, { get: () => body([]) }, turns, seen)
     await probe($, 'reload')
     await $.prompt.submit({ text: 'x' } as any)
-    expect(seen[0]).toContain('No open todos. Update your todos now if this turn changed anything')
+    expect(seen[0]).toContain('No open todos.')
   })
 })
 
@@ -330,7 +291,7 @@ describe('chat tail at session start and after compaction (PO 2026-10-16)', () =
     expect(r).toBe('returned')
     expect(waits).toContain(3000)
     expect(seen[0]).not.toContain(CHAT_TAIL_BEGIN)
-    expect(seen[0]).toContain('Update your todos now')
+    expect(seen[0]).toContain('Your kinitro memory')
     expect(w.files.get('/w/b/kinitro-ai.log')).toMatch(/chat tail skipped: timeout/)
   })
   test('a failed read is skipped silently and logged', async ($, on) => {
