@@ -46,7 +46,7 @@ describe('inbox wake (item 4.2.1-4945)', () => {
     expect(wakes(prompts)).toHaveLength(1)   // given once: no second wake for the same messages
   })
 
-  test('W2: no wake while a turn runs; the wake follows once the turn ends', async ($, on) => {
+  test('W2: a message that arrives during a running turn is queued at once as its own prompt (0.27.2), given once', async ($, on) => {
     const clock = mock.clock(on, { now: Date.now() })
     const { prompts, gate } = mk(on, [MSG])
     gate.open = false   // the message arrives only after the typed prompt has started its turn
@@ -54,11 +54,11 @@ describe('inbox wake (item 4.2.1-4945)', () => {
     await $.prompt.submit({ text: 'working on something', origin: { kind: 'composer' } } as any)
     gate.open = true
     await clock.advance(61_000)
-    expect(wakes(prompts)).toHaveLength(0)
+    expect(wakes(prompts)).toHaveLength(1)
+    expect(wakes(prompts)[0].text).toContain('please look at item 4855')
     await $.turn.complete({ ...done, turnId: 't1', answer: 'done' } as any)
     await clock.advance(61_000)
     expect(wakes(prompts)).toHaveLength(1)
-    expect(wakes(prompts)[0].text).toContain('please look at item 4855')
   })
 
   test('W3: the wake text names the count, the sender and the time', async () => {

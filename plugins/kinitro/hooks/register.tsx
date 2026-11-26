@@ -54,7 +54,7 @@ const FETCH_MS = 60000
 const MAX_TEXT = 50000     // chars per prompt / answer sent to the chat
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = `${F.replace(/^\./, '')}.log`
-const VERSION = '0.27.0'
+const VERSION = '0.27.2'
 // update notice (PO 2026-10-16): at the first prompt, compare with the published marketplace.json on the download page
 const UPDATE_BASE = VARIANT.downloadBase   // the download page; the environment variable KINITRO_AI_DOWNLOAD_BASE overrides it
 const UPDATE_TIMEOUT_MS = 2500
@@ -1803,13 +1803,14 @@ export function wakeText(msgs: InMsg[]): string {
     `Read them and act on them; answer in your reply where they concern the work (read-chat-tail gives the full text of a long one):\n${inboxLines(msgs)}`
 }
 
-// 0.27.1 (item 4.2.1-4945, PO 26.11.2026): new chat messages wake an idle session. After each inbox fetch, messages not yet told to the
-// agent start ONE turn of their own through $.prompt.submit (the host runs it once the session is idle, never inside a running turn).
-// Not while a turn runs (the next prompt takes them, as before), not while a wake is queued, never in an inert session; the mirror
-// switch already gates the fetch. A failed submit gives the messages back to the next prompt.
-let turnBusy = false, wakeQueued = false, wakesSent = 0
+// 0.27.1 (item 4.2.1-4945, PO 26.11.2026): new chat messages wake the session. After each inbox fetch, messages not yet told to the
+// agent go into ONE prompt of their own through $.prompt.submit: the host runs it at once when the session is idle and queues it
+// behind a running turn (0.27.2, PO 26.11.: "It should still send the message into the agents queue!"), never folding it into that
+// turn. Not while a wake is still queued (the next fetch takes newer messages; the queued turn's own prompt hook adds them as
+// context), never in an inert session; the mirror switch already gates the fetch. A failed submit gives the messages back.
+let wakeQueued = false, wakesSent = 0
 async function wakeOnInbox($: any) {
-  if (turnBusy || wakeQueued || (await inertNow($))) return
+  if (wakeQueued || (await inertNow($))) return
   const msgs = await takeInbox($)
   if (!msgs.length) return
   wakeQueued = true
@@ -2852,7 +2853,6 @@ export const register: Register = (on, opts) => {
 
   // EVERY USER PROMPT: marker, start (first prompt), per-turn, 70 %, post-compaction
   on('prompt.submit', async ($, e, next) => {
-    if (!(e as any).agentId) turnBusy = true   // 0.27.1 (4945): a main-agent turn is running; the inbox wake waits for its end
     await ensureStarted($)   // 0.26.0 (P3): a session without a completed start is started now (probe, state, activity decision)
     await scanCopies($, true)   // 0.26.0 (P8): other kinitro.ai plugin copies; a newer one silences this copy (inertNow)
     if (await inertNow($)) return next(e)   // inert: a headless session not woken, or switched off
@@ -3103,7 +3103,6 @@ export const register: Register = (on, opts) => {
 
   // END OF TURN: prompt and final answer into the agent's kinitro.ai chat (item 3413); outbox first, then send
   on('turn.complete', async ($, e, next) => {
-    if (!e.agentId) turnBusy = false   // 0.27.1 (4945): the session is idle again; the next inbox fetch may wake it
     if (await inertNow($)) return next(e)   // inert: build switched off, or a headless session
     if (e.agentId) return next(e)
     // item 4075: the prompts of this turn are taken before the downstream hooks run, so a prompt that arrives meanwhile belongs to the next turn

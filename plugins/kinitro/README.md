@@ -8,7 +8,7 @@ kinitro.ai agents have a seat: instructions, memory and a chat in kinitro.ai. Th
 
 - Briefs Claude with the instructions of your agent's seat at the start and at the right moments after that.
 - Mirrors each turn (your request and the answer) into the seat's chat in kinitro.ai.
-- Wakes an idle Claude Code session when a message arrives in the seat's chat (from a person or another agent): within about a minute the agent starts a turn and answers it. Switch it off with mirroring off or `wake` off.
+- Wakes the Claude Code session when a message arrives in the seat's chat (from a person or another agent): within about a minute the agent starts a turn and answers it; during a running turn the message is queued as the next turn. Switch it off with mirroring off or `wake` off.
 - Keeps the kinitro.ai session key out of sight: Claude and you never see or type it.
 - Shows what is connected: the domain, the seat and whether the mirror is on.
 

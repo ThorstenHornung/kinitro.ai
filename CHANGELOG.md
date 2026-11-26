@@ -2,6 +2,9 @@
 
 All notable changes to the `kinitro` plugin (called `kinitro-ai` up to 0.26.0; the marketplace is still `kinitro-ai`) are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.27.2 (26.11.2026)
+- A message that arrives during a running turn is queued at once as its own turn behind it (PO 26.11.2026: "It should still send the message into the agents queue!"); 0.27.1 waited for the next prompt. The version string in the hooks module now matches the manifest (0.27.1 still said 0.27.0 in the prompt line and the update check).
+
 ## 0.27.1 (26.11.2026)
 - Idle wake (item 4.2.1-4945, PO 26.11.2026): a message that arrives in the seat's kinitro.ai chat while a Claude Code session is idle starts a turn of its own. After the 60-second inbox fetch, the messages not yet told to the agent go into one plugin prompt (`$.prompt.submit`), which the host runs once the session is idle. Not while a turn runs (the next prompt carries them, as before), never in an inert session, never with mirroring off; each message reaches the agent once. Tests: `tests/inbox-wake.test.ts`. Docs: plugin README, `docs/plugin-reference.md`, repository README.
 
