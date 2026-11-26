@@ -164,4 +164,60 @@ describe('inbox wake (item 4.2.1-4945)', () => {
     expect(wakes(prompts)[0].text).toContain('fresh after the upgrade')
     expect(wakes(prompts)[0].text).not.toContain('old chat')
   })
+
+  // 0.27.7: the live server answers nextCursor null on every fetch (also with messages), each message carries its own cursor, and a fetch
+  // without cursor starts from now. The plugin keeps the last message's cursor and starts at the bind time.
+  const ticksToMs = (c: string) => Number(BigInt(c.split('|')[0]!) / 10000n - 62135596800000n)
+  test('W10: nextCursor null with messages that carry cursors: the next fetch passes the last message cursor, nothing is woken twice', async ($, on) => {
+    const clock = mock.clock(on, { now: Date.now() })
+    const t0 = Date.now() + 1000
+    const served = [
+      { ...MSG, at: new Date(t0).toISOString(), text: 'first', cursor: '639312970811503490|a0f58292-0000-0000-0000-000000000001' },
+      { ...MSG, at: new Date(t0 + 1).toISOString(), text: 'second', cursor: '639312970811503500|a0f58292-0000-0000-0000-000000000002' },
+    ]
+    const calls: Array<string | undefined> = []
+    const { w, prompts } = mk(on, [])
+    w.verbs = {
+      'mirror-messaging': (args) => {
+        if (args.action !== 'fetch') return { result: JSON.stringify({ status: 'ok', rowIds: ['r1'] }) }
+        calls.push(args.cursor as string | undefined)
+        const i = served.findIndex((m) => m.cursor === args.cursor)
+        const messages = args.cursor ? served.slice(i + 1) : []
+        return { result: JSON.stringify({ status: 'ok', messages: i < 0 && args.cursor ? served : messages, nextCursor: null }) }
+      },
+    }
+    await start($)
+    await clock.advance(61_000)
+    expect(wakes(prompts)).toHaveLength(1)
+    expect(wakes(prompts)[0].text).toContain('(2)')
+    await $.turn.complete({ ...done, turnId: 'w10', answer: 'ok' } as any)
+    await clock.advance(61_000)
+    await clock.advance(61_000)
+    expect(calls.length).toBeGreaterThanOrEqual(3)
+    expect(calls[1]).toBe(served[1]!.cursor)
+    expect(calls[2]).toBe(served[1]!.cursor)
+    expect(wakes(prompts)).toHaveLength(1)
+  })
+
+  test('W11: an empty inbox file without cursor: the first fetch passes a cursor at the bind time minus the grace, not none', async ($, on) => {
+    const clock = mock.clock(on, { now: Date.now() })
+    const calls: Array<string | undefined> = []
+    const { w } = mk(on, [])
+    w.verbs = {
+      'mirror-messaging': (args) => {
+        if (args.action !== 'fetch') return { result: JSON.stringify({ status: 'ok', rowIds: ['r1'] }) }
+        calls.push(args.cursor as string | undefined)
+        return { result: JSON.stringify({ status: 'ok', messages: [], nextCursor: null }) }
+      },
+    }
+    w.files.set('/w/b/.kinitro-ai-inbox.json', JSON.stringify({ messages: [] }))
+    await start($)
+    await clock.advance(61_000)
+    expect(calls.length).toBeGreaterThan(0)
+    expect(calls[0]).toMatch(/^d+|00000000-0000-0000-0000-000000000000$/)
+    const boundAt = Date.parse(JSON.parse(String(w.files.get('/w/b/.kinitro-ai-inbox.json'))).boundAt)
+    expect(Number.isFinite(boundAt)).toBe(true)
+    expect(ticksToMs(calls[0]!)).toBe(boundAt - 30000)
+    expect(calls[1] ?? calls[0]).toBeDefined()
+  })
 })

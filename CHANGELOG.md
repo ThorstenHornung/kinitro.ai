@@ -2,6 +2,10 @@
 
 All notable changes to the `kinitro` plugin (called `kinitro-ai` up to 0.26.0; the marketplace is still `kinitro-ai`) are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.27.7 (26.11.2026)
+- THE INBOX FETCH KEEPS THE LAST MESSAGE'S CURSOR AND STARTS FROM THE BIND TIME (item 4.2.1-4945). Live defect measured on Production: the mirror fetch answers nextCursor null on every call, also when it returns messages (each message carries its own cursor), and a fetch without cursor starts from now. The plugin stored only nextCursor, so since 0.27.5 dropped the cursor on a seat change every fetch started from now: no message ever arrived and no wake started.
+- After each page the cursor is nextCursor, else the cursor of the last returned message, else the old one. With no stored cursor the fetch starts at the seat's bind time minus the 30 s grace (cursor form: .NET ticks, "|", zero GUID; computed with BigInt). The paging loop continues on more or hasMore (at most 5 rounds).
+
 ## 0.27.6 (26.11.2026)
 - AN INBOX FILE FROM AN OLDER VERSION IS NOT HANDED OVER AS NEW (item 4.2.1-4945). Live defect: after the upgrade from 0.27.4 to 0.27.5 the session woke once more with 36 old messages. The inbox file written by 0.27.4 has no seat, so it counted as a first bind: the cursor was kept, its messages stayed untold and the bind time became the start of the session, days ago.
 - Only a new, empty file (no messages, no cursor) takes the start of the session as its bind time. A file without a seat that already holds messages or a cursor is treated like a seat change: the cursor is dropped, every message is marked told and the bind time is now. The log line "inbox wake: N old message(s) skipped" stays.

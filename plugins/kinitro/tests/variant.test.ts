@@ -34,7 +34,7 @@ describe('build variant', () => {
     const w = makeWorld(on, { files: new Map([['/w/b/.kinitro-ai-domain', 'beta\n']]), cwd: '/w/b', root: '/w/b', sid: 'SV' })
     expect(await probe($, 'reload')).toContain('domain: beta')
     await $.prompt.submit({ text: 'a', origin: { kind: 'composer' } } as any)
-    expect(seen[0]).toMatch(/^\[kinitro 0.27.6\] .*context /)   // 0.26.0 (P5): Prod shows no environment; Test shows [kinitro TEST 0.26.3]
+    expect(seen[0]).toMatch(/^\[kinitro 0.27.7\] .*context /)   // 0.26.0 (P5): Prod shows no environment; Test shows [kinitro TEST 0.26.3]
     expect(w.files.has('/u/.kinitro-ai/sessions/SV.json')).toBe(true)
     expect(w.files.has('/w/b/kinitro-ai.log')).toBe(true)
   })

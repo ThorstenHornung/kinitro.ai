@@ -59,7 +59,7 @@ const FETCH_MS = 60000
 const MAX_TEXT = 50000     // chars per prompt / answer sent to the chat
 const RETRY_MS = 20000     // retry a failed briefing load at most this often
 const LOG_FILE = `${F.replace(/^\./, '')}.log`
-const VERSION = '0.27.6'
+const VERSION = '0.27.7'
 // update notice (PO 2026-10-16): at the first prompt, compare with the published marketplace.json on the download page
 const UPDATE_BASE = VARIANT.downloadBase   // the download page; the environment variable KINITRO_AI_DOWNLOAD_BASE overrides it
 const UPDATE_TIMEOUT_MS = 2500
@@ -1888,6 +1888,9 @@ const inboxSeatKey = () => `${briefing?.domainId ?? domainRef ?? ''}|${briefing?
 const msgKey = (m: { at?: unknown; from?: unknown; text: string }) => `${m.at ?? ''}|${m.from ?? ''}|${m.text}`
 const WAKE_MAX = 20            // one wake or context block lists at most this many messages
 const BIND_GRACE_MS = 30000    // clock skew between this machine and the server
+const ZERO_GUID = '00000000-0000-0000-0000-000000000000'
+/** 0.27.7: a server cursor is `<.NET ticks>|<guid>`; this one starts at the given time (BigInt: ticks exceed 2^53). */
+const cursorAt = (ms: number) => `${((BigInt(Math.floor(ms)) + 62135596800000n) * 10000n).toString()}|${ZERO_GUID}`
 /** True when the file was filled for another seat: cursor dropped, old messages told, bind time now. */
 function syncInboxSeat(inbox: InboxFile): boolean {
   const key = inboxSeatKey()
@@ -1912,21 +1915,30 @@ async function fetchInbox($: any) {
     let sid = ''
     try { sid = await $.session.id() } catch { /* ignore */ }
     const key0 = inboxSeatKey()
-    let cursor = await withInbox(async () => { const inbox = await readInbox($); if (syncInboxSeat(inbox)) await writeInbox($, inbox); return inbox.cursor })
+    let cursor = await withInbox(async () => {
+      const inbox = await readInbox($); if (syncInboxSeat(inbox)) await writeInbox($, inbox)
+      if (inbox.cursor) return inbox.cursor
+      // 0.27.7: the server returns no cursor without one ("from now"): start at the bind time of the seat
+      const t = Date.parse(String(inbox.boundAt ?? sessionRecord?.startedAt ?? ''))
+      return cursorAt((Number.isFinite(t) ? t : Date.now()) - BIND_GRACE_MS)
+    })
     const got: InMsg[] = []
     let more = true, rounds = 0
     while (more && rounds++ < 5) {
       const r = await mcp($, 'mirror-messaging', { action: 'fetch', platform: MIRROR_PLATFORM, sessionId: sid, ...(cursor ? { cursor } : {}), limit: 50 })
       if (r?.status && r.status !== 'ok') throw new Error(JSON.stringify(r).slice(0, 200))
-      for (const m of (r?.messages ?? []) as any[]) {
+      const page = (r?.messages ?? []) as any[]
+      for (const m of page) {
         if (m?.sessionId === sid || m?.platform === MIRROR_PLATFORM && m?.sessionId === sid) continue   // our own mirrored turns
         const text = String(m?.text ?? m?.body ?? m?.content ?? '').trim()
         if (!text) continue
         got.push({ at: m?.at ?? m?.createdAt ?? m?.timestamp, from: m?.from ?? m?.sender ?? m?.senderType ?? m?.role, text, raw: undefined })
         inboxNew++
       }
-      if (r?.nextCursor) cursor = r.nextCursor
-      more = !!r?.more
+      // 0.27.7: the server sends nextCursor null even with messages; each message carries its own cursor
+      const lastCursor = [...page].reverse().map((m) => m?.cursor).find((c) => typeof c === 'string' && c)
+      cursor = r?.nextCursor ?? lastCursor ?? cursor
+      more = !!(r?.more || r?.hasMore)
     }
     await withInbox(async () => {
       const inbox = await readInbox($)   // fresh: a wake may have marked messages told meanwhile
